@@ -836,6 +836,158 @@ void SSL_dyn_destroy_function(struct CRYPTO_dynlock_value *l, const char *file, 
 	if(file || line) { return; }
 }
 
+/* Create a self-signed certificate for basic https webif usage */
+static bool create_certificate(const char *path)
+{
+	X509 *pcert = NULL;
+	X509_NAME * subject_name;
+	X509_NAME * issuer_name;
+	EVP_PKEY *pkey = NULL;
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
+	EC_KEY *ec_key = NULL;
+#endif
+	ASN1_INTEGER *asn1_serial_number;
+	BIGNUM *serial_number = NULL;
+	struct utsname buffer;
+	bool ret = false;
+
+	const char *cn = !uname(&buffer) ? buffer.nodename : "localhost";
+	size_t cn_len = MIN(strlen(cn), 63);
+
+	if ((pkey = EVP_PKEY_new()))
+	{
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+		pkey = EVP_EC_gen("prime256v1");
+#else
+		ec_key = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
+
+		if (!ec_key)
+		{
+			goto err;
+		}
+		if (!EC_KEY_generate_key(ec_key))
+		{
+			goto err;
+		}
+		if (!EVP_PKEY_assign_EC_KEY(pkey, ec_key))
+		{
+			goto err;
+		}
+
+		ec_key = NULL;
+#endif
+		if ((pcert = X509_new()))
+		{
+			X509_set_pubkey(pcert, pkey);
+			if (!X509_set_version(pcert, 0L))
+			{
+				goto err;
+			}
+
+			if ((serial_number = BN_new()))
+			{
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+				if (!BN_pseudo_rand(serial_number, 64, 0, 0))
+				{
+					goto err;
+				}
+#else
+				if (!BN_rand(serial_number, 64, 0, 0))
+				{
+					goto err;
+				}
+#endif
+				asn1_serial_number = X509_get_serialNumber(pcert);
+				if (!asn1_serial_number)
+				{
+					goto err;
+				}
+				if (!BN_to_ASN1_INTEGER(serial_number, asn1_serial_number))
+				{
+					goto err;
+				}
+
+				if ((subject_name = X509_NAME_new()) && (issuer_name = X509_NAME_new()))
+				{
+					if (!X509_NAME_add_entry_by_NID(subject_name, NID_commonName, MBSTRING_UTF8, (unsigned char *) cn, cn_len, -1, 0))
+					{
+						goto err;
+					}
+					if (!X509_set_subject_name(pcert, subject_name))
+					{
+						goto err;
+					}
+
+					if (!X509_NAME_add_entry_by_NID(issuer_name, NID_commonName, MBSTRING_UTF8, (unsigned char *) "localhost", 9, -1, 0))
+					{
+						goto err;
+					}
+					if (!X509_set_issuer_name(pcert, issuer_name))
+					{
+						goto err;
+					}
+
+					X509_gmtime_adj(X509_getm_notBefore(pcert), 0);
+					X509_gmtime_adj(X509_getm_notAfter(pcert), CERT_EXPIRY_TIME);
+
+					X509_sign(pcert, pkey, EVP_sha256());
+
+					FILE * pemfile;
+					if ((pemfile = fopen(path, "wb")))
+					{
+						PEM_write_PrivateKey(pemfile, pkey, NULL, NULL, 0, NULL, NULL);
+						PEM_write_X509(pemfile, pcert);
+						fclose(pemfile);
+						ret = true;
+					}
+					else
+					{
+						goto err;
+					}
+				}
+				else
+				{
+					cs_log("Error: X509_NAME_new() failed");
+				}
+			}
+			else
+			{
+				cs_log("Error: BN_new() failed");
+			}
+		}
+		else
+		{
+			cs_log("Error: X509_new() failed");
+		}
+	}
+	else
+	{
+		cs_log("Error: EVP_PKEY_new() failed");
+	}
+
+err:
+	if (pkey)
+	{
+		EVP_PKEY_free(pkey);
+	}
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
+	if (ec_key)
+	{
+		EC_KEY_free(ec_key);
+	}
+#endif
+	if (pcert)
+	{
+		X509_free(pcert);
+	}
+	if (serial_number)
+	{
+		BN_free(serial_number);
+	}
+
+	return ret;
+}
+
 /* Init necessary structures for SSL in WebIf*/
 SSL_CTX *SSL_Webif_Init(void)
 {
@@ -894,6 +1046,15 @@ SSL_CTX *SSL_Webif_Init(void)
 	else
 		{ cs_strncpy(path, cfg.http_cert, sizeof(path)); }
 
+	if(!file_exists(path)) //generate a ready-to-use SSL certificate if no certificate file is available
+	{
+		cs_log("generating ssl certificate file %s", path);
+		if(!create_certificate(path))
+		{
+			goto out_err;
+		}
+	}
+
 	if(!ctx)
 		goto out_err;
 
@@ -909,7 +1070,7 @@ SSL_CTX *SSL_Webif_Init(void)
 		goto out_err;
 	}
 
-	cs_log("load ssl certificate file %s", path);
+	cs_log("loading ssl certificate file %s", path);
 	return ctx;
 
 out_err:
