@@ -9814,7 +9814,7 @@ static void *http_server(void *UNUSED(d))
 		else { ssl_active = 1; }
 	}
 	else { ssl_active = 0; }
-	cs_log("HTTP Server running. ip=%s port=%d%s", cs_inet_ntoa(SIN_GET_ADDR(sin)), cfg.http_port, ssl_active ? " (SSL)" : "");
+	cs_log("HTTP%s Server running. ip=%s port=%d (%s)", ssl_active ? "S" : "", cs_inet_ntoa(SIN_GET_ADDR(sin)), cfg.http_port, ssl_active ? OPENSSL_VERSION_TEXT : "no SSL");
 #else
 	cs_log("HTTP Server running. ip=%s port=%d", cs_inet_ntoa(SIN_GET_ADDR(sin)), cfg.http_port);
 #endif

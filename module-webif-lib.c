@@ -836,6 +836,23 @@ void SSL_dyn_destroy_function(struct CRYPTO_dynlock_value *l, const char *file, 
 	if(file || line) { return; }
 }
 
+/* add X.509 V3 extensions */
+static bool add_ext(X509 *cert, int nid, char *value)
+{
+	X509_EXTENSION *ex;
+	X509V3_CTX ctx;
+
+	X509V3_set_ctx_nodb(&ctx);
+	X509V3_set_ctx(&ctx, cert, cert, NULL, NULL, 0);
+	ex = X509V3_EXT_conf_nid(NULL, &ctx, nid, value);
+	if (!ex)
+		return false;
+
+	X509_add_ext(cert, ex, -1);
+	X509_EXTENSION_free(ex);
+	return true;
+}
+
 /* Create a self-signed certificate for basic https webif usage */
 static bool create_certificate(const char *path)
 {
@@ -843,25 +860,41 @@ static bool create_certificate(const char *path)
 	X509_NAME * subject_name;
 	X509_NAME * issuer_name;
 	EVP_PKEY *pkey = NULL;
-#if OPENSSL_VERSION_NUMBER < 0x30000000L
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	RSA * rsa_key = NULL;
+#elif OPENSSL_VERSION_NUMBER < 0x30000000L
 	EC_KEY *ec_key = NULL;
 #endif
 	ASN1_INTEGER *asn1_serial_number;
 	BIGNUM *serial_number = NULL;
+	char san[128];
 	struct utsname buffer;
 	bool ret = false;
 
 	const char *cn = !uname(&buffer) ? buffer.nodename : "localhost";
 	size_t cn_len = MIN(strlen(cn), 63);
 
+	cs_log("generating webserver ssl certificate file %s (%s)", path,
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	"RSA"
+#else
+	"ECDSA"
+#endif
+	);
 	if ((pkey = EVP_PKEY_new()))
 	{
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
-		pkey = EVP_EC_gen("prime256v1");
-#else
-		ec_key = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
-
-		if (!ec_key)
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+		if (!(rsa_key = RSA_generate_key(4096, RSA_3, NULL, NULL)))
+		{
+			goto err;
+		}
+		if (!EVP_PKEY_assign_RSA(pkey, rsa_key))
+		{
+			goto err;
+		}
+		rsa_key = NULL;
+#elif OPENSSL_VERSION_NUMBER < 0x30000000L
+		if (!(ec_key = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1))) //prime256v1
 		{
 			goto err;
 		}
@@ -873,17 +906,20 @@ static bool create_certificate(const char *path)
 		{
 			goto err;
 		}
-
 		ec_key = NULL;
+#else
+		pkey = EVP_EC_gen(SN_X9_62_prime256v1); //prime256v1
 #endif
 		if ((pcert = X509_new()))
 		{
 			X509_set_pubkey(pcert, pkey);
-			if (!X509_set_version(pcert, 0L))
+			// serialNumber
+			if (!X509_set_version(pcert, 2L))
 			{
 				goto err;
 			}
 
+			// serialNumber
 			if ((serial_number = BN_new()))
 			{
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
@@ -907,6 +943,7 @@ static bool create_certificate(const char *path)
 					goto err;
 				}
 
+				// subject + issuer
 				if ((subject_name = X509_NAME_new()) && (issuer_name = X509_NAME_new()))
 				{
 					if (!X509_NAME_add_entry_by_NID(subject_name, NID_commonName, MBSTRING_UTF8, (unsigned char *) cn, cn_len, -1, 0))
@@ -918,7 +955,7 @@ static bool create_certificate(const char *path)
 						goto err;
 					}
 
-					if (!X509_NAME_add_entry_by_NID(issuer_name, NID_commonName, MBSTRING_UTF8, (unsigned char *) "localhost", 9, -1, 0))
+					if (!X509_NAME_add_entry_by_NID(issuer_name, NID_commonName, MBSTRING_UTF8, (unsigned char *) cn, cn_len, -1, 0))
 					{
 						goto err;
 					}
@@ -927,11 +964,21 @@ static bool create_certificate(const char *path)
 						goto err;
 					}
 
+					// expiration
 					X509_gmtime_adj(X509_getm_notBefore(pcert), 0);
 					X509_gmtime_adj(X509_getm_notAfter(pcert), CERT_EXPIRY_TIME);
 
+					// X.509 V3 extensions
+					add_ext(pcert, NID_basic_constraints, "CA:FALSE" );
+					add_ext(pcert, NID_key_usage, "nonRepudiation, digitalSignature, keyEncipherment" );
+					add_ext(pcert, NID_ext_key_usage, "clientAuth, serverAuth" );
+					snprintf(san, sizeof(san), "DNS:%s, DNS:%s.local, IP:127.0.0.1, IP:::1", cn, cn);
+					add_ext(pcert, NID_subject_alt_name, san);
+
+					// sign certificate with private key
 					X509_sign(pcert, pkey, EVP_sha256());
 
+					// write private key and certificate to file
 					FILE * pemfile;
 					if ((pemfile = fopen(path, "wb")))
 					{
@@ -966,11 +1013,12 @@ static bool create_certificate(const char *path)
 	}
 
 err:
+	ERR_print_errors_fp(stderr);
 	if (pkey)
 	{
 		EVP_PKEY_free(pkey);
 	}
-#if OPENSSL_VERSION_NUMBER < 0x30000000L
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L && OPENSSL_VERSION_NUMBER < 0x30000000L
 	if (ec_key)
 	{
 		EC_KEY_free(ec_key);
@@ -1033,7 +1081,9 @@ SSL_CTX *SSL_Webif_Init(void)
 #endif
 	}
 
-#ifdef SSL_OP_NO_TLSv1_1
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	SSL_CTX_set_min_proto_version(ctx, SSL3_VERSION);
+#elif defined SSL_OP_NO_TLSv1_1
 	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1);
 #else
 	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
@@ -1048,7 +1098,6 @@ SSL_CTX *SSL_Webif_Init(void)
 
 	if(!file_exists(path)) //generate a ready-to-use SSL certificate if no certificate file is available
 	{
-		cs_log("generating ssl certificate file %s", path);
 		if(!create_certificate(path))
 		{
 			goto out_err;

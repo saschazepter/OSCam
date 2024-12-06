@@ -4,6 +4,7 @@
 #ifdef WITH_SSL
 #include <openssl/crypto.h>
 #include <openssl/ssl.h>
+#include <openssl/x509v3.h>
 #include <openssl/err.h>
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 #define X509_getm_notBefore X509_get_notBefore
