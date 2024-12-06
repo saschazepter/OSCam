@@ -867,7 +867,7 @@ static bool create_certificate(const char *path)
 #endif
 	ASN1_INTEGER *asn1_serial_number;
 	BIGNUM *serial_number = NULL;
-	char san[128];
+	char san[256];
 	struct utsname buffer;
 	bool ret = false;
 
