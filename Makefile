@@ -34,8 +34,9 @@ ifeq "$(shell ./config.sh --enabled WITH_SSL)" "Y"
 endif
 ifdef USE_SSL
 	override USE_LIBCRYPTO=1
-	SSL_VER  = ${shell (grep 'OpenSSL [[:digit:]][^ ]*' $(TOOLCHAIN_INC_DIR)/openssl/opensslv.h 2>/dev/null || echo '"n.a."') | tail -1 | awk -F'"' '{ print $$2 }' | xargs}
-	SSL_INFO = $(shell echo ', $(SSL_VER)')
+	SSL_HEADER = $(shell find $(TOOLCHAIN_INC_DIR)/.. -name opensslv.h -print | tail -n 1)
+	SSL_VER    = ${shell (grep 'OpenSSL [[:digit:]][^ ]*' $(SSL_HEADER) 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
+	SSL_INFO   = $(shell echo ', $(SSL_VER)')
 endif
 
 CONF_DIR = /usr/local/etc
@@ -225,7 +226,7 @@ else
 	#
 	# We can't just use -I/usr/include/PCSC because it won't work in
 	# case of cross compilation.
-	TOOLCHAIN_INC_DIR := $(strip $(shell echo | $(CC) -Wp,-v -xc - -fsyntax-only 2>&1 | grep include$ | tail -n 1))
+	TOOLCHAIN_INC_DIR := $(strip $(shell echo | $(CC) -Wp,-v -xc - -fsyntax-only 2>&1 | grep include$$ | tail -n 1))
 	DEFAULT_PCSC_FLAGS = -I$(TOOLCHAIN_INC_DIR)/PCSC -I$(TOOLCHAIN_INC_DIR)/../local/include/PCSC
 	DEFAULT_PCSC_LIB = -lpcsclite
 endif
