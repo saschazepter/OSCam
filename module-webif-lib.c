@@ -1097,7 +1097,7 @@ SSL_CTX *SSL_Webif_Init(void)
 	else
 		{ cs_strncpy(path, cfg.http_cert, sizeof(path)); }
 
-	if(!file_exists(path)) //generate a ready-to-use SSL certificate if no certificate file is available
+	if(!file_exists(path) && cfg.https_auto_create_cert) //generate a ready-to-use SSL certificate if no certificate file is available
 	{
 		if(!create_certificate(path))
 		{
