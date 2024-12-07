@@ -884,7 +884,7 @@ static bool create_certificate(const char *path)
 	if ((pkey = EVP_PKEY_new()))
 	{
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
-		if (!(rsa_key = RSA_generate_key(4096, RSA_3, NULL, NULL)))
+		if (!(rsa_key = RSA_generate_key(4096, RSA_F4, NULL, NULL)))
 		{
 			goto err;
 		}
@@ -980,7 +980,7 @@ static bool create_certificate(const char *path)
 
 					// write private key and certificate to file
 					FILE * pemfile;
-					if ((pemfile = fopen(path, "wb")))
+					if ((pemfile = fopen(path, "w")))
 					{
 						PEM_write_PrivateKey(pemfile, pkey, NULL, NULL, 0, NULL, NULL);
 						PEM_write_X509(pemfile, pcert);
@@ -989,6 +989,7 @@ static bool create_certificate(const char *path)
 					}
 					else
 					{
+						cs_log("can't write to file %s", path);
 						goto err;
 					}
 				}
