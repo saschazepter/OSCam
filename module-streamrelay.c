@@ -1074,7 +1074,7 @@ static void *stream_server(void *cli)
 	streamrelay_client = (struct s_client *)cli;
 	streamrelay_client->thread = pthread_self();
 	SAFE_SETSPECIFIC(getclient, streamrelay_client);
-	if(streamrelay_client) { free_client(streamrelay_client); };
+	//if(streamrelay_client) { free_client(streamrelay_client); };
 	set_thread_name(__func__);
 
 	cluster_size = dvbcsa_bs_batch_size();
