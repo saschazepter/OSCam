@@ -708,7 +708,7 @@ static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *str
 	tv.tv_usec = 0;
 	if (setsockopt(streamfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof tv))
 	{
-		cs_log("ERROR: setsockopt() failed for SO_RCVTIMEO");
+		cs_log("ERROR: setsockopt() failed for SO_RCVTIMEO!");
 		return -1;
 	}
 
@@ -724,23 +724,18 @@ static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *str
 		return -1;
 	}
 
-	if (stream_source_auth)
-	{
-		snprintf(http_buf, http_buf_len, "GET %s HTTP/1.1\nHost: %s:%u\n"
-				"User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64; rv:38.0) Gecko/20100101 Firefox/38.0\n"
-				"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\n"
-				"Accept-Language: en-US\n"
-				"Authorization: Basic %s\n"
-				"Connection: keep-alive\n\n", stream_path, stream_source_host, cfg.stream_source_port, stream_source_auth);
-	}
-	else
-	{
-		snprintf(http_buf, http_buf_len, "GET %s HTTP/1.1\nHost: %s:%u\n"
-				"User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64; rv:38.0) Gecko/20100101 Firefox/38.0\n"
-				"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\n"
-				"Accept-Language: en-US\n"
-				"Connection: keep-alive\n\n", stream_path, stream_source_host, cfg.stream_source_port);
-	}
+	snprintf(http_buf, http_buf_len,
+			"GET %s HTTP/1.1\nHost: %s:%u\n"
+			"User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64; rv:38.0) Gecko/20100101 Firefox/38.0\n"
+			"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\n"
+			"Accept-Language: en-US"
+			"%s%s\n"
+			"Connection: keep-alive\n\n",
+			stream_path,
+			stream_source_host,
+			cfg.stream_source_port,
+			(stream_source_auth) ? "\nAuthorization: Basic " : "",
+			(stream_source_auth) ? stream_source_auth : "");
 
 	if (send(streamfd, http_buf, cs_strlen(http_buf), 0) == -1) { return -1; }
 	return streamfd;
@@ -969,7 +964,7 @@ static void *stream_client_handler(void *arg)
 					sscanf((const char*)stream_buf, "HTTP/%3s %d ", http_version , &http_status_code) == 2 &&
 					http_status_code != 200)
 				{
-					cs_log("ERROR: stream client %i got %d response from stream source", conndata->connid, http_status_code);
+					cs_log("ERROR: stream client %i got %d response from stream source!", conndata->connid, http_status_code);
 					streamConnectErrorCount++;
 					cs_sleepms(100);
 					break;
@@ -1123,7 +1118,7 @@ static void *stream_server(void *cli)
 	glistenfd = socket(AF_INET6, SOCK_STREAM, 0);
 	if (glistenfd == -1)
 	{
-		cs_log("ERROR: cannot create stream server socket");
+		cs_log("ERROR: cannot create stream server socket! (errno=%d %s)", errno, strerror(errno));
 		return NULL;
 	}
 
@@ -1135,7 +1130,7 @@ static void *stream_server(void *cli)
 	glistenfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (glistenfd == -1)
 	{
-		cs_log("ERROR: cannot create stream server socket");
+		cs_log("ERROR: cannot create stream server socket! (errno=%d %s)", errno, strerror(errno));
 		return NULL;
 	}
 
@@ -1148,18 +1143,18 @@ static void *stream_server(void *cli)
 
 	if (bind(glistenfd,(struct sockaddr *)&servaddr, sizeof(servaddr)) == -1)
 	{
-		cs_log("ERROR: cannot bind to stream server socket");
+		cs_log("ERROR: cannot bind to stream server socket! (errno=%d %s)", errno, strerror(errno));
 		close(glistenfd);
 		return NULL;
 	}
 
 	if (listen(glistenfd, 3) == -1)
 	{
-		cs_log("ERROR: cannot listen to stream server socket");
+		cs_log("ERROR: cannot listen to stream server socket! (errno=%d %s)", errno, strerror(errno));
 		close(glistenfd);
 		return NULL;
 	}
-
+	cs_log("Stream Relay server initialized. ip=%s port=%d", cs_inet_ntoa(SIN_GET_ADDR(servaddr)), cfg.stream_relay_port);
 	while (!exit_oscam)
 	{
 		clilen = sizeof(cliaddr);
@@ -1167,7 +1162,7 @@ static void *stream_server(void *cli)
 
 		if (connfd == -1)
 		{
-			cs_log("ERROR: accept() failed");
+			cs_log("ERROR: Calling accept() failed! (errno=%d %s)", errno, strerror(errno));
 			break;
 		}
 
@@ -1222,7 +1217,7 @@ static void *stream_server(void *cli)
 			int on = 1;
 			if (setsockopt(connfd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on)) < 0)
 			{
-				cs_log("ERROR: stream client %i setsockopt() failed for TCP_NODELAY", conndata->connid);
+				cs_log("ERROR: stream client %i setsockopt() failed for TCP_NODELAY!", conndata->connid);
 			}
 
 			start_thread("stream client", stream_client_handler, (void*)conndata, &streamrelay_client->thread, 1, 0);
@@ -1231,7 +1226,7 @@ static void *stream_server(void *cli)
 		{
 			shutdown(connfd, 2);
 			close(connfd);
-			cs_log("ERROR: stream server client dropped because of too many connections (%i)", STREAM_SERVER_MAX_CONNECTIONS);
+			cs_log("ERROR: stream server client dropped because of too many connections (%i)!", STREAM_SERVER_MAX_CONNECTIONS);
 		}
 
 		cs_sleepms(20);
@@ -1257,13 +1252,10 @@ void *streamreleay_handler(struct s_client *cl, uint8_t *UNUSED(mbuf), int32_t m
 			b64encode(authtmp, cs_strlen(authtmp), &stream_source_auth);
 		}
 
-		cl = create_client(get_null_ip());
+		cl = create_client(first_client->ip);
 		cl->module_idx = module_idx;
 		cl->typ = 's';
-		if (start_thread("stream_server", stream_server, (void *)cl, &cl->thread, 1, 1) == 0)
-		{
-			cs_log("Stream Relay server initialized");
-		}
+		start_thread("stream_server", stream_server, (void *)cl, &cl->thread, 1, 1);
 	}
 	return NULL;
 }

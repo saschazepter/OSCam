@@ -450,7 +450,7 @@ static void refresh_oscam(enum refreshtypes refreshtype)
 		break;
 
 	case REFR_SERVER:
-		cs_log("Refresh Server requested by WebIF from %s", cs_inet_ntoa(GET_IP()));
+		cs_log("Refresh server requested by WebIF from %s", cs_inet_ntoa(GET_IP()));
 		//kill(first_client->pid, SIGHUP);
 		//todo how I can refresh the server after global settings
 		break;
@@ -9731,8 +9731,8 @@ static void *http_server(void *UNUSED(d))
 		len = sizeof(struct sockaddr_in6);
 		if((sock = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP)) < 0)
 		{
-			cs_log("HTTP Server: ERROR: Creating IPv6 socket failed! (errno=%d %s)", errno, strerror(errno));
-			cs_log("HTTP Server: Falling back to IPv4.");
+			cs_log("HTTP server: ERROR: Creating IPv6 socket failed! (errno=%d %s)", errno, strerror(errno));
+			cs_log("HTTP server: Falling back to IPv4.");
 			do_ipv6 = false;
 		}
 		else if (IP_ISSET(cfg.http_srvip) && (IN6_IS_ADDR_V4MAPPED(&cfg.http_srvip) || IN6_IS_ADDR_V4COMPAT(&cfg.http_srvip))) // ipv4 set as http_srvip
@@ -9766,7 +9766,7 @@ static void *http_server(void *UNUSED(d))
 		len = sizeof(struct sockaddr_in);
 		if((sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
 		{
-			cs_log("HTTP Server: ERROR: Creating socket failed! (errno=%d %s)", errno, strerror(errno));
+			cs_log("HTTP server: ERROR: Creating socket failed! (errno=%d %s)", errno, strerror(errno));
 			return NULL;
 		}
 		SIN_GET_FAMILY(sin) = AF_INET;
@@ -9780,19 +9780,19 @@ static void *http_server(void *UNUSED(d))
 
 	if(setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0)
 	{
-		cs_log("HTTP Server: Setting SO_REUSEADDR via setsockopt failed! (errno=%d %s)", errno, strerror(errno));
+		cs_log("HTTP server: Setting SO_REUSEADDR via setsockopt failed! (errno=%d %s)", errno, strerror(errno));
 	}
 
 	if(bind(sock, (struct sockaddr *)&sin, len) < 0)
 	{
-		cs_log("HTTP Server couldn't bind on port %d (errno=%d %s). Not starting HTTP!", cfg.http_port, errno, strerror(errno));
+		cs_log("HTTP server couldn't bind on port %d (errno=%d %s). Not starting HTTP!", cfg.http_port, errno, strerror(errno));
 		close(sock);
 		return NULL;
 	}
 
 	if(listen(sock, SOMAXCONN) < 0)
 	{
-		cs_log("HTTP Server: Call to listen() failed! (errno=%d %s)", errno, strerror(errno));
+		cs_log("HTTP server: Call to listen() failed! (errno=%d %s)", errno, strerror(errno));
 		close(sock);
 		return NULL;
 	}
@@ -9812,9 +9812,9 @@ static void *http_server(void *UNUSED(d))
 		else { ssl_active = 1; }
 	}
 	else { ssl_active = 0; }
-	cs_log("HTTP%s Server running. ip=%s port=%d (%s)", ssl_active ? "S" : "", cs_inet_ntoa(SIN_GET_ADDR(sin)), cfg.http_port, ssl_active ? OPENSSL_VERSION_TEXT : "no SSL");
+	cs_log("HTTP%s server running. ip=%s port=%d (%s)", ssl_active ? "S" : "", cs_inet_ntoa(SIN_GET_ADDR(sin)), cfg.http_port, ssl_active ? OPENSSL_VERSION_TEXT : "no SSL");
 #else
-	cs_log("HTTP Server running. ip=%s port=%d", cs_inet_ntoa(SIN_GET_ADDR(sin)), cfg.http_port);
+	cs_log("HTTP server running. ip=%s port=%d", cs_inet_ntoa(SIN_GET_ADDR(sin)), cfg.http_port);
 #endif
 
 	struct SOCKADDR remote;
@@ -9828,7 +9828,7 @@ static void *http_server(void *UNUSED(d))
 				{ break; }
 			if(errno != EAGAIN && errno != EINTR)
 			{
-				cs_log("HTTP Server: Error calling accept() (errno=%d %s)", errno, strerror(errno));
+				cs_log("HTTP server: Error calling accept() (errno=%d %s)", errno, strerror(errno));
 				cs_sleepms(100);
 			}
 			else { cs_sleepms(5); }
@@ -9896,7 +9896,7 @@ static void *http_server(void *UNUSED(d))
 	OPENSSL_free(lock_cs);
 	lock_cs = NULL;
 #endif
-	cs_log("HTTP Server stopped");
+	cs_log("HTTP server stopped");
 	free_client(cl);
 	close(sock);
 	return NULL;
