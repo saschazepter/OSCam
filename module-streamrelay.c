@@ -33,6 +33,7 @@ char stream_source_host[256];
 char *stream_source_auth = NULL;
 uint32_t cluster_size = 50;
 bool has_dvbcsa_ecm = 0, is_dvbcsa_static = 1;
+struct s_client *streamrelay_client;
 
 static uint8_t stream_server_mutex_init = 0;
 static pthread_mutex_t stream_server_mutex;
@@ -794,13 +795,8 @@ static void *stream_client_handler(void *arg)
 
 	struct dvbcsa_bs_batch_s *tsbbatch;
 
-	struct s_client *cl = create_client(get_null_ip());
-	if(cl)
-	{
-		SAFE_SETSPECIFIC(getclient, cl);
-		cl->typ = 'c';
-		free_client(cl);
-	}
+	streamrelay_client->typ = 'c';
+	SAFE_SETSPECIFIC(getclient, streamrelay_client);
 	set_thread_name(__func__);
 
 	cs_log("Stream client %i connected", conndata->connid);
@@ -1068,7 +1064,7 @@ static void *stream_client_handler(void *arg)
 	return NULL;
 }
 
-static void *stream_server(void *cl)
+static void *stream_server(void *cli)
 {
 #ifdef IPV6SUPPORT
 	struct sockaddr_in6 servaddr, cliaddr;
@@ -1080,7 +1076,10 @@ static void *stream_server(void *cl)
 	int8_t connaccepted;
 	stream_client_conn_data *conndata;
 
-	SAFE_SETSPECIFIC(getclient, cl);
+	streamrelay_client = (struct s_client *)cli;
+	streamrelay_client->thread = pthread_self();
+	SAFE_SETSPECIFIC(getclient, streamrelay_client);
+	if(streamrelay_client) { free_client(streamrelay_client); };
 	set_thread_name(__func__);
 
 	cluster_size = dvbcsa_bs_batch_size();
@@ -1226,7 +1225,7 @@ static void *stream_server(void *cl)
 				cs_log("ERROR: stream client %i setsockopt() failed for TCP_NODELAY", conndata->connid);
 			}
 
-			start_thread("stream client", stream_client_handler, (void*)conndata, NULL, 1, 0);
+			start_thread("stream client", stream_client_handler, (void*)conndata, &streamrelay_client->thread, 1, 0);
 		}
 		else
 		{
@@ -1243,7 +1242,7 @@ static void *stream_server(void *cl)
 	return NULL;
 }
 
-void init_stream_server(void)
+void *streamreleay_handler(struct s_client *cl, uint8_t *UNUSED(mbuf), int32_t module_idx)
 {
 	char authtmp[128];
 
@@ -1258,12 +1257,15 @@ void init_stream_server(void)
 			b64encode(authtmp, cs_strlen(authtmp), &stream_source_auth);
 		}
 
-		struct s_client *cl = cur_client();
-		if (start_thread("stream_server", stream_server, (void *)cl, NULL, 1, 1) == 0)
+		cl = create_client(get_null_ip());
+		cl->module_idx = module_idx;
+		cl->typ = 's';
+		if (start_thread("stream_server", stream_server, (void *)cl, &cl->thread, 1, 1) == 0)
 		{
 			cs_log("Stream Relay server initialized");
 		}
 	}
+	return NULL;
 }
 
 void stop_stream_server(void)
@@ -1292,4 +1294,13 @@ void stop_stream_server(void)
 	close(glistenfd);
 }
 
+/*
+ * protocol structure
+ */
+void module_streamrelay(struct s_module *ph)
+{
+	ph->desc = "streamrelay";
+	ph->type = MOD_CONN_SERIAL;
+	ph->s_handler = streamreleay_handler;
+}
 #endif // MODULE_STREAMRELAY
