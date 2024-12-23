@@ -926,13 +926,10 @@ static bool streamrelay_should_save_fn(void *UNUSED(var))
 static const struct config_list streamrelay_opts[] =
 {
 	DEF_OPT_SAVE_FUNC(streamrelay_should_save_fn),
-	DEF_OPT_STR("stream_source_host"             , OFS(stream_source_host),           "127.0.0.1"),
+	DEF_OPT_STR("stream_source_host"             , OFS(stream_source_host),           NULL),
 	DEF_OPT_INT32("stream_source_port"           , OFS(stream_source_port),           DEFAULT_STREAM_SOURCE_PORT),
 	DEF_OPT_STR("stream_source_auth_user"        , OFS(stream_source_auth_user),      NULL),
 	DEF_OPT_STR("stream_source_auth_password"    , OFS(stream_source_auth_password),  NULL),
-#ifdef MODULE_RADEGAST
-	DEF_OPT_INT8("stream_client_source_host"     , OFS(stream_client_source_host),    0),
-#endif
 	DEF_OPT_INT32("stream_relay_port"            , OFS(stream_relay_port),            17999),
 	DEF_OPT_INT8("stream_relay_enabled"          , OFS(stream_relay_enabled),         0),
 	DEF_OPT_UINT32("stream_relay_buffer_time"    , OFS(stream_relay_buffer_time),     0),
