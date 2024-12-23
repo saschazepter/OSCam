@@ -2446,9 +2446,6 @@ struct s_config
 	char			*stream_source_auth_user;
 	char			*stream_source_auth_password;
 	int32_t			stream_relay_port;
-#ifdef MODULE_RADEGAST
-	int8_t			stream_client_source_host;
-#endif
 	int8_t			stream_relay_enabled;
 	uint32_t		stream_relay_buffer_time;
 	int8_t			stream_relay_reconnect_count;
