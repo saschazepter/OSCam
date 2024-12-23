@@ -85,7 +85,7 @@ static bool send_to_radegast(uint8_t* data, int len)
 {
 	if (send(gRadegastFd, data, len, 0) < 0)
 	{
-		cs_log("send_to_radegast: Send failure");
+		cs_log("send_to_radegast: Send failure! (errno=%d %s)", errno, strerror(errno));
 		return false;
 	}
 	return true;
@@ -105,7 +105,10 @@ static void radegast_client_ecm(stream_client_data *cdata)
 	static uint8_t payload_static_len = 12;
 
 	if (gRadegastFd <= 0)
-		{ connect_to_radegast(); }
+	{
+		cs_log("HTTP stream including ECM header. Connecting radegast server to parse ECM data");
+		connect_to_radegast();
+	}
 
 	packet_len = header_len + payload_static_len + section_length;
 	uint8_t outgoing_data[packet_len];
@@ -892,7 +895,11 @@ static void *stream_client_handler(void *arg)
 	cs_log_dbg(D_READER, "Stream client %i received srvid: %04X tsid: %04X onid: %04X ens: %08X",
 				conndata->connid, data->srvid, data->tsid, data->onid, data->ens);
 
-	snprintf(http_buf, 1024, "HTTP/1.0 200 OK\nConnection: Close\nContent-Type: video/mpeg\nServer: stream_enigma2\n\n");
+	snprintf(http_buf, 1024,
+			"HTTP/1.0 200 OK\n"
+			"Connection: Close\n"
+			"Content-Type: video/mpeg\n"
+			"Server: stream_enigma2\n\n");
 	clientStatus = send(conndata->connfd, http_buf, cs_strlen(http_buf), 0);
 
 	data->connid = conndata->connid;
@@ -1154,7 +1161,9 @@ static void *stream_server(void *cli)
 		close(glistenfd);
 		return NULL;
 	}
+
 	cs_log("Stream Relay server initialized. ip=%s port=%d", cs_inet_ntoa(SIN_GET_ADDR(servaddr)), cfg.stream_relay_port);
+
 	while (!exit_oscam)
 	{
 		clilen = sizeof(cliaddr);
@@ -1168,26 +1177,9 @@ static void *stream_server(void *cli)
 
 		connaccepted = 0;
 
-#ifdef MODULE_RADEGAST
-		if(cfg.stream_client_source_host)
-		{
-#ifdef IPV6SUPPORT
-			// Read ip of client who wants to play the stream
-			unsigned char *ip = (unsigned char *)&cliaddr.sin6_addr;
-			cs_log("Stream Client ip is: %02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x, will fetch stream there\n", ip[0], ip[1], ip[2], ip[3], ip[4], ip[5], ip[6], ip[7], ip[8], ip[9], ip[10], ip[11], ip[12], ip[13], ip[14], ip[15]);
-
-			// Store ip of client in stream_source_host variable
-			snprintf(stream_source_host, sizeof(stream_source_host), "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x", ip[0], ip[1], ip[2], ip[3], ip[4], ip[5], ip[6], ip[7], ip[8], ip[9], ip[10], ip[11], ip[12], ip[13], ip[14], ip[15]);
-#else
-			// Read ip of client who wants to play the stream
-			unsigned char *ip = (unsigned char *)&cliaddr.sin_addr.s_addr;
-			cs_log("Stream Client ip is: %d.%d.%d.%d, will fetch stream there\n", ip[0], ip[1], ip[2], ip[3]);
-
-			// Store ip of client in stream_source_host variable
-			snprintf(stream_source_host, sizeof(stream_source_host), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-#endif
-		}
-#endif
+		// Read ip of client who wants to play the stream or use stream_source_host variable from config
+		cs_strncpy(stream_source_host, cfg.stream_source_host ? cfg.stream_source_host : cs_inet_ntoa(SIN_GET_ADDR(cliaddr)), sizeof(stream_source_host));
+		cs_log("Stream Client IP address: %s (%s)", stream_source_host, cfg.stream_source_host ? "configured" : "auto");
 
 		if (cs_malloc(&conndata, sizeof(stream_client_conn_data)))
 		{
@@ -1243,8 +1235,6 @@ void *streamreleay_handler(struct s_client *cl, uint8_t *UNUSED(mbuf), int32_t m
 
 	if (cfg.stream_relay_enabled)
 	{
-
-		cs_strncpy(stream_source_host, cfg.stream_source_host, sizeof(stream_source_host));
 
 		if (cfg.stream_source_auth_user && cfg.stream_source_auth_password)
 		{

@@ -1305,15 +1305,13 @@ static char *send_oscam_config_streamrelay(struct templatevars *vars, struct uri
 
 	webif_save_config("streamrelay", vars, params);
 
-	tpl_printf(vars, TPLADD, "STREAM_SOURCE_HOST", "%s", cfg.stream_source_host);
+	if(cfg.stream_source_host)
+		{ tpl_printf(vars, TPLADD, "STREAM_SOURCE_HOST", "%s", cfg.stream_source_host); }
 	tpl_printf(vars, TPLADD, "STREAM_SOURCE_PORT", "%d", cfg.stream_source_port);
 	if(cfg.stream_source_auth_user)
 		{ tpl_printf(vars, TPLADD, "STREAM_SOURCE_AUTH_USER", "%s", cfg.stream_source_auth_user); }
 	if(cfg.stream_source_auth_password)
 		{ tpl_printf(vars, TPLADD, "STREAM_SOURCE_AUTH_PASSWORD", "%s", cfg.stream_source_auth_password); }
-#ifdef MODULE_RADEGAST
-	tpl_addVar(vars, TPLADD, "STREAM_CLIENT_SOURCE_HOST", (cfg.stream_client_source_host == 1) ? "checked" : "");
-#endif
 	tpl_printf(vars, TPLADD, "STREAM_RELAY_PORT", "%d", cfg.stream_relay_port);
 	tpl_printf(vars, TPLADD, "STREAM_RELAY_BUFFER_TIME", "%d", cfg.stream_relay_buffer_time);
 	tpl_printf(vars, TPLADD, "STREAM_RELAY_RECONNECT_COUNT", "%d", cfg.stream_relay_reconnect_count);
