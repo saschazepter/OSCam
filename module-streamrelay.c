@@ -37,9 +37,9 @@ bool has_dvbcsa_ecm = 0, is_dvbcsa_static = 1;
 
 static uint8_t stream_server_mutex_init = 0;
 static pthread_mutex_t stream_server_mutex;
-static int32_t glistenfd, mod_idx, gconncount = 0, gconnfd[STREAM_SERVER_MAX_CONNECTIONS];
+static int32_t glistenfd, mod_idx, gconncount = 0, gconnfd[STREAM_SERVER_MAX_CONNECTIONS], stream_resptime[STREAM_SERVER_MAX_CONNECTIONS];
+static char ecm_src[STREAM_SERVER_MAX_CONNECTIONS][9];
 struct s_client *streamrelay_client[STREAM_SERVER_MAX_CONNECTIONS];
-char ecm_src[STREAM_SERVER_MAX_CONNECTIONS][9];
 
 static pthread_mutex_t fixed_key_srvid_mutex;
 static uint16_t stream_cur_srvid[STREAM_SERVER_MAX_CONNECTIONS];
@@ -184,7 +184,7 @@ static void update_client(ECM_REQUEST *er, int32_t connid)
 	streamrelay_client[connid]->last_provid = er->prid;
 	streamrelay_client[connid]->last_caid = er->caid;
 	snprintf(streamrelay_client[connid]->lastreader, sizeof(streamrelay_client[connid]->lastreader), "<-> %.*s", 13, ecm_src[connid]);
-	streamrelay_client[connid]->cwlastresptime = er->client->cwlastresptime;
+	streamrelay_client[connid]->cwlastresptime = stream_resptime[connid];
 	streamrelay_client[connid]->lastecm = now;
 	streamrelay_client[connid]->lastswitch = streamrelay_client[connid]->last = time((time_t *)0); // reset idle-Time & last switch
 }
@@ -819,6 +819,8 @@ static void *stream_client_handler(void *arg)
 	uint32_t remainingDataPos, remainingDataLength, tmp_pids[4];
 	uint8_t descrambling = 0;
 
+	struct timeb start, end;
+
 	const int32_t cur_dvb_buffer_size = DVB_BUFFER_SIZE_CSA;
 	const int32_t cur_dvb_buffer_wait = DVB_BUFFER_WAIT_CSA;
 
@@ -971,6 +973,7 @@ static void *stream_client_handler(void *arg)
 				&& (streamConnectErrorCount < 3 || streamDataErrorCount < 15))
 #endif
 		{
+			cs_ftime(&start);
 			streamStatus = recv(streamfd, stream_buf + bytesRead, cur_dvb_buffer_size - bytesRead, MSG_WAITALL);
 			if (streamStatus == 0) // socket closed
 			{
@@ -1089,6 +1092,8 @@ static void *stream_client_handler(void *arg)
 					bytesRead = remainingDataLength;
 				}
 			}
+			cs_ftime(&end);
+			stream_resptime[conndata->connid] = comp_timeb(&end, &start);
 		}
 
 		close(streamfd);
