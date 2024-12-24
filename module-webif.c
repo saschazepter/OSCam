@@ -1305,6 +1305,17 @@ static char *send_oscam_config_streamrelay(struct templatevars *vars, struct uri
 
 	webif_save_config("streamrelay", vars, params);
 
+	tpl_printf(vars, TPLADD, "TMP", "STREAMRELAYENABLEDSELECTED%d", cfg.stream_relay_enabled);
+	tpl_addVar(vars, TPLADD, tpl_getVar(vars, "TMP"), "selected");
+
+	tpl_printf(vars, TPLADD, "STREAM_RELAY_PORT", "%d", cfg.stream_relay_port);
+	if(cfg.stream_relay_user)
+		{ tpl_printf(vars, TPLADD, "STREAM_RELAY_USER", "%s", cfg.stream_relay_user); }
+
+	value = mk_t_caidtab(&cfg.stream_relay_ctab);
+	tpl_addVar(vars, TPLADD, "STREAM_RELAY_CTAB", value);
+	free_mk_t(value);
+
 	if(cfg.stream_source_host)
 		{ tpl_printf(vars, TPLADD, "STREAM_SOURCE_HOST", "%s", cfg.stream_source_host); }
 	tpl_printf(vars, TPLADD, "STREAM_SOURCE_PORT", "%d", cfg.stream_source_port);
@@ -1312,16 +1323,9 @@ static char *send_oscam_config_streamrelay(struct templatevars *vars, struct uri
 		{ tpl_printf(vars, TPLADD, "STREAM_SOURCE_AUTH_USER", "%s", cfg.stream_source_auth_user); }
 	if(cfg.stream_source_auth_password)
 		{ tpl_printf(vars, TPLADD, "STREAM_SOURCE_AUTH_PASSWORD", "%s", cfg.stream_source_auth_password); }
-	tpl_printf(vars, TPLADD, "STREAM_RELAY_PORT", "%d", cfg.stream_relay_port);
+
 	tpl_printf(vars, TPLADD, "STREAM_RELAY_BUFFER_TIME", "%d", cfg.stream_relay_buffer_time);
 	tpl_printf(vars, TPLADD, "STREAM_RELAY_RECONNECT_COUNT", "%d", cfg.stream_relay_reconnect_count);
-
-	tpl_printf(vars, TPLADD, "TMP", "STREAMRELAYENABLEDSELECTED%d", cfg.stream_relay_enabled);
-	tpl_addVar(vars, TPLADD, tpl_getVar(vars, "TMP"), "selected");
-
-	value = mk_t_caidtab(&cfg.stream_relay_ctab);
-	tpl_addVar(vars, TPLADD, "STREAM_RELAY_CTAB", value);
-	free_mk_t(value);
 
 	return tpl_getTpl(vars, "CONFIGSTREAMRELAY");
 }
