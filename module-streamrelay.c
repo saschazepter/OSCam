@@ -29,7 +29,6 @@ typedef struct
 	int32_t connid;
 	IN_ADDR_T connip;
 	in_port_t connport;
-	int32_t module_idx;
 } stream_client_conn_data;
 
 char *stream_source_auth = NULL;
@@ -38,7 +37,7 @@ bool has_dvbcsa_ecm = 0, is_dvbcsa_static = 1;
 
 static uint8_t stream_server_mutex_init = 0;
 static pthread_mutex_t stream_server_mutex;
-static int32_t glistenfd, gconncount = 0, gconnfd[STREAM_SERVER_MAX_CONNECTIONS];
+static int32_t glistenfd, mod_idx, gconncount = 0, gconnfd[STREAM_SERVER_MAX_CONNECTIONS];
 struct s_client *streamrelay_client[STREAM_SERVER_MAX_CONNECTIONS];
 char ecm_src[STREAM_SERVER_MAX_CONNECTIONS][9];
 
@@ -184,7 +183,7 @@ static void update_client(ECM_REQUEST *er, int32_t connid)
 	streamrelay_client[connid]->last_srvid = er->srvid;
 	streamrelay_client[connid]->last_provid = er->prid;
 	streamrelay_client[connid]->last_caid = er->caid;
-	snprintf(streamrelay_client[connid]->lastreader, 13, "<-> %s", ecm_src[connid]);
+	snprintf(streamrelay_client[connid]->lastreader, sizeof(streamrelay_client[connid]->lastreader), "<-> %.*s", 13, ecm_src[connid]);
 	streamrelay_client[connid]->cwlastresptime = er->client->cwlastresptime;
 	streamrelay_client[connid]->lastecm = now;
 	streamrelay_client[connid]->lastswitch = streamrelay_client[connid]->last = time((time_t *)0); // reset idle-Time & last switch
@@ -789,7 +788,7 @@ static void stream_client_disconnect(stream_client_conn_data *conndata)
 
 static void streamrelay_auth_client(struct s_client *cl)
 {
-	int32_t ok;
+	int32_t ok = 0;
 	struct s_auth *account;
 
 	for(account = cfg.account; cfg.stream_relay_user && account; account = account->next)
@@ -827,7 +826,7 @@ static void *stream_client_handler(void *arg)
 
 	streamrelay_client[conndata->connid] = create_client(conndata->connip);
 	streamrelay_client[conndata->connid]->port = conndata->connport;
-	streamrelay_client[conndata->connid]->module_idx = conndata->module_idx;
+	streamrelay_client[conndata->connid]->module_idx = mod_idx;
 	streamrelay_client[conndata->connid]->typ = 'c';
 	streamrelay_client[conndata->connid]->thread = pthread_self();
 	SAFE_SETSPECIFIC(getclient, streamrelay_client[conndata->connid]);
@@ -1108,7 +1107,7 @@ static void *stream_client_handler(void *arg)
 	return NULL;
 }
 
-static void *stream_server(void *module_idx)
+static void *stream_server(void)
 {
 #ifdef IPV6SUPPORT
 	struct sockaddr_in6 servaddr, cliaddr;
@@ -1243,7 +1242,6 @@ static void *stream_server(void *module_idx)
 						}
 						conndata->connip = SIN_GET_ADDR(cliaddr);
 						conndata->connport = ntohs(SIN_GET_PORT(cliaddr));
-						conndata->module_idx = (int32_t) module_idx;
 						break;
 					}
 				}
@@ -1288,8 +1286,8 @@ void *streamrelay_handler(struct s_client *UNUSED(cl), uint8_t *UNUSED(mbuf), in
 			snprintf(authtmp, sizeof(authtmp), "%s:%s", cfg.stream_source_auth_user, cfg.stream_source_auth_password);
 			b64encode(authtmp, cs_strlen(authtmp), &stream_source_auth);
 		}
-
-		start_thread("stream_server", stream_server, (void *)module_idx, NULL, 1, 1);
+		mod_idx = module_idx;
+		start_thread("stream_server", stream_server, NULL, NULL, 1, 1);
 	}
 	return NULL;
 }
