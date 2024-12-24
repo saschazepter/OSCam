@@ -176,7 +176,7 @@ static void write_cw(ECM_REQUEST *er, int32_t connid)
 	}
 }
 
-static void update_client(ECM_REQUEST *er, int32_t connid)
+static void update_client_info(ECM_REQUEST *er, int32_t connid)
 {
 	time_t now;
 	time(&now);
@@ -201,7 +201,7 @@ bool stream_write_cw(ECM_REQUEST *er)
 			if (stream_cur_srvid[i] == er->srvid)
 			{
 				write_cw(er, i);
-				update_client(er, i);
+				update_client_info(er, i);
 				cw_written = true;
 				// don't return as there might be more connections for the same channel (e.g. recordings)
 			}
@@ -1323,11 +1323,6 @@ void stop_stream_server(void)
 	close(glistenfd);
 }
 
-static void streamrelay_idle(struct s_client *cl)
-{
-	cl->lastswitch = cl->last = time((time_t *)0); // reset idle-Time & last switch
-}
-
 /*
  * protocol structure
  */
@@ -1336,6 +1331,5 @@ void module_streamrelay(struct s_module *ph)
 	ph->desc = "streamrelay";
 	ph->type = MOD_CONN_SERIAL;
 	ph->s_handler = streamrelay_handler;
-	ph->s_idle = streamrelay_idle;
 }
 #endif // MODULE_STREAMRELAY
