@@ -183,7 +183,7 @@ static void update_client_info(ECM_REQUEST *er, int32_t connid)
 	streamrelay_client[connid]->last_srvid = er->srvid;
 	streamrelay_client[connid]->last_provid = er->prid;
 	streamrelay_client[connid]->last_caid = er->caid;
-	snprintf(streamrelay_client[connid]->lastreader, sizeof(streamrelay_client[connid]->lastreader), "<-> %.*s", 13, ecm_src[connid]);
+	snprintf(streamrelay_client[connid]->lastreader, sizeof(streamrelay_client[connid]->lastreader), "⇆ %.*s", 11, ecm_src[connid]);
 	streamrelay_client[connid]->cwlastresptime = stream_resptime[connid];
 	streamrelay_client[connid]->lastecm = now;
 	streamrelay_client[connid]->lastswitch = streamrelay_client[connid]->last = time((time_t *)0); // reset idle-Time & last switch
