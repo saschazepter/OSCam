@@ -183,7 +183,9 @@ static void update_client_info(ECM_REQUEST *er, int32_t connid)
 	streamrelay_client[connid]->last_srvid = er->srvid;
 	streamrelay_client[connid]->last_provid = er->prid;
 	streamrelay_client[connid]->last_caid = er->caid;
+#ifdef WEBIF
 	snprintf(streamrelay_client[connid]->lastreader, sizeof(streamrelay_client[connid]->lastreader), "⇆ %.*s", 11, ecm_src[connid]);
+#endif
 	streamrelay_client[connid]->cwlastresptime = stream_resptime[connid];
 	streamrelay_client[connid]->lastecm = now;
 	streamrelay_client[connid]->lastswitch = streamrelay_client[connid]->last = time((time_t *)0); // reset idle-Time & last switch
@@ -830,6 +832,9 @@ static void *stream_client_handler(void *arg)
 	streamrelay_client[conndata->connid]->port = conndata->connport;
 	streamrelay_client[conndata->connid]->module_idx = mod_idx;
 	streamrelay_client[conndata->connid]->typ = 'c';
+#ifdef WEBIF
+	streamrelay_client[conndata->connid]->wihidden = cfg.stream_hide_client;
+#endif
 	streamrelay_client[conndata->connid]->thread = pthread_self();
 	SAFE_SETSPECIFIC(getclient, streamrelay_client[conndata->connid]);
 	set_thread_name(__func__);
