@@ -930,6 +930,9 @@ static const struct config_list streamrelay_opts[] =
 	DEF_OPT_FUNC("stream_relay_ctab"             , OFS(stream_relay_ctab),            check_caidtab_fn),
 	DEF_OPT_INT32("stream_relay_port"            , OFS(stream_relay_port),            17999),
 	DEF_OPT_STR("stream_relay_user"              , OFS(stream_relay_user),            NULL),
+#ifdef WEBIF
+	DEF_OPT_INT8("stream_hide_client"            , OFS(stream_hide_client),           0),
+#endif
 	DEF_OPT_STR("stream_source_host"             , OFS(stream_source_host),           NULL),
 	DEF_OPT_INT32("stream_source_port"           , OFS(stream_source_port),           DEFAULT_STREAM_SOURCE_PORT),
 	DEF_OPT_STR("stream_source_auth_user"        , OFS(stream_source_auth_user),      NULL),

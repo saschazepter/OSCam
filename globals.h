@@ -2445,6 +2445,7 @@ struct s_config
 	CAIDTAB			stream_relay_ctab;			// use the stream server for these caids
 	int32_t			stream_relay_port;
 	char			*stream_relay_user;
+	int8_t			stream_hide_client;
 	char			*stream_source_host;
 	int32_t			stream_source_port;
 	char			*stream_source_auth_user;
