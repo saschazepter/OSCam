@@ -27,7 +27,7 @@ typedef struct
 {
 	int32_t connfd;
 	int32_t connid;
-	char *connhost;
+	char connhost[256];
 	IN_ADDR_T connip;
 	in_port_t connport;
 } stream_client_conn_data;
@@ -902,18 +902,18 @@ static void *stream_client_handler(void *arg)
 		if(strchr(http_host,':'))
 		{
 			char *hostline = strdup((const char *)&http_host);
-			conndata->connhost = strsep(&hostline, ":");
+			cs_strncpy(conndata->connhost, strsep(&hostline, ":"), sizeof(conndata->connhost));
 		}
 
 		//use streamserver host provided stream_source_host variable from config
 		if(cfg.stream_source_host)
 		{
-			conndata->connhost = cfg.stream_source_host;
+			cs_strncpy(conndata->connhost, cfg.stream_source_host, sizeof(conndata->connhost));
 		}
 		//use streamserver host from stream client itself
-		else if(!conndata->connhost)
+		else if(!cs_strlen(conndata->connhost))
 		{
-			conndata->connhost = cs_inet_ntoa(conndata->connip);
+			cs_strncpy(conndata->connhost, cs_inet_ntoa(conndata->connip), sizeof(conndata->connhost));
 		}
 	}
 
@@ -994,7 +994,7 @@ static void *stream_client_handler(void *arg)
 		streamfd = connect_to_stream(http_buf, 1024, stream_path, conndata->connhost);
 		if (streamfd == -1)
 		{
-			cs_log("WARNING: stream client %i cannot connect to stream source", conndata->connid);
+			cs_log("WARNING: stream client %i - cannot connect to stream source", conndata->connid);
 			streamConnectErrorCount++;
 			cs_sleepms(500);
 			continue;
