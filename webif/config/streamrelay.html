@@ -9,12 +9,16 @@
 					</select>
 				</TD>
 			</TR>
-			<TR><TD><A>Relay Port:</A></TD><TD><input name="stream_relay_port" class="short" type="text" maxlength="5" value="##STREAM_RELAY_PORT##"><A data-p="stream_relay_user" style="margin-left:141px">Relay User:</A>&nbsp;<input name="stream_relay_user" class="medium" type="text" value="##STREAM_RELAY_USER##"></TD></TR>
+			<TR><TD><A>Relay Port:</A></TD><TD><input name="stream_relay_port" class="short" type="text" maxlength="5" value="##STREAM_RELAY_PORT##"></TD></TR>
+			<TR><TD><A>Relay User:</A></TD><TD><input name="stream_relay_user" class="medium" type="text" value="##STREAM_RELAY_USER##"></TD></TR>
 			<TR><TD><A>CAID:</A></TD><TD><input name="stream_relay_ctab" type="text" maxlength="160" value="##STREAM_RELAY_CTAB##"></TD></TR>
-			<TR><TD><A>Source Stream Host:</A></TD><TD>Leave blank to automatically detect the IP address of the stream client<br><input name="stream_source_host" type="text" maxlength="15" value="##STREAM_SOURCE_HOST##"></TD></TR>
+			<TR><TD><A>Source Stream Host:</A></TD><TD><input name="stream_source_host" class="medium" type="text" value="##STREAM_SOURCE_HOST##"><label> (blank for automatic detection)</label></TD></TR>
 			<TR><TD><A>Source Stream Port:</A></TD><TD><input name="stream_source_port" class="short" type="text" maxlength="5" value="##STREAM_SOURCE_PORT##"></TD></TR>
 			<TR><TD><A>Source Stream User:</A></TD><TD><input name="stream_source_auth_user" type="text" value="##STREAM_SOURCE_AUTH_USER##"></TD></TR>
 			<TR><TD><A>Source Stream Password:</A></TD><TD><input name="stream_source_auth_password" type="text" value="##STREAM_SOURCE_AUTH_PASSWORD##"></TD></TR>
 			<TR><TD><A>Relay Buffer Time:</A></TD><TD><input name="stream_relay_buffer_time" class="short" type="text" maxlength="5" value="##STREAM_RELAY_BUFFER_TIME##"><label> ms (delay for stream processing)</label></TD></TR>
 			<TR><TD><A>Relay Reconnect Count:</A></TD><TD><input name="stream_relay_reconnect_count" class="short" type="text" maxlength="2" value="##STREAM_RELAY_RECONNECT_COUNT##"><label> attempts until an interrupted stream is disconnected (0 = disabled)</label></TD></TR>
-			<TR><TD><A>Relay Hide Client:</A></TD><TD><input name="stream_hide_client" value="0" type="hidden"><input name="stream_hide_client" value="1" type="checkbox" ##STREAM_HIDE_CLIENT##><label> hide connected client in WebIf status</label></TD></TR>
+			<TR><TD>Relay Client Options:</TD><TD>
+					<input name="stream_hide_client" value="0" type="hidden"><input name="stream_hide_client" value="1" type="checkbox" ##STREAM_HIDE_CLIENT##><label><A data-p="stream_hide_client"> Hide in WebIf status</A></label>&nbsp;&nbsp;&nbsp;
+					<input name="stream_reuse_client" value="0" type="hidden"><input name="stream_reuse_client" value="1" type="checkbox" ##STREAM_REUSE_CLIENT##><label><A data-p="stream_reuse_client"> Reuse existing client</A></label>
+			</TD></TR>
