@@ -27,6 +27,7 @@ typedef struct
 {
 	int32_t connfd;
 	int32_t connid;
+	char *connhost;
 	IN_ADDR_T connip;
 	in_port_t connport;
 } stream_client_conn_data;
@@ -717,11 +718,12 @@ static void DescrambleTsPackets(stream_client_data *data, uint8_t *stream_buf, u
 	decrypt(oddeven);
 }
 
-static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *stream_path, IN_ADDR_T in_addr)
+static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *stream_path, char *stream_source_host)
 {
 	struct SOCKADDR cservaddr;
+	IN_ADDR_T in_addr;
 
-	int32_t streamfd = socket(DEFAULT_AF, SOCK_STREAM, 0);
+	int32_t streamfd = socket(DEFAULT_AF, SOCK_STREAM, 0), status;
 	if (streamfd == -1) { return -1; }
 
 	struct timeval tv;
@@ -736,6 +738,7 @@ static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *str
 	bzero(&cservaddr, sizeof(cservaddr));
 	SIN_GET_FAMILY(cservaddr) = DEFAULT_AF;
 	SIN_GET_PORT(cservaddr) = htons(cfg.stream_source_port);
+	cs_resolve(stream_source_host, &in_addr, NULL, NULL);
 	SIN_GET_ADDR(cservaddr) = in_addr;
 
 	if (connect(streamfd, (struct sockaddr *)&cservaddr, sizeof(cservaddr)) == -1)
@@ -757,7 +760,10 @@ static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *str
 			(stream_source_auth) ? "\nAuthorization: Basic " : "",
 			(stream_source_auth) ? stream_source_auth : "");
 
-	if (send(streamfd, http_buf, cs_strlen(http_buf), 0) == -1) { return -1; }
+	status = send(streamfd, http_buf, cs_strlen(http_buf), 0);
+	cs_log_dbg(D_READER, "HTTP (send) (%i): %s", status, http_buf);
+	if ( status == -1) { return -1; }
+
 	return streamfd;
 }
 
@@ -782,8 +788,9 @@ static void stream_client_disconnect(stream_client_conn_data *conndata)
 
 	shutdown(conndata->connfd, 2);
 	close(conndata->connfd);
-	if(streamrelay_client[conndata->connid]) { free_client(streamrelay_client[conndata->connid]); };
-	cs_log("Stream client %i disconnected",conndata->connid);
+	if(streamrelay_client[conndata->connid] && !streamrelay_client[conndata->connid]->kill_started)
+		{ free_client(streamrelay_client[conndata->connid]); };
+	cs_log("Stream client %i disconnected. ip=%s port=%d", conndata->connid, cs_inet_ntoa(conndata->connip), conndata->connport);
 
 	NULLFREE(conndata);
 }
@@ -810,7 +817,7 @@ static void *stream_client_handler(void *arg)
 	stream_client_data *data;
 
 	char *http_buf, stream_path[255], stream_path_copy[255];
-	char *saveptr, *token, http_version[4];
+	char *saveptr, *token, http_version[4], http_host[256];
 
 	int8_t streamConnectErrorCount = 0, streamDataErrorCount = 0, streamReconnectCount = 0;
 	int32_t bytesRead = 0, http_status_code = 0;
@@ -845,7 +852,7 @@ static void *stream_client_handler(void *arg)
 		streamrelay_client[conndata->connid]->init_done = 1;
 	}
 
-	cs_log("Stream client %i connected. ip=%s port=%d (%s)", conndata->connid, cs_inet_ntoa(conndata->connip), conndata->connport, cfg.stream_source_host ? "configured" : "auto");
+	cs_log("Stream client %i connected. ip=%s port=%d", conndata->connid, cs_inet_ntoa(conndata->connip), conndata->connport);
 
 	if (!cs_malloc(&http_buf, 1024))
 	{
@@ -869,6 +876,8 @@ static void *stream_client_handler(void *arg)
 	}
 
 	clientStatus = recv(conndata->connfd, http_buf, 1024, 0);
+	cs_log_dbg(D_READER, "HTTP (recv) (%i): %s", clientStatus, http_buf);
+
 	if (clientStatus < 1)
 	{
 		NULLFREE(http_buf);
@@ -879,13 +888,33 @@ static void *stream_client_handler(void *arg)
 	}
 
 	http_buf[1023] = '\0';
-	if (sscanf(http_buf, "GET %254s ", stream_path) < 1)
+	if (sscanf(http_buf, "GET %254s HTTP/%3s Host: %255s ", stream_path, http_version, http_host) < 1)
 	{
 		NULLFREE(http_buf);
 		NULLFREE(stream_buf);
 		NULLFREE(data);
 		stream_client_disconnect(conndata);
 		return NULL;
+	}
+	else
+	{
+		//use streamserver host provided in stream client http request, if host:port was send
+		if(strchr(http_host,':'))
+		{
+			char *hostline = strdup((const char *)&http_host);
+			conndata->connhost = strsep(&hostline, ":");
+		}
+
+		//use streamserver host provided stream_source_host variable from config
+		if(cfg.stream_source_host)
+		{
+			conndata->connhost = cfg.stream_source_host;
+		}
+		//use streamserver host from stream client itself
+		else if(!conndata->connhost)
+		{
+			conndata->connhost = cs_inet_ntoa(conndata->connip);
+		}
 	}
 
 	cs_strncpy(stream_path_copy, stream_path, sizeof(stream_path));
@@ -938,7 +967,7 @@ static void *stream_client_handler(void *arg)
 	stream_cur_srvid[conndata->connid] = data->srvid;
 	SAFE_MUTEX_UNLOCK(&fixed_key_srvid_mutex);
 
-	cs_log("Stream client %i request.   path=%s", conndata->connid, stream_path);
+	cs_log("Stream client %i request.   path=%s host=%s (%s)", conndata->connid, stream_path, conndata->connhost, cfg.stream_source_host ? "config" : strchr(http_host,':') ? "http host" : "client ip");
 
 	cs_log_dbg(D_READER, "Stream client %i received srvid: %04X tsid: %04X onid: %04X ens: %08X",
 				conndata->connid, data->srvid, data->tsid, data->onid, data->ens);
@@ -949,6 +978,7 @@ static void *stream_client_handler(void *arg)
 			"Content-Type: video/mpeg\n"
 			"Server: stream_enigma2\n\n");
 	clientStatus = send(conndata->connfd, http_buf, cs_strlen(http_buf), 0);
+	cs_log_dbg(D_READER, "HTTP (send) (%i): %s", clientStatus, http_buf);
 
 	data->connid = conndata->connid;
 	data->caid = NO_CAID_VALUE;
@@ -961,7 +991,7 @@ static void *stream_client_handler(void *arg)
 	while (!exit_oscam && clientStatus != -1 && streamConnectErrorCount < 3
 			&& streamDataErrorCount < 15)
 	{
-		streamfd = connect_to_stream(http_buf, 1024, stream_path, conndata->connip);
+		streamfd = connect_to_stream(http_buf, 1024, stream_path, conndata->connhost);
 		if (streamfd == -1)
 		{
 			cs_log("WARNING: stream client %i cannot connect to stream source", conndata->connid);
@@ -978,6 +1008,11 @@ static void *stream_client_handler(void *arg)
 				&& (streamConnectErrorCount < 3 || streamDataErrorCount < 15))
 #endif
 		{
+			if(!streamrelay_client[conndata->connid] || streamrelay_client[conndata->connid]->kill)
+			{
+				clientStatus = -1;
+				break;
+			}
 			cs_ftime(&start);
 			streamStatus = recv(streamfd, stream_buf + bytesRead, cur_dvb_buffer_size - bytesRead, MSG_WAITALL);
 			if (streamStatus == 0) // socket closed
@@ -1128,7 +1163,6 @@ static void *stream_server(void)
 	int32_t connfd, reuse = 1, i;
 	int8_t connaccepted;
 	stream_client_conn_data *conndata;
-	IN_ADDR_T in_addr;
 
 	struct s_client *client = first_client;
 	client->thread = pthread_self();
@@ -1243,15 +1277,9 @@ static void *stream_server(void)
 
 						conndata->connfd = connfd;
 						conndata->connid = i;
-
-						// Force using stream_source_host variable from config
-						if(cfg.stream_source_host)
-						{
-							cs_resolve(cfg.stream_source_host, &in_addr, NULL, NULL);
-							SIN_GET_ADDR(cliaddr) = in_addr;
-						}
 						conndata->connip = SIN_GET_ADDR(cliaddr);
 						conndata->connport = ntohs(SIN_GET_PORT(cliaddr));
+						//conndata->connport = cfg.stream_source_port;
 						break;
 					}
 				}
@@ -1326,6 +1354,8 @@ void stop_stream_server(void)
 
 	shutdown(glistenfd, 2);
 	close(glistenfd);
+
+	NULLFREE(stream_source_auth);
 }
 
 /*
