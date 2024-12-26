@@ -2446,6 +2446,7 @@ struct s_config
 	int32_t			stream_relay_port;
 	char			*stream_relay_user;
 	int8_t			stream_hide_client;
+	int8_t			stream_reuse_client;
 	char			*stream_source_host;
 	int32_t			stream_source_port;
 	char			*stream_source_auth_user;

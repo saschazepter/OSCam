@@ -1314,6 +1314,7 @@ static char *send_oscam_config_streamrelay(struct templatevars *vars, struct uri
 #ifdef WEBIF
 	tpl_addVar(vars, TPLADD, "STREAM_HIDE_CLIENT", (cfg.stream_hide_client == 1) ? "checked" : "");
 #endif
+	tpl_addVar(vars, TPLADD, "STREAM_REUSE_CLIENT", (cfg.stream_reuse_client == 1) ? "checked" : "");
 	value = mk_t_caidtab(&cfg.stream_relay_ctab);
 	tpl_addVar(vars, TPLADD, "STREAM_RELAY_CTAB", value);
 	free_mk_t(value);
