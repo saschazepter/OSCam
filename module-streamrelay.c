@@ -823,7 +823,7 @@ static void create_streamrelay_client(stream_client_conn_data *conndata)
 		{
 			if (streamrelay_client[i])
 			{
-				if (strstr(streamrelay_client[i]->lastreader, ecm_src[i]))
+				if (!streamrelay_client[i]->kill)
 				{
 					streamrelay_client[conndata->connid] = streamrelay_client[i];
 					exists = 1;
