@@ -763,7 +763,7 @@ static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *str
 			(stream_source_auth) ? stream_source_auth : "");
 
 	status = send(streamfd, http_buf, cs_strlen(http_buf), 0);
-	cs_log_dbg(D_CLIENT, "HTTP (send) (%i): %s", status, remove_newline_chars(http_buf));
+	cs_log_dbg(D_CLIENT, "HTTP (send) (%i): %s", status, remove_newline_chars((const char *)&http_buf));
 	if ( status == -1) { return -1; }
 
 	return streamfd;
@@ -791,7 +791,10 @@ static void stream_client_disconnect(stream_client_conn_data *conndata)
 	shutdown(conndata->connfd, 2);
 	close(conndata->connfd);
 	if(streamrelay_client[conndata->connid] && !cfg.stream_reuse_client && !streamrelay_client[conndata->connid]->kill_started)
-		{ free_client(streamrelay_client[conndata->connid]); };
+	{
+		free_client(streamrelay_client[conndata->connid]);
+		streamrelay_client[conndata->connid] = NULL;
+	}
 	cs_log("Stream client %i disconnected. ip=%s port=%d", conndata->connid, cs_inet_ntoa(connip[conndata->connid]), connport[conndata->connid]);
 
 	NULLFREE(conndata);
@@ -823,7 +826,7 @@ static void create_streamrelay_client(stream_client_conn_data *conndata)
 		{
 			if (streamrelay_client[i])
 			{
-				if (strstr(streamrelay_client[i]->lastreader, ecm_src[i]))
+				if (!streamrelay_client[i]->kill)
 				{
 					streamrelay_client[conndata->connid] = streamrelay_client[i];
 					exists = 1;
@@ -904,7 +907,7 @@ static void *stream_client_handler(void *arg)
 	}
 
 	clientStatus = recv(conndata->connfd, http_buf, 1024, 0);
-	cs_log_dbg(D_CLIENT, "HTTP (recv) (%i): %s", clientStatus, remove_newline_chars(http_buf));
+	cs_log_dbg(D_CLIENT, "HTTP (recv) (%i): %s", clientStatus, remove_newline_chars((const char *)&http_buf));
 
 	if (clientStatus < 1)
 	{
@@ -934,7 +937,7 @@ static void *stream_client_handler(void *arg)
 		//use host from stream client http request as stream source host, if 'Host: host:port' header was send
 		else if(strchr(http_host,':'))
 		{
-			char *hostline = strdup((const char *)&http_host);
+			char *hostline = cs_strdup((const char *)&http_buf);
 			cs_strncpy(conndata->connhost, strsep(&hostline, ":"), sizeof(conndata->connhost));
 		}
 		//use the IP address of the stream client itself as host for the stream source
@@ -1005,7 +1008,7 @@ static void *stream_client_handler(void *arg)
 			"Content-Type: video/mpeg\n"
 			"Server: stream_enigma2\n\n");
 	clientStatus = send(conndata->connfd, http_buf, cs_strlen(http_buf), 0);
-	cs_log_dbg(D_CLIENT, "HTTP (send) (%i): %s", clientStatus, remove_newline_chars(http_buf));
+	cs_log_dbg(D_CLIENT, "HTTP (send) (%i): %s", clientStatus, remove_newline_chars((const char *)&http_buf));
 
 	data->connid = conndata->connid;
 	data->caid = NO_CAID_VALUE;
