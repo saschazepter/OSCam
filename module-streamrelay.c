@@ -724,6 +724,7 @@ static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *str
 {
 	struct SOCKADDR cservaddr;
 	IN_ADDR_T in_addr;
+	struct utsname buffer; uname(&buffer);
 
 	int32_t streamfd = socket(DEFAULT_AF, SOCK_STREAM, 0), status;
 	if (streamfd == -1) { return -1; }
@@ -751,7 +752,7 @@ static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *str
 
 	snprintf(http_buf, http_buf_len,
 			"GET %s HTTP/1.1\nHost: %s:%u\n"
-			"User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64; rv:38.0) Gecko/20100101 Firefox/38.0\n"
+			"User-Agent: Mozilla/5.0 (%s %s %s; rv:133.0) Gecko/20100101 Firefox/133.0\n"
 			"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\n"
 			"Accept-Language: en-US"
 			"%s%s\n"
@@ -759,6 +760,11 @@ static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *str
 			stream_path,
 			cs_inet_ntoa(in_addr),
 			cfg.stream_source_port,
+#if defined(__linux__)
+			"X11;", buffer.sysname, buffer.machine,
+#else
+			"Windows NT 10.0;", "Win64;", "x64",
+#endif
 			(stream_source_auth) ? "\nAuthorization: Basic " : "",
 			(stream_source_auth) ? stream_source_auth : "");
 
