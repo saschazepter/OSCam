@@ -245,7 +245,7 @@ char *remove_white_chars(char *txt)
 /* Allocates a new empty string and copies txt into it,
    then replace all newline occurances with whitspace.
    You need to free() the result. */
-char *remove_newline_chars(char *txt)
+char *remove_newline_chars(const char *txt)
 {
 	char *result;
 	if(!txt)

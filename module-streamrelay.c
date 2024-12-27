@@ -791,7 +791,9 @@ static void stream_client_disconnect(stream_client_conn_data *conndata)
 	shutdown(conndata->connfd, 2);
 	close(conndata->connfd);
 	if(streamrelay_client[conndata->connid] && !cfg.stream_reuse_client && !streamrelay_client[conndata->connid]->kill_started)
-		{ free_client(streamrelay_client[conndata->connid]); };
+	{
+		free_client(streamrelay_client[conndata->connid]);
+	}
 	cs_log("Stream client %i disconnected. ip=%s port=%d", conndata->connid, cs_inet_ntoa(connip[conndata->connid]), connport[conndata->connid]);
 
 	NULLFREE(conndata);
@@ -823,7 +825,7 @@ static void create_streamrelay_client(stream_client_conn_data *conndata)
 		{
 			if (streamrelay_client[i])
 			{
-				if (strstr(streamrelay_client[i]->lastreader, ecm_src[i]))
+				if (!streamrelay_client[i]->kill)
 				{
 					streamrelay_client[conndata->connid] = streamrelay_client[i];
 					exists = 1;
@@ -934,7 +936,7 @@ static void *stream_client_handler(void *arg)
 		//use host from stream client http request as stream source host, if 'Host: host:port' header was send
 		else if(strchr(http_host,':'))
 		{
-			char *hostline = strdup((const char *)&http_host);
+			char *hostline = cs_strdup((const char *)&http_host);
 			cs_strncpy(conndata->connhost, strsep(&hostline, ":"), sizeof(conndata->connhost));
 		}
 		//use the IP address of the stream client itself as host for the stream source
