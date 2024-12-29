@@ -1307,14 +1307,9 @@ static char *send_oscam_config_streamrelay(struct templatevars *vars, struct uri
 
 	tpl_printf(vars, TPLADD, "TMP", "STREAMRELAYENABLEDSELECTED%d", cfg.stream_relay_enabled);
 	tpl_addVar(vars, TPLADD, tpl_getVar(vars, "TMP"), "selected");
-
 	tpl_printf(vars, TPLADD, "STREAM_RELAY_PORT", "%d", cfg.stream_relay_port);
 	if(cfg.stream_relay_user)
 		{ tpl_printf(vars, TPLADD, "STREAM_RELAY_USER", "%s", cfg.stream_relay_user); }
-#ifdef WEBIF
-	tpl_addVar(vars, TPLADD, "STREAM_HIDE_CLIENT", (cfg.stream_hide_client == 1) ? "checked" : "");
-#endif
-	tpl_addVar(vars, TPLADD, "STREAM_REUSE_CLIENT", (cfg.stream_reuse_client == 1) ? "checked" : "");
 	value = mk_t_caidtab(&cfg.stream_relay_ctab);
 	tpl_addVar(vars, TPLADD, "STREAM_RELAY_CTAB", value);
 	free_mk_t(value);
@@ -1329,6 +1324,13 @@ static char *send_oscam_config_streamrelay(struct templatevars *vars, struct uri
 
 	tpl_printf(vars, TPLADD, "STREAM_RELAY_BUFFER_TIME", "%d", cfg.stream_relay_buffer_time);
 	tpl_printf(vars, TPLADD, "STREAM_RELAY_RECONNECT_COUNT", "%d", cfg.stream_relay_reconnect_count);
+
+	tpl_printf(vars, TPLADD, "TMP", "STREAMCONFIGCLIENTSELECTED%d", cfg.stream_display_client);
+	tpl_addVar(vars, TPLADD, tpl_getVar(vars, "TMP"), "selected");
+	tpl_addVar(vars, TPLADD, "STREAM_REUSE_CLIENT", (cfg.stream_reuse_client == 1) ? "checked" : "");
+#ifdef WEBIF
+	tpl_addVar(vars, TPLADD, "STREAM_HIDE_CLIENT", (cfg.stream_hide_client == 1) ? "checked" : "");
+#endif
 
 	return tpl_getTpl(vars, "CONFIGSTREAMRELAY");
 }

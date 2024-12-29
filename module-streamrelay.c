@@ -27,7 +27,7 @@ typedef struct
 {
 	int32_t connfd;
 	int32_t connid;
-	char connhost[256];
+	char stream_host[256];
 } stream_client_conn_data;
 
 char *stream_source_auth = NULL;
@@ -38,8 +38,8 @@ static uint8_t stream_server_mutex_init = 0;
 static pthread_mutex_t stream_server_mutex;
 static int32_t glistenfd, mod_idx, gconncount = 0, gconnfd[STREAM_SERVER_MAX_CONNECTIONS], stream_resptime[STREAM_SERVER_MAX_CONNECTIONS];
 static char ecm_src[STREAM_SERVER_MAX_CONNECTIONS][9];
-static IN_ADDR_T connip[STREAM_SERVER_MAX_CONNECTIONS];
-static in_port_t connport[STREAM_SERVER_MAX_CONNECTIONS];
+static IN_ADDR_T client_ip[STREAM_SERVER_MAX_CONNECTIONS], stream_host_ip[STREAM_SERVER_MAX_CONNECTIONS];
+static in_port_t client_port[STREAM_SERVER_MAX_CONNECTIONS];
 struct s_client *streamrelay_client[STREAM_SERVER_MAX_CONNECTIONS];
 
 static pthread_mutex_t fixed_key_srvid_mutex;
@@ -181,8 +181,16 @@ static void update_client_info(ECM_REQUEST *er, int32_t connid)
 {
 	time_t now;
 	time(&now);
-	streamrelay_client[connid]->ip = connip[connid];
-	streamrelay_client[connid]->port = connport[connid];
+	if(cfg.stream_display_client)
+	{
+		streamrelay_client[connid]->ip = stream_host_ip[connid];
+		streamrelay_client[connid]->port = cfg.stream_source_port;
+	}
+	else
+	{
+		streamrelay_client[connid]->ip = client_ip[connid];
+		streamrelay_client[connid]->port = client_port[connid];
+	}
 	streamrelay_client[connid]->last_srvid = er->srvid;
 	streamrelay_client[connid]->last_provid = er->prid;
 	streamrelay_client[connid]->last_caid = er->caid;
@@ -720,10 +728,9 @@ static void DescrambleTsPackets(stream_client_data *data, uint8_t *stream_buf, u
 	decrypt(oddeven);
 }
 
-static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *stream_path, char *stream_source_host)
+static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *stream_path, char *stream_source_host, IN_ADDR_T *in_addr)
 {
 	struct SOCKADDR cservaddr;
-	IN_ADDR_T in_addr;
 	struct utsname buffer; uname(&buffer);
 
 	int32_t streamfd = socket(DEFAULT_AF, SOCK_STREAM, 0), status;
@@ -741,12 +748,12 @@ static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *str
 	bzero(&cservaddr, sizeof(cservaddr));
 	SIN_GET_FAMILY(cservaddr) = DEFAULT_AF;
 	SIN_GET_PORT(cservaddr) = htons(cfg.stream_source_port);
-	cs_resolve(stream_source_host, &in_addr, NULL, NULL);
-	SIN_GET_ADDR(cservaddr) = in_addr;
+	cs_resolve(stream_source_host, in_addr, NULL, NULL);
+	SIN_GET_ADDR(cservaddr) = *in_addr;
 
 	if (connect(streamfd, (struct sockaddr *)&cservaddr, sizeof(cservaddr)) == -1)
 	{
-		cs_log("WARNING: Connect to stream source port %d failed", cfg.stream_source_port);
+		cs_log("WARNING: Connect to stream source port %d failed.", cfg.stream_source_port);
 		return -1;
 	}
 
@@ -758,7 +765,7 @@ static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *str
 			"%s%s\n"
 			"Connection: keep-alive\n\n",
 			stream_path,
-			cs_inet_ntoa(in_addr),
+			cs_inet_ntoa(*in_addr),
 			cfg.stream_source_port,
 #if defined(__linux__)
 			"X11;", buffer.sysname, buffer.machine,
@@ -796,11 +803,14 @@ static void stream_client_disconnect(stream_client_conn_data *conndata)
 
 	shutdown(conndata->connfd, 2);
 	close(conndata->connfd);
+
+	cs_log("Stream client %i disconnected. ip=%s port=%d", conndata->connid, cs_inet_ntoa(client_ip[conndata->connid]), client_port[conndata->connid]);
+
 	if(streamrelay_client[conndata->connid] && !cfg.stream_reuse_client && !streamrelay_client[conndata->connid]->kill_started)
 	{
+		cs_disconnect_client(streamrelay_client[conndata->connid]);
 		free_client(streamrelay_client[conndata->connid]);
 	}
-	cs_log("Stream client %i disconnected. ip=%s port=%d", conndata->connid, cs_inet_ntoa(connip[conndata->connid]), connport[conndata->connid]);
 
 	NULLFREE(conndata);
 }
@@ -842,13 +852,13 @@ static void create_streamrelay_client(stream_client_conn_data *conndata)
 	}
 
 	if (!exists)
-		{ streamrelay_client[conndata->connid] = create_client(connip[conndata->connid]); }
+		{ streamrelay_client[conndata->connid] = create_client(client_ip[conndata->connid]); }
 
 	streamrelay_client[conndata->connid]->typ = 'c';
 	streamrelay_client[conndata->connid]->module_idx = mod_idx;
 	streamrelay_client[conndata->connid]->thread = pthread_self();
-	streamrelay_client[conndata->connid]->ip = connip[conndata->connid];
-	streamrelay_client[conndata->connid]->port = connport[conndata->connid];
+	streamrelay_client[conndata->connid]->ip = client_ip[conndata->connid];
+	streamrelay_client[conndata->connid]->port = client_port[conndata->connid];
 #ifdef WEBIF
 	streamrelay_client[conndata->connid]->wihidden = cfg.stream_hide_client;
 #endif
@@ -888,7 +898,7 @@ static void *stream_client_handler(void *arg)
 		streamrelay_client[conndata->connid]->init_done = 1;
 	}
 
-	cs_log("Stream client %i connected. ip=%s port=%d", conndata->connid, cs_inet_ntoa(connip[conndata->connid]), connport[conndata->connid]);
+	cs_log("Stream client %i connected. ip=%s port=%d", conndata->connid, cs_inet_ntoa(client_ip[conndata->connid]), client_port[conndata->connid]);
 
 	if (!cs_malloc(&http_buf, 1024))
 	{
@@ -937,18 +947,18 @@ static void *stream_client_handler(void *arg)
 		//use stream_source_host variable from config as stream source host
 		if(cfg.stream_source_host)
 		{
-			cs_strncpy(conndata->connhost, cfg.stream_source_host, sizeof(conndata->connhost));
+			cs_strncpy(conndata->stream_host, cfg.stream_source_host, sizeof(conndata->stream_host));
 		}
 		//use host from stream client http request as stream source host, if 'Host: host:port' header was send
 		else if(strchr(http_host,':'))
 		{
 			char *hostline = cs_strdup((const char *)&http_host);
-			cs_strncpy(conndata->connhost, strsep(&hostline, ":"), sizeof(conndata->connhost));
+			cs_strncpy(conndata->stream_host, strsep(&hostline, ":"), sizeof(conndata->stream_host));
 		}
 		//use the IP address of the stream client itself as host for the stream source
 		else
 		{
-			cs_strncpy(conndata->connhost, cs_inet_ntoa(connip[conndata->connid]), sizeof(conndata->connhost));
+			cs_strncpy(conndata->stream_host, cs_inet_ntoa(client_ip[conndata->connid]), sizeof(conndata->stream_host));
 		}
 	}
 
@@ -1002,7 +1012,7 @@ static void *stream_client_handler(void *arg)
 	stream_cur_srvid[conndata->connid] = data->srvid;
 	SAFE_MUTEX_UNLOCK(&fixed_key_srvid_mutex);
 
-	cs_log("Stream client %i request. host=%s port=%d path=%s (%s)", conndata->connid, conndata->connhost, cfg.stream_source_port, stream_path, cfg.stream_source_host ? "config" : strchr(http_host,':') ? "http header" : "client ip");
+	cs_log("Stream client %i request. host=%s port=%d path=%s (%s)", conndata->connid, conndata->stream_host, cfg.stream_source_port, stream_path, cfg.stream_source_host ? "config" : strchr(http_host,':') ? "http header" : "client ip");
 
 	cs_log_dbg(D_READER, "Stream client %i received srvid: %04X tsid: %04X onid: %04X ens: %08X",
 				conndata->connid, data->srvid, data->tsid, data->onid, data->ens);
@@ -1026,10 +1036,10 @@ static void *stream_client_handler(void *arg)
 	while (!exit_oscam && clientStatus != -1 && streamConnectErrorCount < 3
 			&& streamDataErrorCount < 15)
 	{
-		streamfd = connect_to_stream(http_buf, 1024, stream_path, conndata->connhost);
+		streamfd = connect_to_stream(http_buf, 1024, stream_path, conndata->stream_host, &stream_host_ip[conndata->connid]);
 		if (streamfd == -1)
 		{
-			cs_log("WARNING: stream client %i - cannot connect to stream source", conndata->connid);
+			cs_log("WARNING: stream client %i - cannot connect to stream source host. ip=%s port=%d path=%s", conndata->connid, cs_inet_ntoa(stream_host_ip[conndata->connid]), cfg.stream_source_port, stream_path);
 			streamConnectErrorCount++;
 			cs_sleepms(500);
 			continue;
@@ -1053,7 +1063,7 @@ static void *stream_client_handler(void *arg)
 			streamStatus = recv(streamfd, stream_buf + bytesRead, cur_dvb_buffer_size - bytesRead, MSG_WAITALL);
 			if (streamStatus == 0) // socket closed
 			{
-				cs_log("WARNING: stream client %i - stream source closed connection", conndata->connid);
+				cs_log("WARNING: stream client %i - stream source closed connection.", conndata->connid);
 				streamConnectErrorCount++;
 				cs_sleepms(100);
 				break;
@@ -1074,13 +1084,13 @@ static void *stream_client_handler(void *arg)
 					}
 					else
 					{
-						cs_log("WARNING: stream client %i no data from stream source", conndata->connid);
+						cs_log("WARNING: stream client %i no data from stream source.", conndata->connid);
 					}
 					streamDataErrorCount++; // 2 sec timeout * 15 = seconds no data -> close
 					cs_sleepms(100);
 					continue;
 				}
-				cs_log("WARNING: stream client %i error receiving data from stream source", conndata->connid);
+				cs_log("WARNING: stream client %i error receiving data from stream source.", conndata->connid);
 				streamConnectErrorCount++;
 				cs_sleepms(100);
 				break;
@@ -1098,7 +1108,7 @@ static void *stream_client_handler(void *arg)
 				}
 				else
 				{
-					cs_log_dbg(0, "WARNING: stream client %i non-full buffer from stream source", conndata->connid);
+					cs_log_dbg(0, "WARNING: stream client %i non-full buffer from stream source.", conndata->connid);
 					streamDataErrorCount++;
 					cs_sleepms(100);
 				}
@@ -1313,8 +1323,8 @@ static void *stream_server(void)
 
 						conndata->connfd = connfd;
 						conndata->connid = i;
-						connip[i] = SIN_GET_ADDR(cliaddr);
-						connport[i] = ntohs(SIN_GET_PORT(cliaddr));
+						client_ip[i] = SIN_GET_ADDR(cliaddr);
+						client_port[i] = ntohs(SIN_GET_PORT(cliaddr));
 						break;
 					}
 				}

@@ -2442,17 +2442,20 @@ struct s_config
 
 #ifdef MODULE_STREAMRELAY
 	int8_t			stream_relay_enabled;
-	CAIDTAB			stream_relay_ctab;			// use the stream server for these caids
 	int32_t			stream_relay_port;
 	char			*stream_relay_user;
-	int8_t			stream_hide_client;
-	int8_t			stream_reuse_client;
+	CAIDTAB			stream_relay_ctab;			// use the stream server for these caids
 	char			*stream_source_host;
 	int32_t			stream_source_port;
 	char			*stream_source_auth_user;
 	char			*stream_source_auth_password;
 	uint32_t		stream_relay_buffer_time;
 	int8_t			stream_relay_reconnect_count;
+	int8_t			stream_display_client;
+	int8_t			stream_reuse_client;
+#ifdef WEBIF
+	int8_t			stream_hide_client;
+#endif
 #ifdef WITH_NEUTRINO
 #define DEFAULT_STREAM_SOURCE_PORT 31339 //Neutrino
 #else
