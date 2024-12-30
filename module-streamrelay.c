@@ -874,7 +874,7 @@ static void *stream_client_handler(void *arg)
 
 	int8_t streamConnectErrorCount = 0, streamDataErrorCount = 0, streamReconnectCount = 0;
 	int32_t bytesRead = 0, http_status_code = 0;
-	int32_t i, clientStatus, streamStatus, streamfd;
+	int32_t i, clientStatus, streamStatus, streamfd, last_streamfd = 0;
 
 	uint8_t *stream_buf;
 	uint16_t packetCount = 0, packetSize = 0, startOffset = 0;
@@ -945,7 +945,7 @@ static void *stream_client_handler(void *arg)
 	else
 	{
 		//use stream_source_host variable from config as stream source host
-		if(cfg.stream_source_host)
+		if(!cfg.stream_client_source_host)
 		{
 			cs_strncpy(conndata->stream_host, cfg.stream_source_host, sizeof(conndata->stream_host));
 		}
@@ -1012,7 +1012,7 @@ static void *stream_client_handler(void *arg)
 	stream_cur_srvid[conndata->connid] = data->srvid;
 	SAFE_MUTEX_UNLOCK(&fixed_key_srvid_mutex);
 
-	cs_log("Stream client %i request. host=%s port=%d path=%s (%s)", conndata->connid, conndata->stream_host, cfg.stream_source_port, stream_path, cfg.stream_source_host ? "config" : strchr(http_host,':') ? "http header" : "client ip");
+	cs_log("Stream client %i request. host=%s port=%d path=%s (%s)", conndata->connid, conndata->stream_host, cfg.stream_source_port, stream_path, !cfg.stream_client_source_host ? "config" : strchr(http_host,':') ? "http header" : "client ip");
 
 	cs_log_dbg(D_READER, "Stream client %i received srvid: %04X tsid: %04X onid: %04X ens: %08X",
 				conndata->connid, data->srvid, data->tsid, data->onid, data->ens);
@@ -1063,13 +1063,25 @@ static void *stream_client_handler(void *arg)
 			streamStatus = recv(streamfd, stream_buf + bytesRead, cur_dvb_buffer_size - bytesRead, MSG_WAITALL);
 			if (streamStatus == 0) // socket closed
 			{
-				cs_log("WARNING: stream client %i - stream source closed connection.", conndata->connid);
+				cs_log_dbg(D_CLIENT, "STATUS: streamStatus=%i, streamfd=%i, last_streamfd=%i, streamConnectErrorCount=%i, streamDataErrorCount=%i, bytesRead=%i",
+						streamStatus, streamfd, last_streamfd, streamConnectErrorCount, streamDataErrorCount, bytesRead);
+				if(streamfd == last_streamfd)
+				{
+					cs_log("WARNING: stream client %i - stream source closed connection.", conndata->connid);
+					if(cfg.stream_client_source_host && conndata->stream_host != cfg.stream_source_host && streamDataErrorCount > 0)
+					{
+						cs_strncpy(conndata->stream_host, cfg.stream_source_host, sizeof(conndata->stream_host));
+						cs_log("FALLBACK: stream client %i - try using stream source host from config. host=%s", conndata->connid, conndata->stream_host);
+					}
+				}
+				cs_log_dbg(D_CLIENT, "HTTP (recv) (%i): %s", streamStatus, remove_newline_chars((const char*)stream_buf));
 				streamConnectErrorCount++;
 				cs_sleepms(100);
 				break;
 			}
 			if (streamStatus < 0) // error
 			{
+				cs_log_dbg(D_CLIENT, "HTTP (recv) (%i): %s", streamStatus, remove_newline_chars((const char*)stream_buf));
 				if ((errno == EWOULDBLOCK) | (errno == EAGAIN))
 				{
 					if(cfg.stream_relay_reconnect_count > 0)
@@ -1101,6 +1113,7 @@ static void *stream_client_handler(void *arg)
 					sscanf((const char*)stream_buf, "HTTP/%3s %d ", http_version , &http_status_code) == 2 &&
 					http_status_code != 200)
 				{
+					cs_log_dbg(D_CLIENT, "HTTP (recv) (%i): %s", streamStatus, remove_newline_chars((const char*)stream_buf));
 					cs_log("ERROR: stream client %i got %d response from stream source!", conndata->connid, http_status_code);
 					streamConnectErrorCount++;
 					cs_sleepms(100);
@@ -1182,6 +1195,7 @@ static void *stream_client_handler(void *arg)
 			stream_resptime[conndata->connid] = comp_timeb(&end, &start);
 		}
 
+		last_streamfd = streamfd;
 		close(streamfd);
 	}
 
