@@ -1314,8 +1314,8 @@ static char *send_oscam_config_streamrelay(struct templatevars *vars, struct uri
 	tpl_addVar(vars, TPLADD, "STREAM_RELAY_CTAB", value);
 	free_mk_t(value);
 
-	if(cfg.stream_source_host)
-		{ tpl_printf(vars, TPLADD, "STREAM_SOURCE_HOST", "%s", cfg.stream_source_host); }
+	tpl_printf(vars, TPLADD, "STREAM_SOURCE_HOST", "%s", cfg.stream_source_host);
+	tpl_addVar(vars, TPLADD, "STREAM_CLIENT_SOURCE_HOST", (cfg.stream_client_source_host == 1) ? "checked" : "");
 	tpl_printf(vars, TPLADD, "STREAM_SOURCE_PORT", "%d", cfg.stream_source_port);
 	if(cfg.stream_source_auth_user)
 		{ tpl_printf(vars, TPLADD, "STREAM_SOURCE_AUTH_USER", "%s", cfg.stream_source_auth_user); }
