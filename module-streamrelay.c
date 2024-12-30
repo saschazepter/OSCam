@@ -945,7 +945,7 @@ static void *stream_client_handler(void *arg)
 	else
 	{
 		//use stream_source_host variable from config as stream source host
-		if(cfg.stream_source_host)
+		if(!cfg.stream_client_source_host)
 		{
 			cs_strncpy(conndata->stream_host, cfg.stream_source_host, sizeof(conndata->stream_host));
 		}
@@ -1040,6 +1040,11 @@ static void *stream_client_handler(void *arg)
 		if (streamfd == -1)
 		{
 			cs_log("WARNING: stream client %i - cannot connect to stream source host. ip=%s port=%d path=%s", conndata->connid, cs_inet_ntoa(stream_host_ip[conndata->connid]), cfg.stream_source_port, stream_path);
+			if(cfg.stream_client_source_host && conndata->stream_host != cfg.stream_source_host)
+			{
+				cs_strncpy(conndata->stream_host, cfg.stream_source_host, sizeof(conndata->stream_host));
+				cs_log("FALLBACK: stream client %i - try using stream source host from config. host=%s", conndata->connid, conndata->stream_host);
+			}
 			streamConnectErrorCount++;
 			cs_sleepms(500);
 			continue;
@@ -1064,6 +1069,11 @@ static void *stream_client_handler(void *arg)
 			if (streamStatus == 0) // socket closed
 			{
 				cs_log("WARNING: stream client %i - stream source closed connection.", conndata->connid);
+				if(cfg.stream_client_source_host && conndata->stream_host != cfg.stream_source_host)
+				{
+					cs_strncpy(conndata->stream_host, cfg.stream_source_host, sizeof(conndata->stream_host));
+					cs_log("FALLBACK: stream client %i - try using stream source host from config. host=%s", conndata->connid, conndata->stream_host);
+				}
 				streamConnectErrorCount++;
 				cs_sleepms(100);
 				break;
