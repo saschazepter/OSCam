@@ -1639,7 +1639,7 @@ struct s_reader										// contains device info, reader info and card info
 	int8_t			forceemmg;
 	int8_t			cwpkota;
 	int8_t			headermode;
-
+	struct timeb	last_refresh;
 #endif
 #ifdef CS_CACHEEX
 	CECSP			cacheex;						// CacheEx Settings
