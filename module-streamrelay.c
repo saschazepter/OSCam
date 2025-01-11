@@ -815,16 +815,16 @@ static void create_streamrelay_client(stream_client_conn_data *conndata)
 static void *stream_client_handler(void *arg)
 {
 	stream_client_conn_data *conndata = (stream_client_conn_data *)arg;
-	stream_client_data *data;
+	stream_client_data *data = NULL;
 
-	char *http_buf, stream_path[255], stream_path_copy[255];
+	char *http_buf = NULL, stream_path[255], stream_path_copy[255];
 	char *saveptr, *token, http_version[4], http_host[256];
 
 	int8_t streamConnectErrorCount = 0, streamDataErrorCount = 0, streamReconnectCount = 0;
 	int32_t bytesRead = 0, http_status_code = 0;
 	int32_t i, clientStatus, streamStatus, streamfd, last_streamfd = 0;
 
-	uint8_t *stream_buf;
+	uint8_t *stream_buf = NULL;
 	uint16_t packetCount = 0, packetSize = 0, startOffset = 0;
 	uint32_t remainingDataPos, remainingDataLength, tmp_pids[4];
 	uint8_t descrambling = 0;
