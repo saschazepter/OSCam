@@ -761,8 +761,7 @@ static void stream_client_disconnect(stream_client_conn_data *conndata)
 		free_client(streamrelay_client[conndata->connid]);
 	}
 
-	if(conndata)
-		{ NULLFREE(conndata); }
+	NULLFREE(conndata);
 }
 
 static void streamrelay_auth_client(struct s_client *cl)
@@ -834,7 +833,7 @@ static void *stream_client_handler(void *arg)
 	const int32_t cur_dvb_buffer_size = DVB_BUFFER_SIZE_CSA;
 	const int32_t cur_dvb_buffer_wait = DVB_BUFFER_WAIT_CSA;
 
-	struct dvbcsa_bs_batch_s *tsbbatch;
+	struct dvbcsa_bs_batch_s *tsbbatch = NULL;
 
 	create_streamrelay_client(conndata);
 	SAFE_SETSPECIFIC(getclient, streamrelay_client[conndata->connid]);
@@ -1094,18 +1093,14 @@ static void *stream_client_handler(void *arg)
 		}
 	} while (0);
 
-	if(http_buf)
-		{ NULLFREE(http_buf); }
-	if(stream_buf)
-		{ NULLFREE(stream_buf); }
+	NULLFREE(http_buf);
+	NULLFREE(stream_buf);
 
 	dvbcsa_bs_key_free(key_data[conndata->connid].key[ODD]);
 	dvbcsa_bs_key_free(key_data[conndata->connid].key[EVEN]);
 
-	if(stream_buf)
-		{ NULLFREE(tsbbatch); }
-	if(stream_buf)
-		{ NULLFREE(data); }
+	NULLFREE(tsbbatch);
+	NULLFREE(data);
 
 	stream_client_disconnect(conndata);
 	return NULL;
