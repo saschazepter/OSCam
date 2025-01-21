@@ -34,9 +34,6 @@ ifeq "$(shell ./config.sh --enabled WITH_SSL)" "Y"
 endif
 ifdef USE_SSL
 	override USE_LIBCRYPTO=1
-	SSL_HEADER = $(shell find $(TOOLCHAIN_INC_DIR)/.. -name opensslv.h -print | tail -n 1)
-	SSL_VER    = ${shell (grep 'OpenSSL [[:digit:]][^ ]*' $(SSL_HEADER) 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
-	SSL_INFO   = $(shell echo ', $(SSL_VER)')
 endif
 
 CONF_DIR = /usr/local/etc
@@ -205,7 +202,7 @@ ifeq ($(uname_S),FreeBSD)
 	DEFAULT_LIBUSB_LIB = -lusb
 endif
 ifeq ($(uname_S),Darwin)
-	TOOLCHAIN_INC_DIR := /usr/local/opt/openssl/include
+	DEFAULT_SSL_FLAGS = -I/usr/local/opt/openssl/include
 	DEFAULT_SSL_LIB = -L/usr/local/opt/openssl/lib -lssl
 	DEFAULT_LIBCRYPTO_LIB = -L/usr/local/opt/openssl/lib -lcrypto
 	DEFAULT_LIBDVBCSA_FLAGS = -I/usr/local/opt/libdvbcsa/include
@@ -226,8 +223,9 @@ else
 	#
 	# We can't just use -I/usr/include/PCSC because it won't work in
 	# case of cross compilation.
-	TOOLCHAIN_INC_DIR := $(strip $(shell echo | $(CC) -Wp,-v -xc - -fsyntax-only 2>&1 | grep include$$ | tail -n 1))
-	DEFAULT_PCSC_FLAGS = -I$(TOOLCHAIN_INC_DIR)/PCSC -I$(TOOLCHAIN_INC_DIR)/../local/include/PCSC
+	TOOLCHAIN_INC_DIR := $(strip $(shell echo | $(CC) -Wp,-v -xc - -fsyntax-only 2>&1 | grep include$ | tail -n 1))
+   DEFAULT_SSL_FLAGS = -I$(TOOLCHAIN_INC_DIR) -I$(TOOLCHAIN_INC_DIR)/../../include -I$(TOOLCHAIN_INC_DIR)/../local/include
+	DEFAULT_PCSC_FLAGS = -I$(TOOLCHAIN_INC_DIR)/PCSC -I$(TOOLCHAIN_INC_DIR)/../../include/PCSC -I$(TOOLCHAIN_INC_DIR)/../local/include/PCSC
 	DEFAULT_PCSC_LIB = -lpcsclite
 endif
 
@@ -268,6 +266,12 @@ $(eval $(call prepare_use_flags,LIBUSB,libusb))
 $(eval $(call prepare_use_flags,PCSC,pcsc))
 $(eval $(call prepare_use_flags,LIBDVBCSA,libdvbcsa))
 $(eval $(call prepare_use_flags,COMPRESS,upx))
+
+ifdef USE_SSL
+	SSL_HEADER = $(shell find $(dir $(subst -I,,$(SSL_FLAGS))) -name opensslv.h -print 2>/dev/null | tail -n 1)
+	SSL_VER    = ${shell (grep 'OpenSSL [[:digit:]][^ ]*' $(SSL_HEADER) /dev/null 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
+	SSL_INFO   = $(shell echo ', $(SSL_VER)')
+endif
 
 # Add PLUS_TARGET and EXTRA_TARGET to TARGET
 ifdef NO_PLUS_TARGET
