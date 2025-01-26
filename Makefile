@@ -72,6 +72,7 @@ UPX = $(shell which upx 2>/dev/null || true)
 SSL = $(shell which openssl 2>/dev/null || true)
 STAT = $(shell which gnustat 2>/dev/null || which stat 2>/dev/null)
 SPLIT = $(shell which gsplit 2>/dev/null || which split 2>/dev/null)
+GREP = $(shell which ggrep 2>/dev/null || which grep 2>/dev/null)
 
 # Compiler warnings
 CC_WARN = -W -Wall -Wshadow -Wredundant-decls -Wstrict-prototypes -Wold-style-definition
@@ -108,7 +109,7 @@ ifdef USE_COMPRESS
 		UPX_SPLIT_PREFIX   = $(OBJDIR)/signing/upx.
 		UPX_INFO_TOOL      = $(shell echo '|  UPX      = $(UPX)\n')
 		UPX_INFO           = $(shell echo '|  Packer   : $(UPX_VER) (compression level $(COMP_LEVEL))\n')
-		UPX_COMMAND_OSCAM  = $(UPX) -q $(COMP_LEVEL) $@ | grep '^[[:space:]]*[[:digit:]]* ->' | xargs | cat | xargs -0 printf 'UPX \t%s';
+		UPX_COMMAND_OSCAM  = $(UPX) -q $(COMP_LEVEL) $@ | $(GREP) '^[[:space:]]*[[:digit:]]* ->' | xargs | cat | xargs -0 printf 'UPX \t%s';
 	endif
 endif
 
@@ -149,7 +150,7 @@ ifeq "$(shell ./config.sh --enabled WITH_SIGNING)" "Y"
 		SIGN_COMMAND_OSCAM += printf ' <- DIGEST('; $(STAT) -c %s $(SIGN_DIGEST) | tr -d '\n'; printf ')\n';
 		ifdef USE_COMPRESS
 			ifneq ($(UPX_VER),n.a.)
-				UPX_COMMAND_OSCAM  += $(SPLIT) --bytes=$$(grep -oba '$(SIGN_UPXMARKER)' $@ | tail -1 | awk -F':' '{ print $$1 }') $@ $(UPX_SPLIT_PREFIX);
+				UPX_COMMAND_OSCAM  += $(SPLIT) --bytes=$$($(GREP) -oba '$(SIGN_UPXMARKER)' $@ | tail -1 | awk -F':' '{ print $$1 }') $@ $(UPX_SPLIT_PREFIX);
 				UPX_COMMAND_OSCAM  += $(SIGN_COMMAND_OSCAM)
 			endif
 		endif
@@ -223,8 +224,8 @@ else
 	#
 	# We can't just use -I/usr/include/PCSC because it won't work in
 	# case of cross compilation.
-	TOOLCHAIN_INC_DIR := $(strip $(shell echo | $(CC) -Wp,-v -xc - -fsyntax-only 2>&1 | grep include$ | tail -n 1))
-   DEFAULT_SSL_FLAGS = -I$(TOOLCHAIN_INC_DIR) -I$(TOOLCHAIN_INC_DIR)/../../include -I$(TOOLCHAIN_INC_DIR)/../local/include
+	TOOLCHAIN_INC_DIR := $(strip $(shell echo | $(CC) -Wp,-v -xc - -fsyntax-only 2>&1 | $(GREP) include$ | tail -n 1))
+	DEFAULT_SSL_FLAGS = -I$(TOOLCHAIN_INC_DIR) -I$(TOOLCHAIN_INC_DIR)/../../include -I$(TOOLCHAIN_INC_DIR)/../local/include
 	DEFAULT_PCSC_FLAGS = -I$(TOOLCHAIN_INC_DIR)/PCSC -I$(TOOLCHAIN_INC_DIR)/../../include/PCSC -I$(TOOLCHAIN_INC_DIR)/../local/include/PCSC
 	DEFAULT_PCSC_LIB = -lpcsclite
 endif
@@ -269,7 +270,7 @@ $(eval $(call prepare_use_flags,COMPRESS,upx))
 
 ifdef USE_SSL
 	SSL_HEADER = $(shell find $(dir $(subst -I,,$(SSL_FLAGS))) -name opensslv.h -print 2>/dev/null | tail -n 1)
-	SSL_VER    = ${shell (grep 'OpenSSL [[:digit:]][^ ]*' $(SSL_HEADER) /dev/null 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
+	SSL_VER    = ${shell ($(GREP) 'OpenSSL [[:digit:]][^ ]*' $(SSL_HEADER) /dev/null 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
 	SSL_INFO   = $(shell echo ', $(SSL_VER)')
 endif
 
