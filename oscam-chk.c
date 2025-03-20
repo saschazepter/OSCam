@@ -1213,7 +1213,7 @@ int32_t chk_is_null_CW(uint8_t cw[])
  **/
 int8_t is_halfCW_er(ECM_REQUEST *er)
 {
-	if(caid_is_videoguard(er->caid) && (er->caid != 0x09C7 && er->caid != 0x09EF))
+	if(caid_is_videoguard(er->caid) && (er->caid != 0x09C7 || er->caid != 0x09EF))
 		{ return 1; }
 	return 0;
 }
