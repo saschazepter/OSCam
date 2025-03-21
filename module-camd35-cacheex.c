@@ -1597,10 +1597,10 @@ static void camd35_cacheex_push_receive_remote_id(struct s_client *cl, uint8_t *
 		int64_t gone;
 		cs_ftime(&now);
 		gone = comp_timeb(&now, &cl->cxnodeid_last_change);
-		
+
 		// Use the configurable cacheex_nodeid_display_time in hours
 		int64_t display_time_ms = (int64_t)cfg.cacheex_nodeid_display_time * 3600 * 1000; // Convert hours to milliseconds
-		
+
 		// If display time has passed, reset the flag
 		if (gone > display_time_ms && display_time_ms > 0) {
 			cl->cxnodeid_changer_detected = 0;
