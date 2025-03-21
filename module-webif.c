@@ -1019,9 +1019,14 @@ static char *send_oscam_config_cache(struct templatevars *vars, struct uriparams
 	tpl_addVar(vars, TPLADD, "CSP_ECM_FILTER", value);
 	free_mk_t(value);
 
-	value = mk_t_cacheex_cwcheck_valuetab(&cfg.cacheex_cwcheck_tab);
-	tpl_addVar(vars, TPLADD, "CACHEEXCWCHECK", value);
-	free_mk_t(value);
+	#ifdef CS_CACHEEX_AIO
+		tpl_addVar(vars, TPLADD, "CACHEEXCHANGEDETECT", (cfg.cacheex_nodeid_change_detect == 1) ? "checked" : "");
+		tpl_printf(vars, TPLADD, "CACHEEXCHANGETIME", "%d", cfg.cacheex_nodeid_check_time);
+		tpl_printf(vars, TPLADD, "CACHEEXDISPLAYTIME", "%d", cfg.cacheex_nodeid_display_time);
+	#endif
+		value = mk_t_cacheex_cwcheck_valuetab(&cfg.cacheex_cwcheck_tab);
+		tpl_addVar(vars, TPLADD, "CACHEEXCWCHECK", value);
+		free_mk_t(value);
 
 	tpl_addVar(vars, TPLADD, "ARCHECKED", (cfg.csp.allow_request == 1) ? "checked" : "");
 	tpl_addVar(vars, TPLADD, "ARFCHECKED", (cfg.csp.allow_reforward == 1) ? "checked" : "");
@@ -8119,7 +8124,16 @@ static char *send_oscam_cacheex(struct templatevars * vars, struct uriparams * p
 			}
 
 			tpl_addVar(vars, TPLADD, "IP", cs_inet_ntoa(cl->ip));
+#ifdef CS_CACHEEX_AIO
+			if (cl->cxnodeid_changer_detected)
+			{
+				tpl_printf(vars, TPLADD, "NODE", "<span style='color:red;'>%" PRIu64 "X</span>", get_cacheex_node(cl));
+			}
+			else
+			{
+#endif
 			tpl_printf(vars, TPLADD, "NODE", "%" PRIu64 "X", get_cacheex_node(cl));
+			}
 			tpl_addVar(vars, TPLADD, "LEVEL", level[cl->account->cacheex.mode]);
 			tpl_printf(vars, TPLADD, "PUSH", "%d", cl->account->cwcacheexpush);
 			tpl_printf(vars, TPLADD, "GOT", "%d", cl->account->cwcacheexgot);
@@ -8170,7 +8184,16 @@ static char *send_oscam_cacheex(struct templatevars * vars, struct uriparams * p
 			}
 
 			tpl_addVar(vars, TPLADD, "IP", cs_inet_ntoa(cl->ip));
+#ifdef CS_CACHEEX_AIO
+			if (cl->cxnodeid_changer_detected)
+			{
+				tpl_printf(vars, TPLADD, "NODE", "<span style='color:red;'>%" PRIu64 "X</span>", get_cacheex_node(cl));
+			}
+			else
+			{
+#endif
 			tpl_printf(vars, TPLADD, "NODE", "%" PRIu64 "X", get_cacheex_node(cl));
+			}
 			tpl_addVar(vars, TPLADD, "LEVEL", level[cl->reader->cacheex.mode]);
 			tpl_printf(vars, TPLADD, "PUSH", "%d", cl->cwcacheexpush);
 			tpl_printf(vars, TPLADD, "CWCINFO", "%d", cl->cwc_info);

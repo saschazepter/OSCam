@@ -897,6 +897,7 @@ static int32_t camd35_client_init(struct s_client *cl)
 	}
 
 #ifdef CS_CACHEEX_AIO
+	memset(cl->cxnodeid_last, 0x0, sizeof(cl->cxnodeid_last));
 	if(!cl->c35_extmode)
 	{
 		camd35_send_extmode(cl, false);

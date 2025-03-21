@@ -13,6 +13,7 @@
 #include "oscam-ecm.h"
 #include "oscam-string.h"
 #include "oscam-reader.h"
+#include "oscam-time.h"
 #ifdef CS_CACHEEX_AIO
 #include "oscam-chk.h"
 #include "oscam-config.h"
@@ -1440,10 +1441,16 @@ static void camd35_cacheex_push_in(struct s_client *cl, uint8_t *buf)
 	data = ll_has_elements(er->csp_lastnodes);
 	if(data && !cl->ncd_skey[8])    //Ok, this is tricky, we use newcamd key storage for saving the remote node
 	{
+#ifdef CS_CACHEEX_AIO
+		memcpy(cl->cxnodeid_last, data, 8);
+		cl->cxnodeid_last[8] = 1;
+		cs_ftime(&cl->cxnodeid_last_change);
+		cl->cxnodeid_changer_detected = 0;
+#endif
 		memcpy(cl->ncd_skey, data, 8);
 		cl->ncd_skey[8] = 1; //Mark as valid node
 	}
-	cs_log_dbg(D_CACHEEX, "cacheex: received cacheex from remote node id %" PRIu64 "X", cacheex_node_id(cl->ncd_skey));
+	// cs_log_dbg(D_CACHEEX, "cacheex: received cacheex from remote node id %" PRIu64 "X", cacheex_node_id(cl->ncd_skey));
 
 	//for compatibility: add peer node if no node received (not working now, maybe later):
 	if(!ll_count(er->csp_lastnodes) && cl->ncd_skey[8])
@@ -1541,12 +1548,71 @@ static void camd35_server_client_init(struct s_client *cl)
  */
 static void camd35_cacheex_push_receive_remote_id(struct s_client *cl, uint8_t *buf)
 {
-
 	memcpy(cl->ncd_skey, buf + 20, 8);
 	cl->ncd_skey[8] = 1;
-	cs_log_dbg(D_CACHEEX, "cacheex: received id answer from %s: %" PRIu64 "X", username(cl), cacheex_node_id(cl->ncd_skey));
-}
+#ifdef CS_CACHEEX_AIO
+	if (!cl->cxnodeid_last[8])
+	{
+		memcpy(cl->cxnodeid_last, buf + 20, 8);
+		cl->cxnodeid_last[8] = 1;
+		cs_ftime(&cl->cxnodeid_last_change);
+	}
 
+	if (cl->cxnodeid_last[8] && (memcmp(cl->ncd_skey, cl->cxnodeid_last, 8) != 0))
+	{
+		if (cfg.cacheex_nodeid_change_detect) // Only run detection if enabled
+		{
+			struct timeb now;
+			int64_t gone;
+			cs_ftime(&now);
+			gone = comp_timeb(&now, &cl->cxnodeid_last_change);
+
+			// Use the configurable cacheex_nodeid_check_time instead of hardcoded 24h
+			int64_t check_time_ms = (int64_t)cfg.cacheex_nodeid_check_time * 3600 * 1000; // Convert hours to milliseconds
+			if (gone < check_time_ms)
+			{
+				cs_log_dbg(D_CACHEEX, "cacheex: received id answer from %s: %" PRIu64 "X [previous nodeid: %" PRIu64 "X ] nodeid changed in the last %" PRId32 "h!", username(cl), cacheex_node_id(cl->ncd_skey), cacheex_node_id(cl->cxnodeid_last), cfg.cacheex_nodeid_check_time);
+				cl->cxnodeid_changer_detected = 1;
+				// Save the time when the change was detected
+				cs_ftime(&cl->cxnodeid_last_change);
+			}
+			else
+			{
+				cs_log_dbg(D_CACHEEX, "cacheex: received id answer from %s: %" PRIu64 "X [previous nodeid: %" PRIu64 "X ] but nodeid NOT changed in the last %" PRId32 "h!", username(cl), cacheex_node_id(cl->ncd_skey), cacheex_node_id(cl->cxnodeid_last), cfg.cacheex_nodeid_check_time);
+				cl->cxnodeid_changer_detected = 0;
+			}
+		}
+		else
+		{
+			cl->cxnodeid_changer_detected = 0;
+		}
+
+		memcpy(cl->cxnodeid_last, buf + 20, 8);
+		cs_ftime(&cl->cxnodeid_last_change);
+	}
+	else if (cl->cxnodeid_changer_detected)
+	{
+		// Check if the flag should still be active based on display_time configuration
+		struct timeb now;
+		int64_t gone;
+		cs_ftime(&now);
+		gone = comp_timeb(&now, &cl->cxnodeid_last_change);
+		
+		// Use the configurable cacheex_nodeid_display_time in hours
+		int64_t display_time_ms = (int64_t)cfg.cacheex_nodeid_display_time * 3600 * 1000; // Convert hours to milliseconds
+		
+		// If display time has passed, reset the flag
+		if (gone > display_time_ms && display_time_ms > 0) {
+			cl->cxnodeid_changer_detected = 0;
+			cs_log_dbg(D_CACHEEX, "cacheex: node ID change flag for %s reset after %" PRId32 " hours", username(cl), cfg.cacheex_nodeid_display_time);
+		}
+	}
+	else
+	{
+		cl->cxnodeid_changer_detected = 0;
+	}
+#endif
+}
 
 void camd35_cacheex_init_dcw(struct s_client *client, ECM_REQUEST *er)
 {
