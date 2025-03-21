@@ -210,24 +210,12 @@ static void makeK(uint8_t *left, uint8_t *right, uint8_t *K)
 	}
 }
 
-static void rightRot(uint8_t key[])
-{
-	uint8_t *p = key;
-	uint8_t i = 3;
-	uint8_t carry = 0;
-
-	carry = 0;
-
-	if(*p & 1) { carry = 0x08; }
-
-	do
-	{
-		*p = (*p >> 1) | ((p[1] & 1) ? 0x80 : 0);
-		p++;
-	}
-	while(--i);
-
-	*p = (*p >> 1) | carry;
+static void rightRot(uint8_t key[]) {
+	uint8_t carry = (key[0] & 1) ? 0x08 : 0;
+	key[0] = (key[0] >> 1) | ((key[1] & 1) ? 0x80 : 0);
+	key[1] = (key[1] >> 1) | ((key[2] & 1) ? 0x80 : 0);
+	key[2] = (key[2] >> 1) | ((key[3] & 1) ? 0x80 : 0);
+	key[3] = (key[3] >> 1) | carry;
 }
 
 static void rightRotKeys(uint8_t left[], uint8_t right[])
@@ -238,13 +226,11 @@ static void rightRotKeys(uint8_t left[], uint8_t right[])
 
 static void leftRot(uint8_t key[])
 {
-	uint8_t i = 27;
-
-	do
-	{
-		rightRot(key);
-	}
-	while(--i);
+	uint8_t carry = key[3] >> 3;
+	key[3] = 0x0F & ((key[3] << 1) | !!(key[2] & 0x80));
+	key[2] = (key[2] << 1) | !!(key[1] & 0x80);
+	key[1] = (key[1] << 1) | !!(key[0] & 0x80);
+	key[0] = (key[0] << 1) | carry;
 }
 
 static void leftRotKeys(uint8_t left[], uint8_t right[])
