@@ -475,7 +475,7 @@ static void v2mask(uint8_t *cw, uint8_t *mask)
 			{ cw[i] ^= getmask(cw, mask, i, j); }
 }
 
-static void EuroDes(uint8_t key1[], uint8_t key2[], uint8_t operatingMode, uint8_t data[])
+static void EuroDes(uint8_t key1[], uint8_t key2[], uint8_t desMode, uint8_t operatingMode, uint8_t data[])
 {
 	uint8_t mode;
 
@@ -489,7 +489,7 @@ static void EuroDes(uint8_t key1[], uint8_t key2[], uint8_t operatingMode, uint8
 		if(key2 != NULL)
 			{ v2mask(data, key2); }
 	}
-	else
+	else if(TestBit(desMode, F_TRIPLE_DES))
 	{
 		/* Eurocrypt 3-DES */
 		mode = (operatingMode == HASH) ? 0 : DES_RIGHT;
@@ -500,6 +500,20 @@ static void EuroDes(uint8_t key1[], uint8_t key2[], uint8_t operatingMode, uint8
 
 		mode ^= DES_RIGHT;
 		nc_des(key1, (uint8_t)(mode | DES_IP_1), data);
+	}
+	else
+	{
+		if(TestBit(desMode, F_EURO_S2))
+		{
+			/* Eurocrypt S2 */
+			mode = (operatingMode == HASH) ? DES_ECS2_CRYPT : DES_ECS2_DECRYPT;
+		}
+		else
+		{
+			/* Eurocrypt M */
+			mode = (operatingMode == HASH) ? DES_ECM_HASH : DES_ECM_CRYPT;
+		}
+		nc_des(key1, mode, data);
 	}
 }
 
