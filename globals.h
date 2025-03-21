@@ -1275,6 +1275,9 @@ struct s_client
 #ifdef CS_CACHEEX_AIO
 	int32_t			cwcacheexgotlg;					// count got localgenerated-flagged CWs
 	int32_t			cwcacheexpushlg;				// count pushed localgenerated-flagged CWs
+	uint8_t			cxnodeid_last[9];				// save previous nodeid
+	uint8_t			cxnodeid_changer_detected;		// save node-changer detection status
+	struct timeb	cxnodeid_last_change;			// save last nodeid change-time
 #endif
 	uint8_t			cacheex_needfilter;				// flag for cachex mode 3 used with camd35
 #ifdef CS_CACHEEX_AIO
@@ -1877,6 +1880,9 @@ struct s_reader										// contains device info, reader info and card info
 	float			ecmshealthok;
 #ifdef CS_CACHEEX_AIO
 	float			ecmshealthoklg;
+	uint8_t			cxnodeid_last[9];				// save previous nodeid
+	uint8_t			cxnodeid_changer_detected;		// save node-changer detection status
+	struct timeb	cxnodeid_last_change;			// save last nodeid change-time
 #endif
 	float			ecmshealthnok;
 	float			ecmshealthtout;
@@ -2520,6 +2526,9 @@ struct s_config
 	CECSPVALUETAB	cacheex_filter_caidtab_aio;
 	uint64_t		cacheex_push_lg_groups;
 #endif
+	uint8_t         cacheex_nodeid_change_detect;   // enable/disable node id change detection
+	int32_t         cacheex_nodeid_check_time;      // timeframe to check for node id changes
+	int32_t         cacheex_nodeid_display_time;    // duration in hours to display node ID changes in red
 #endif
 
 #ifdef CW_CYCLE_CHECK
