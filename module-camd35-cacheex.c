@@ -1560,20 +1560,18 @@ static void camd35_cacheex_push_receive_remote_id(struct s_client *cl, uint8_t *
 
 	if (cl->cxnodeid_last[8] && (memcmp(cl->ncd_skey, cl->cxnodeid_last, 8) != 0))
 	{
-		if (cfg.cacheex_nodeid_change_detect) // Only run detection if enabled
+		if (cfg.cacheex_nodeid_change_detect)
 		{
 			struct timeb now;
 			int64_t gone;
 			cs_ftime(&now);
 			gone = comp_timeb(&now, &cl->cxnodeid_last_change);
 
-			// Use the configurable cacheex_nodeid_check_time instead of hardcoded 24h
-			int64_t check_time_ms = (int64_t)cfg.cacheex_nodeid_check_time * 3600 * 1000; // Convert hours to milliseconds
+			int64_t check_time_ms = (int64_t)cfg.cacheex_nodeid_check_time * 3600 * 1000;
 			if (gone < check_time_ms)
 			{
 				cs_log_dbg(D_CACHEEX, "cacheex: received id answer from %s: %" PRIu64 "X [previous nodeid: %" PRIu64 "X ] nodeid changed in the last %" PRId32 "h!", username(cl), cacheex_node_id(cl->ncd_skey), cacheex_node_id(cl->cxnodeid_last), cfg.cacheex_nodeid_check_time);
 				cl->cxnodeid_changer_detected = 1;
-				// Save the time when the change was detected
 				cs_ftime(&cl->cxnodeid_last_change);
 			}
 			else
@@ -1592,16 +1590,12 @@ static void camd35_cacheex_push_receive_remote_id(struct s_client *cl, uint8_t *
 	}
 	else if (cl->cxnodeid_changer_detected)
 	{
-		// Check if the flag should still be active based on display_time configuration
 		struct timeb now;
 		int64_t gone;
 		cs_ftime(&now);
 		gone = comp_timeb(&now, &cl->cxnodeid_last_change);
 
-		// Use the configurable cacheex_nodeid_display_time in hours
-		int64_t display_time_ms = (int64_t)cfg.cacheex_nodeid_display_time * 3600 * 1000; // Convert hours to milliseconds
-
-		// If display time has passed, reset the flag
+		int64_t display_time_ms = (int64_t)cfg.cacheex_nodeid_display_time * 3600 * 1000;
 		if (gone > display_time_ms && display_time_ms > 0) {
 			cl->cxnodeid_changer_detected = 0;
 			cs_log_dbg(D_CACHEEX, "cacheex: node ID change flag for %s reset after %" PRId32 " hours", username(cl), cfg.cacheex_nodeid_display_time);
