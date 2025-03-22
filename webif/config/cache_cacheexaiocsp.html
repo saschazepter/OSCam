@@ -1,4 +1,4 @@
-			<TR><TH COLSPAN="2">CacheEx / CSP</TH></TR>
+<TR><TH COLSPAN="2">CacheEx / CSP</TH></TR>
 			<TR><TD><A>CW Cache Settings:</A></TD><TD><input name="cw_cache_settings" type="text" maxlength="1400" value="##CWCACHESETTINGS##"><br />Format: caid[&amp;mask][@provid][$servid]:mode:timediff_old_cw[,n]</TD></TR>
 			<TR><TD><A>CW Cache Size:</A></TD><TD><input name="cw_cache_size" class="withunit short" type="text" maxlength="20" value="##CWCACHESIZE##"> count of max. CWs for CW cache </TD></TR>
 			<TR><TD><A>CW Cache Memory:</A></TD><TD><input name="cw_cache_memory" class="withunit short" type="text" maxlength="5" value="##CWCACHEMEMORY##"> MB of max. memory used for CW cache size</TD></TR>
@@ -23,6 +23,10 @@
 			<TR><TD><A>Cache-EX ECM filter:</A></TD><TD><input name="cacheex_ecm_filter" type="text" maxlength="1385" value="##CACHEEXECMFILTER##"></TD></TR>
 			<TR><TD><A>Cache-EX ECM filter(aio only):</A></TD><TD><input name="cacheex_ecm_filter_aio" type="text" maxlength="1385" value="##CACHEEXECMFILTERAIO##"></TD></TR>
 			<TR><TD><A>Push localgenerated flagged CWs always to these groups:</A></TD><TD><input name="cacheex_push_lg_groups" class="longer" type="text" maxlength="155" value="##CACHEEXPUSHLGGRPS##"> Valid values 1-64</TD></TR>
+			<TR><TH COLSPAN="2">Node ID Change Detection</TH></TR>
+			<TR><TD><A>Enable detection:</A></TD><TD><input name="cacheex_nodeid_change_detect" value="0" type="hidden"><input name="cacheex_nodeid_change_detect" value="1" type="checkbox" ##CACHEEXCHANGEDETECT##></TD></TR>
+			<TR><TD><A>Check timeframe:</A></TD><TD><input name="cacheex_nodeid_check_time" class="withunit short" type="text" maxlength="5" value="##CACHEEXCHANGETIME##"> hours timeframe to detect node ID changes</TD></TR>
+			<TR><TD><A>Display time:</A></TD><TD><input name="cacheex_nodeid_display_time" class="withunit short" type="text" maxlength="5" value="##CACHEEXDISPLAYTIME##"> hours duration to display node ID changes in red</TD></TR>
 			<TR><TH COLSPAN="2">CSP</TH></TR>
 			<TR><TD><A>Port:</A></TD><TD><input name="csp_port" type="text" class="short" maxlength="5" value="##PORT##"></TD></TR>
 			<TR><TD><A>Serverip:</A></TD><TD><input name="csp_serverip" type="text" class="medium" maxlength="15" value="##SERVERIP##"></TD></TR>
