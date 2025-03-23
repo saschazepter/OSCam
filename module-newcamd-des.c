@@ -523,9 +523,8 @@ int nc_des_encrypt(uint8_t *buffer, int len, uint8_t *deskey)
 	for(i = 2; i < len; i += 8)
 	{
 		uint8_t j;
-		const uint8_t flags = (1 << F_EURO_S2) | (1 << F_TRIPLE_DES);
 		for(j = 0; j < 8; j++) { buffer[i + j] ^= ivec[j]; }
-		EuroDes(deskey, deskey + 8, flags, HASH, buffer + i);
+		EuroDes(deskey, deskey + 8, HASH, buffer + i);
 		memcpy(ivec, buffer + i, 8);
 	}
 	len += 8;
@@ -546,11 +545,10 @@ int nc_des_decrypt(uint8_t *buffer, int len, uint8_t *deskey)
 	for(i = 2; i < len; i += 8)
 	{
 		uint8_t j;
-		const uint8_t flags = (1 << F_EURO_S2) | (1 << F_TRIPLE_DES);
 
 		memcpy(ivec, nextIvec, 8);
 		memcpy(nextIvec, buffer + i, 8);
-		EuroDes(deskey, deskey + 8, flags, CRYPT, buffer + i);
+		EuroDes(deskey, deskey + 8, CRYPT, buffer + i);
 		for(j = 0; j < 8; j++)
 			{ buffer[i + j] ^= ivec[j]; }
 	}
