@@ -1219,6 +1219,14 @@ int8_t is_halfCW_er(ECM_REQUEST *er)
 }
 
 /**
+ * Check for ecm request that expects full cw format
+ **/
+int8_t is_fullCW_er(ECM_REQUEST *er)
+{
+	return !is_halfCW_er(er);
+}
+
+/**
  * Check for wrong half CWs
  **/
 int8_t chk_halfCW(ECM_REQUEST *er, uint8_t *cw)
@@ -1248,6 +1256,25 @@ int8_t chk_halfCW(ECM_REQUEST *er, uint8_t *cw)
 	{
 		return 1;
 	}
+}
+
+/**
+ * Check for wrong full CWs
+ **/
+int8_t chk_fullCW(ECM_REQUEST *er, uint8_t *cw)
+{
+	if(!is_fullCW_er(er) || !cw)
+	{
+		return -1;
+	}
+
+	int8_t part1 = checkCWpart(cw, 0);
+	int8_t part2 = checkCWpart(cw, 1);
+
+	if(part1 && part2)
+		{ return 1; }
+
+	return 0;
 }
 
 /**
