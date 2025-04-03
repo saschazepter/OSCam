@@ -953,6 +953,23 @@ static int32_t cacheex_add_to_cache_int(struct s_client *cl, ECM_REQUEST *er, in
 		return 0;
 	}
 
+int8_t fullcw_check = chk_fullCW(er, er->cw);
+	if(fullcw_check == 0)
+	{
+		#ifdef WITH_DEBUG
+		if(cs_dblevel & D_CACHEEX)
+		{
+			log_cacheex_cw(er, "bad full cw");
+		}
+		#endif
+		cl->cwcacheexerr++;
+		if(cl->account)
+		{
+			cl->account->cwcacheexerr++;
+		}
+		return 0;
+		}
+
 	if((csp && cfg.csp.block_fakecws) || (cl->reader && cl->reader->cacheex.block_fakecws)
 			|| (!cl->reader && cl->account && cl->account->cacheex.block_fakecws))
 	{
