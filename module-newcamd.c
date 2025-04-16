@@ -1691,7 +1691,7 @@ void newcamd_idle(void)
 
 int32_t newcamd_client_init(struct s_client *client)
 {
-	char ptxt[1] = { "\0" };
+	char ptxt[1] __attribute__((nonstring)) = { "\0" };
 
 	client->ncd_proto = client->reader->ncd_proto;
 
