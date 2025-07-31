@@ -697,6 +697,9 @@ static const struct config_list cache_opts[] =
 	DEF_OPT_FUNC_X("cacheex_lg_only_in_tab"           , OFS(cacheex_lg_only_in_tab)                , ftab_fn, FTAB_ACCOUNT),
 	DEF_OPT_FUNC("cacheex_ecm_filter"                 , OFS(cacheex_filter_caidtab)                , cacheex_hitvaluetab_fn),
 	DEF_OPT_FUNC("cacheex_ecm_filter_aio"             , OFS(cacheex_filter_caidtab_aio)            , cacheex_hitvaluetab_fn),
+	DEF_OPT_UINT8("cacheex_nodeid_change_detect"      , OFS(cacheex_nodeid_change_detect)          , 0),
+	DEF_OPT_INT32("cacheex_nodeid_check_time"         , OFS(cacheex_nodeid_check_time)             , 24),
+	DEF_OPT_INT32("cacheex_nodeid_display_time"       , OFS(cacheex_nodeid_display_time)           , 168),
 #endif
 	DEF_OPT_INT32("csp_port"                          , OFS(csp_port)                              , 0),
 	DEF_OPT_FUNC("csp_serverip"                       , OFS(csp_srvip)                             , serverip_fn),
