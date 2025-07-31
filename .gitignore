@@ -22,4 +22,3 @@ tests.bin.debug
 # Patch files
 *.patch
 *.diff
-.DS_Store
