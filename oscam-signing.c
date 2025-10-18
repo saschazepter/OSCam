@@ -128,7 +128,9 @@ static EVP_PKEY *verify_cert(void)
 	EVP_PKEY *pKey = NULL;
 
 	// Add all digest algorithms to the table
+#if OPENSSL_VERSION_NUMBER < 0x30000000L // no-op in OpenSSL 3.0+
 	OpenSSL_add_all_algorithms();
+#endif
 
 	if ((pCert = X509_new()))
 	{
@@ -151,14 +153,8 @@ static EVP_PKEY *verify_cert(void)
 					convert_ASN1TIME(not_after, osi.cert_valid_to, sizeof(osi.cert_valid_to));
 
 					// expiration
-					osi.cert_is_expired = true;
-					if (X509_cmp_current_time(not_before) < 0)
-					{
-						if (X509_cmp_current_time(not_after) > 0)
-						{
-							osi.cert_is_expired = false;
-						}
-					}
+					osi.cert_is_expired = !(X509_cmp_current_time(not_before) < 0 &&
+											X509_cmp_current_time(not_after)  > 0);
 
 					//serialNumber
 					ASN1_INTEGER *serial = X509_get_serialNumber(pCert);
@@ -169,8 +165,8 @@ static EVP_PKEY *verify_cert(void)
 					{
 						cs_strncpy(osi.cert_serial, strtolower(hex), cs_strlen(hex) + 1);
 					}
-					free(hex);
-					free(bn);
+					OPENSSL_free(hex);
+					BN_free(bn);
 
 					// fingerprint
 					unsigned char buf[SHA_DIGEST_LENGTH];
@@ -238,8 +234,8 @@ static EVP_PKEY *verify_cert(void)
 										osi.cert_is_valid_self = ret;
 									}
 									X509_STORE_CTX_free(ctx_store_pem);
-									X509_STORE_free(store_pem);
 								}
+								X509_STORE_free(store_pem);
 							}
 						}
 					}
@@ -253,7 +249,7 @@ static EVP_PKEY *verify_cert(void)
 						if (store_system)
 						{
 							const char *ca_path;
-							snprintf(system_ca_file, cs_strlen(CA_SYSTEM_LOCATION) + cs_strlen(CA_FILE_NAME) + 2 , "%s/%s", CA_SYSTEM_LOCATION, CA_FILE_NAME);
+							snprintf(system_ca_file, sizeof(system_ca_file), "%s/%s", CA_SYSTEM_LOCATION, CA_FILE_NAME);
 							if(!file_exists(system_ca_file))
 							{
 								if (!(ca_path = getenv(X509_get_default_cert_dir_env())))
@@ -279,8 +275,8 @@ static EVP_PKEY *verify_cert(void)
 											osi.cert_is_valid_system = ret;
 										}
 										X509_STORE_CTX_free(ctx_store_system);
-										X509_STORE_free(store_system);
 									}
+									X509_STORE_free(store_system);
 								}
 							}
 							else
@@ -356,8 +352,7 @@ static DIGEST hashBinary(const char *binfile, DIGEST *sign)
 	DIGEST arRetval = {NULL, 0};
 	struct stat *fi;
 	unsigned char *signature_enc;
-	size_t file_size, offset, end, signature_size;
-	file_size = offset = end = signature_size = 0;
+	size_t file_size = 0, offset = 0, end = 0, signature_size = 0;
 	unsigned char *data = NULL, *signature_start = NULL, *signature_end = NULL, *p = NULL;
 
 	if (cs_malloc(&fi, sizeof(struct stat)))
@@ -365,61 +360,74 @@ static DIGEST hashBinary(const char *binfile, DIGEST *sign)
 		if (!stat(binfile, fi))
 		{
 			file_size = fi->st_size;
-			free(fi);
 			// Read binary into memory
 			int fd = open(binfile, O_RDONLY);
-			data = mmap(0, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
-			end = file_size;
-
-			// Determine occurrence of last signature marker
-			p = data;
-			while ((p = memmem(p, (file_size - offset), OBSM, cs_strlen(OBSM))))
+			if (fd >= 0)
 			{
-				offset = p - data;
-				p = p + cs_strlen(OBSM);
-				signature_start = p;
-			}
-
-			// Determine occurrence of next upx marker
-			p = memmem(signature_start, (file_size - offset), UPXM, cs_strlen(UPXM));
-			if (p != NULL)
-			{
-				end = p - data;
-			}
-			signature_end = p;
-
-			// Get encrypted signature
-			if (offset > 0)
-			{
-				signature_size = end - offset - cs_strlen(OBSM);
-				if (cs_malloc(&signature_enc, signature_size))
+				data = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
+				if (data != MAP_FAILED)
 				{
-					memcpy(signature_enc, signature_start, signature_size);
-					sign->data = signature_enc;
-					sign->size = signature_size;
+					end = file_size;
+
+					// Find last OBSM marker
+					p = data;
+					while ((p = memmem(p, file_size - offset, OBSM, cs_strlen(OBSM))))
+					{
+						offset = p - data;
+						p += cs_strlen(OBSM);
+						signature_start = p;
+					}
+
+					// Find next UPXM marker
+					p = signature_start ? memmem(signature_start, file_size - offset, UPXM, cs_strlen(UPXM)) : NULL;
+					if (p != NULL)
+					{
+						end = p - data;
+						signature_end = p;
+					}
+					else
+					{
+						signature_end = data + end; // default to EOF
+					}
+
+					// Extract encrypted signature
+					if (offset > 0 && end > offset + cs_strlen(OBSM))
+					{
+						signature_size = end - offset - cs_strlen(OBSM);
+						if (cs_malloc(&signature_enc, signature_size))
+						{
+							memcpy(signature_enc, signature_start, signature_size);
+							sign->data = signature_enc;
+							sign->size = signature_size;
+						}
+					}
+					else
+					{
+						offset = file_size;
+					}
+
+					// SHA256 hash binary (excluding signature)
+					mbedtls_sha256_context ctx;
+					mbedtls_sha256_init(&ctx);
+					mbedtls_sha256_starts(&ctx, 0);
+					mbedtls_sha256_update(&ctx, data, offset);
+					mbedtls_sha256_update(&ctx, signature_end, file_size - end);
+					mbedtls_sha256_finish(&ctx, arRetval.data = (unsigned char *)OPENSSL_malloc(SHA256_DIGEST_LENGTH));
+					arRetval.size = SHA256_DIGEST_LENGTH;
+					mbedtls_sha256_free(&ctx);
+
+					munmap(data, file_size);
 				}
+				close(fd);
 			}
-			else
-			{
-				offset = file_size;
-			}
-
-			// SHA256 hash of binary content without encrypted signature part
-			mbedtls_sha256_context ctx;
-			mbedtls_sha256_init(&ctx);
-			mbedtls_sha256_starts(&ctx, 0);
-			mbedtls_sha256_update(&ctx, data, offset); //first chunk from beginning to signature start
-			mbedtls_sha256_update(&ctx, signature_end, (file_size - end)); //second chunk from signature end to end of file
-			munmap(data, file_size);
-			close(fd);
-
-			// Return calculated digest
-			arRetval.data = (unsigned char *)OPENSSL_malloc(SHA256_DIGEST_LENGTH);
-			arRetval.size = SHA256_DIGEST_LENGTH;
-			mbedtls_sha256_finish(&ctx, arRetval.data);
-			mbedtls_sha256_free(&ctx);
 		}
+		free(fi);
 	}
+
+	cs_log ("Binary         = %s file %s%s",
+				(file_size > 0 ? "Checking" : "Unable to access"),
+				binfile,
+				(file_size > 0 ? "..." : "!"));
 
 	return arRetval;
 }
@@ -477,13 +485,14 @@ static int verifyBin(const char *binfile, EVP_PKEY *pubkey)
 
 				// Finalize verification hash_sha256 against signature and public key
 				bResult = EVP_VerifyFinal(mctx, sign.data, sign.size, pubkey);
-				osi.is_verified = (bResult == 1 ? true : false);
+				osi.is_verified = (bResult == 1);
+				free(sign.data);
 			}
 		}
 	}
 
 	EVP_MD_CTX_destroy(mctx);
-	return bResult;
+	return (bResult == 1);
 }
 
 bool init_signing_info(const char *binfile)
@@ -514,5 +523,5 @@ bool init_signing_info(const char *binfile)
 		cs_log("Certificate    = Error: Built-in Public Key could not be extracted!");
 	}
 
-	return ret != 1 ? false : true;
+	return (ret == 1);
 }
