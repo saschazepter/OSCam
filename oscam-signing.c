@@ -175,8 +175,9 @@ static EVP_PKEY *verify_cert(void)
 					ret = X509_digest(pCert, digest, buf, &len);
 					if (ret && len == SHA_DIGEST_LENGTH)
 					{
-						char strbuf[2*SHA_DIGEST_LENGTH+1];
+						char strbuf[2 * SHA_DIGEST_LENGTH + 1];
 						hex_encode(buf, strbuf, SHA_DIGEST_LENGTH);
+						strbuf[2 * SHA_DIGEST_LENGTH] = '\0';
 						osi.cert_fingerprint = NULL;
 						if (cs_malloc(&osi.cert_fingerprint, cs_strlen(strbuf) + 1))
 						{
@@ -427,7 +428,7 @@ static DIGEST hashBinary(const char *binfile, DIGEST *sign)
 	return arRetval;
 }
 
-static int verifyBin(const char *binfile, EVP_PKEY *pubkey)
+static bool verifyBin(const char *binfile, EVP_PKEY *pubkey)
 {
 	int bResult = 0;
 	osi.is_verified = false;
@@ -440,53 +441,63 @@ static int verifyBin(const char *binfile, EVP_PKEY *pubkey)
 
 	// Get binfile hash digest and encrypted signature
 	DIGEST hash = hashBinary(binfile, &sign);
-
-	// hash sha256
 	osi.sign_digest_size = sign.size;
-	if (hash.data != NULL)
+
+	if (hash.data)
 	{
 		char shaVal[2 * hash.size + 1];
 		hex_encode(hash.data, shaVal, hash.size);
+		shaVal[2 * hash.size] = '\0';
+
 		osi.hash_digest_size = hash.size;
 		osi.hash_size = cs_strlen(shaVal);
+
 		if (cs_malloc(&osi.hash_sha256, osi.hash_size + 1))
 		{
 			cs_strncpy(osi.hash_sha256, strtolower(shaVal), osi.hash_size + 1);
 		}
 		free(hash.data);
 
-		if (pubkey)
+		if (pubkey && sign.data)
 		{
-			if (sign.data != NULL)
+			// Create message digest context
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L  // changed in OpenSSL 1.1.0+
+			mctx = EVP_MD_CTX_new();
+#else
+			mctx = EVP_MD_CTX_create();
+#endif
+			if (!mctx)
 			{
-				// Create message digest context
-				mctx = EVP_MD_CTX_create();
-				if (mctx == NULL)
-				{
-					cs_log("Error: EVP_MD_CTX_create() failed");
-				}
+				cs_log("Error: EVP_MD_CTX_create() failed");
+			}
 
-				// Init SHA256 verification
-				if (!EVP_VerifyInit(mctx, EVP_sha256()))
-				{
-					cs_log("Error: EVP_VerifyInit() failed");
-				}
+			// Init SHA256 verification
+			else if (!EVP_VerifyInit(mctx, EVP_sha256()))
+			{
+				cs_log("Error: EVP_VerifyInit() failed");
+			}
 
-				// Update verification with hash_sha256
-				if (!EVP_VerifyUpdate(mctx, shaVal, cs_strlen(shaVal)))
-				{
-					cs_log("Error: EVP_VerifyUpdate() failed");
-				}
-
+			// Update verification with hash_sha256
+			else if (!EVP_VerifyUpdate(mctx, shaVal, cs_strlen(shaVal)))
+			{
+				cs_log("Error: EVP_VerifyUpdate() failed");
+			}
+			else
+			{
 				// Finalize verification hash_sha256 against signature and public key
 				bResult = EVP_VerifyFinal(mctx, sign.data, sign.size, pubkey);
 				osi.is_verified = (bResult == 1);
-				free(sign.data);
 			}
 		}
 	}
 
+	if (sign.data) free(sign.data);
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L  // changed in OpenSSL 1.1.0+
+	EVP_MD_CTX_free(mctx);
+#else
 	EVP_MD_CTX_destroy(mctx);
+#endif
 	return (bResult == 1);
 }
 
@@ -509,10 +520,10 @@ bool init_signing_info(const char *binfile)
 			(osi.binfile_exists ? "..." : "!"));
 
 	// verify binfile using public key
-	int ret = verifyBin(osi.resolved_binfile, pubkey);
+	bool ret = verifyBin(osi.resolved_binfile, pubkey);
 
-	cs_log ("Signature      = %s", (ret == 1 ? "Valid - Binary's signature was successfully verified using the built-in Public Key"
-											 : "Error: Binary's signature is invalid! Shutting down..."));
+	cs_log ("Signature      = %s", (ret ? "Valid - Binary's signature was successfully verified using the built-in Public Key"
+										: "Error: Binary's signature is invalid! Shutting down..."));
 
 	if (pubkey)
 	{
@@ -530,5 +541,5 @@ bool init_signing_info(const char *binfile)
 	if (tmp) free(tmp);
 	EVP_PKEY_free(pubkey);
 
-	return (ret == 1);
+	return ret;
 }
