@@ -424,11 +424,6 @@ static DIGEST hashBinary(const char *binfile, DIGEST *sign)
 		free(fi);
 	}
 
-	cs_log ("Binary         = %s file %s%s",
-				(file_size > 0 ? "Checking" : "Unable to access"),
-				binfile,
-				(file_size > 0 ? "..." : "!"));
-
 	return arRetval;
 }
 
@@ -503,9 +498,18 @@ bool init_signing_info(const char *binfile)
 	// verify signing certificate and extract public key
 	pubkey = verify_cert();
 
+	// resolve binfile in PATH
+	char *tmp = find_in_path(binfile);
+	osi.binfile_exists = (tmp != NULL);
+	snprintf(osi.resolved_binfile, sizeof(osi.resolved_binfile), "%s", tmp ? tmp : binfile);
+
+	cs_log ("Binary         = %s file %s%s",
+			(osi.binfile_exists ? "Checking" : "Unable to access"),
+			osi.resolved_binfile,
+			(osi.binfile_exists ? "..." : "!"));
+
 	// verify binfile using public key
-	int ret = verifyBin(binfile, pubkey);
-	EVP_PKEY_free(pubkey);
+	int ret = verifyBin(osi.resolved_binfile, pubkey);
 
 	cs_log ("Signature      = %s", (ret == 1 ? "Valid - Binary's signature was successfully verified using the built-in Public Key"
 											 : "Error: Binary's signature is invalid! Shutting down..."));
@@ -522,6 +526,9 @@ bool init_signing_info(const char *binfile)
 	{
 		cs_log("Certificate    = Error: Built-in Public Key could not be extracted!");
 	}
+
+	if (tmp) free(tmp);
+	EVP_PKEY_free(pubkey);
 
 	return (ret == 1);
 }

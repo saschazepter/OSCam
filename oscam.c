@@ -398,7 +398,7 @@ static void write_versionfile(bool use_stdout)
 #ifdef WITH_SIGNING
 	fprintf(fp, "\n");
 	fprintf(fp, "Signature:      %s\n", (osi.is_verified ? "Valid - successfully verified using built-in Public Key" : "Invalid - wrong signature or internal error occured!"));
-	fprintf(fp, "  Binary:       %s%s\n", prog_name, (access(prog_name, R_OK) == 0 ? "" : " is inaccessible!"));
+	fprintf(fp, "  Binary:       %s%s\n", osi.resolved_binfile, osi.binfile_exists ? "" : " is inaccessible!");
 	fprintf(fp, "  Signer:       %s\n", config_ssl);
 	fprintf(fp, "  SHA256:       %s\n", osi.hash_sha256);
 	fprintf(fp, "Certificate:    %s %s Certificate\n", ((osi.cert_is_valid_self || osi.cert_is_valid_system) ? "Trusted" : "Untrusted"), (osi.cert_is_cacert ? "CA" : "self signed"));
