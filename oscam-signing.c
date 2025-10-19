@@ -19,14 +19,30 @@ struct o_sign_info osi;
 
 static char* _X509_NAME_oneline_utf8(X509_NAME *name)
 {
-	BIO *bio_out = BIO_new(BIO_s_mem());
-	X509_NAME_print_ex(bio_out, name, 0, (ASN1_STRFLGS_RFC2253 | XN_FLAG_SEP_COMMA_PLUS | XN_FLAG_FN_SN | XN_FLAG_DUMP_UNKNOWN_FIELDS) & ~ASN1_STRFLGS_ESC_MSB);
+	if (!name)
+		return NULL;
 
-	BUF_MEM *bio_buf;
+	BIO *bio_out = BIO_new(BIO_s_mem());
+	if (!bio_out)
+		return NULL;
+
+	// Ensure buffer is updated and readable
+	X509_NAME_print_ex(bio_out, name, 0,
+		(ASN1_STRFLGS_RFC2253 | XN_FLAG_SEP_COMMA_PLUS |
+		 XN_FLAG_FN_SN | XN_FLAG_DUMP_UNKNOWN_FIELDS) & ~ASN1_STRFLGS_ESC_MSB);
+
+	(void)BIO_flush(bio_out);
+
+	BUF_MEM *bio_buf = NULL;
 	BIO_get_mem_ptr(bio_out, &bio_buf);
+	if (!bio_buf || !bio_buf->data || bio_buf->length == 0)
+	{
+		BIO_free(bio_out);
+		return NULL;
+	}
 
 	char *line = (char *)malloc(bio_buf->length + 1);
-	if (line == NULL)
+	if (!line)
 	{
 		BIO_free(bio_out);
 		return NULL;
@@ -39,34 +55,51 @@ static char* _X509_NAME_oneline_utf8(X509_NAME *name)
 	return line;
 }
 
-static void hex_encode(const unsigned char* readbuf, void *writebuf, size_t len)
+static void hex_encode(const unsigned char *readbuf, void *writebuf, size_t len)
 {
+	char *out = (char *)writebuf;
 	size_t i;
-	for(i=0; i < len; i++)
+
+	for (i = 0; i < len; i++)
 	{
-		char *l = (char*) (2*i + ((intptr_t) writebuf));
-		snprintf(l, len, "%02x", readbuf[i]);
+		/* 3 = two hex digits + null terminator (overwritten next iteration) */
+		snprintf(out + (i * 2), 3, "%02x", readbuf[i]);
 	}
+
+	out[len * 2] = '\0';
 }
 
-static time_t posix_time(unsigned int year, unsigned int month, unsigned int day, unsigned int hour, unsigned int min, unsigned int sec)
+static time_t posix_time(unsigned int year, unsigned int month, unsigned int day,
+						 unsigned int hour, unsigned int min, unsigned int sec)
 {
-	if (year < 1970 || month < 1 || month > 12 || day < 1 || day > 31
-		|| hour > 23 || min > 59 || sec > 60)
+	if (year < 1970 || month < 1 || month > 12 || day < 1 || day > 31 ||
+		hour > 23 || min > 59 || sec > 60)
 	{
 		return -1;
 	}
 
-	// days upto months for non-leap years
-	static const unsigned int month_day[13] = {-1, 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+	// Cumulative days to month (non-leap years)
+	static const unsigned int month_day[13] = {0, 0, 31, 59, 90, 120, 151, 181,
+											   212, 243, 273, 304, 334};
+
+	unsigned int full_year = year;
 	year -= 1900;
 
-	// number of Februaries since 1900
+	// Leap-year correction
+	bool is_leap = (full_year % 4 == 0 && (full_year % 100 != 0 || full_year % 400 == 0));
+	unsigned int leap_correction = (is_leap && month > 2) ? 1 : 0;
+
+	// Number of Februaries since 1900
 	const unsigned int year_for_leap = (month > 2) ? year + 1 : year;
 
-	return sec + min * 60 + hour * 3600 + (month_day[month] + day - 1) * 86400 +
-			(year - 70) * 31536000 + ((year_for_leap - 69) / 4) * 86400 -
-			((year_for_leap - 1) / 100) * 86400 + ((year_for_leap + 299) / 400) * 86400;
+	return (time_t)(
+		sec + min * 60 + hour * 3600 +
+		(month_day[month] + day - 1 + leap_correction) * 86400 +
+		(year - 70) * 31536000 +
+		((year_for_leap - 69) / 4) * 86400 -
+		((year_for_leap - 1) / 100) * 86400 +
+		((year_for_leap + 299) / 400) * 86400
+	);
 }
 
 static unsigned int two_digits_to_uint(const char **s) {
@@ -177,7 +210,6 @@ static EVP_PKEY *verify_cert(void)
 					{
 						char strbuf[2 * SHA_DIGEST_LENGTH + 1];
 						hex_encode(buf, strbuf, SHA_DIGEST_LENGTH);
-						strbuf[2 * SHA_DIGEST_LENGTH] = '\0';
 						osi.cert_fingerprint = NULL;
 						if (cs_malloc(&osi.cert_fingerprint, cs_strlen(strbuf) + 1))
 						{
@@ -447,7 +479,6 @@ static bool verifyBin(const char *binfile, EVP_PKEY *pubkey)
 	{
 		char shaVal[2 * hash.size + 1];
 		hex_encode(hash.data, shaVal, hash.size);
-		shaVal[2 * hash.size] = '\0';
 
 		osi.hash_digest_size = hash.size;
 		osi.hash_size = cs_strlen(shaVal);
@@ -515,7 +546,7 @@ bool init_signing_info(const char *binfile)
 	snprintf(osi.resolved_binfile, sizeof(osi.resolved_binfile), "%s", tmp ? tmp : binfile);
 
 	cs_log ("Binary         = %s file %s%s",
-			(osi.binfile_exists ? "Checking" : "Unable to access"),
+			(osi.binfile_exists ? "Verifying" : "Unable to access"),
 			osi.resolved_binfile,
 			(osi.binfile_exists ? "..." : "!"));
 
