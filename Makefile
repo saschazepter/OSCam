@@ -183,22 +183,52 @@ DEFAULT_COOLAPI_LIB = -lnxp -lrt
 DEFAULT_COOLAPI2_LIB = -llnxUKAL -llnxcssUsr -llnxscsUsr -llnxnotifyqUsr -llnxplatUsr -lrt
 DEFAULT_SU980_LIB = -lentropic -lrt
 DEFAULT_AZBOX_LIB = -Lextapi/openxcas -lOpenXCASAPI
-DEFAULT_LIBCRYPTO_LIB = -lcrypto
-DEFAULT_SSL_LIB = -lssl
+# -----------------------------------------------------------------------------
+# mbedTLS Integration (replaces OpenSSL / libcrypto)
+# -----------------------------------------------------------------------------
+# We build mbedTLS directly from the local submodule at ./mbedtls
+# The usual OSCam flags (USE_SSL, USE_LIBCRYPTO) remain exactly the same.
+
+DEFAULT_LIBCRYPTO_LIB :=
+DEFAULT_SSL_LIB :=
+
+MBEDTLS_DIR      := mbedtls
+MBEDTLS_INC      := $(MBEDTLS_DIR)/include
+MBEDTLS_SRC_ALL  := $(wildcard $(MBEDTLS_DIR)/library/*.c)
+MBEDTLS_SRC      := $(filter-out $(MBEDTLS_DIR)/library/psa_%.c, $(MBEDTLS_SRC_ALL))
+MBEDTLS_CORE_SRC := $(filter-out $(wildcard $(MBEDTLS_DIR)/library/ssl_%.c), $(MBEDTLS_SRC))
+MBEDTLS_CORE_SRC := $(filter-out $(MBEDTLS_DIR)/library/x509_%.c, $(MBEDTLS_CORE_SRC))
+
+ifeq ($(USE_SSL),1)
+	# Full SSL build (includes MbedTLS + shim)
+	CFLAGS  += -DWITH_SSL -DWITH_MBEDTLS
+	CFLAGS  += -I. -I$(MBEDTLS_INC)
+	CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
+	SRC-y   += $(MBEDTLS_SRC) oscam-ssl.c
+	CC_WARN := $(filter-out -Wredundant-decls,$(CC_WARN))
+else ifeq ($(USE_LIBCRYPTO),1)
+	# Crypto-only build (no SSL parts, smaller binary)
+	CFLAGS  += -DWITH_LIBCRYPTO -DWITH_MBEDTLS
+	CFLAGS  += -I. -I$(MBEDTLS_INC)
+	CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
+	SRC-y   += $(MBEDTLS_CORE_SRC)
+	CC_WARN := $(filter-out -Wredundant-decls,$(CC_WARN))
+endif
+
 DEFAULT_LIBDVBCSA_LIB = -ldvbcsa
 DEFAULT_LIBUSB_LIB = -lusb-1.0
 
 # Since FreeBSD 8 (released in 2010) they are using their own
 # libusb that is API compatible to libusb but with different soname
 ifeq ($(uname_S),FreeBSD)
-	DEFAULT_SSL_FLAGS = -I/usr/include
+	DEFAULT_SSL_FLAGS = -Imbedtls/include
 	DEFAULT_LIBUSB_LIB = -lusb
 	DEFAULT_PCSC_FLAGS = -I/usr/local/include/PCSC
 	DEFAULT_PCSC_LIB = -L/usr/local/lib -lpcsclite
 else ifeq ($(uname_S),Darwin)
-	DEFAULT_SSL_FLAGS = -I/usr/local/opt/openssl/include
-	DEFAULT_SSL_LIB = -L/usr/local/opt/openssl/lib -lssl
-	DEFAULT_LIBCRYPTO_LIB = -L/usr/local/opt/openssl/lib -lcrypto
+	DEFAULT_SSL_FLAGS = -Imbedtls/include
+	DEFAULT_SSL_LIB :=
+	DEFAULT_LIBCRYPTO_LIB :=
 	DEFAULT_LIBDVBCSA_FLAGS = -I/usr/local/opt/libdvbcsa/include
 	DEFAULT_LIBDVBCSA_LIB = -L/usr/local/opt/libdvbcsa/lib -ldvbcsa
 	DEFAULT_LIBUSB_FLAGS = -I/usr/local/opt/libusb/include
@@ -218,7 +248,7 @@ else
 	# We can't just use -I/usr/include/PCSC because it won't work in
 	# case of cross compilation.
 	TOOLCHAIN_INC_DIR := $(strip $(shell echo | $(CC) -Wp,-v -xc - -fsyntax-only 2>&1 | $(GREP) include$ | tail -n 1))
-	DEFAULT_SSL_FLAGS = -I$(TOOLCHAIN_INC_DIR) -I$(TOOLCHAIN_INC_DIR)/../../include -I$(TOOLCHAIN_INC_DIR)/../local/include
+	DEFAULT_SSL_FLAGS = -Imbedtls/include
 	DEFAULT_PCSC_FLAGS = -I$(TOOLCHAIN_INC_DIR)/PCSC -I$(TOOLCHAIN_INC_DIR)/../../include/PCSC -I$(TOOLCHAIN_INC_DIR)/../local/include/PCSC
 	DEFAULT_PCSC_LIB = -lpcsclite
 endif
@@ -263,9 +293,10 @@ $(eval $(call prepare_use_flags,LIBDVBCSA,libdvbcsa))
 $(eval $(call prepare_use_flags,COMPRESS,upx))
 
 ifdef USE_SSL
-	SSL_HEADER = $(shell find $(subst -DWITH_SSL=1,,$(subst -I,,$(SSL_FLAGS))) -name opensslv.h -print 2>/dev/null | tail -n 1)
-	SSL_VER    = ${shell ($(GREP) 'OpenSSL [[:digit:]][^ ]*' $(SSL_HEADER) /dev/null 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
-	SSL_INFO   = $(shell echo ', $(SSL_VER)')
+#	SSL_HEADER = $(shell find $(subst -DWITH_SSL=1,,$(subst -I,,$(SSL_FLAGS))) -name opensslv.h -print 2>/dev/null | tail -n 1)
+#	SSL_VER    = ${shell ($(GREP) 'OpenSSL [[:digit:]][^ ]*' $(SSL_HEADER) /dev/null 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
+#	SSL_INFO   = $(shell echo ', $(SSL_VER)')
+	SSL_INFO   = $(shell echo ', mbedTLS (built-in)')
 endif
 
 # Add PLUS_TARGET and EXTRA_TARGET to TARGET
@@ -471,7 +502,7 @@ SRC := $(subst config.c,$(OBJDIR)/config.c,$(SRC))
 # starts the compilation.
 all:
 	@./config.sh --use-flags "$(USE_FLAGS)" --objdir "$(OBJDIR)" --make-config.mak
-	@-mkdir -p $(OBJDIR)/cscrypt $(OBJDIR)/csctapi $(OBJDIR)/minilzo $(OBJDIR)/webif $(OBJDIR)/signing
+	@-mkdir -p $(OBJDIR)/cscrypt $(OBJDIR)/csctapi $(OBJDIR)/minilzo $(OBJDIR)/webif $(OBJDIR)/signing $(OBJDIR)/$(MBEDTLS_DIR)/library
 	@-printf "\
 +-------------------------------------------------------------------------------\n\
 | OSCam Ver.: $(VER) sha: $(GIT_SHA) target: $(TARGET)\n\
