@@ -3,3 +3,8 @@
 	url = https://git.streamboard.tv/common/oscam.wiki.git
 	branch = main
 	shallow = true
+
+[submodule "mbedtls"]
+	path = mbedtls
+	url = https://github.com/Mbed-TLS/mbedtls.git
+	shallow = true
