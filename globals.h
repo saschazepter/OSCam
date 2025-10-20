@@ -1545,7 +1545,6 @@ struct s_reader										// contains device info, reader info and card info
 	int32_t			resetcounter;					// actual count
 	uint32_t		auprovid;						// AU only for this provid
 	int8_t			audisabled;						// exclude reader from auto AU
-	int8_t			needsemmfirst;					// 0: reader descrambles without emm first, 1: reader needs emms before it can descramble
 	struct timeb	emm_last;							// time of last successfully written emm
 	int8_t			smargopatch;
 	int8_t			autospeed;						// 1 clockspeed set according to atr f max
