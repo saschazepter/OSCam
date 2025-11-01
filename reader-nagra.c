@@ -1,8 +1,5 @@
 #include "globals.h"
 #ifdef READER_NAGRA
-#include "cscrypt/bn.h"
-#include "cscrypt/idea.h"
-#include "cscrypt/des.h"
 #include "oscam-time.h"
 #include "reader-common.h"
 #include "reader-nagra-common.h"

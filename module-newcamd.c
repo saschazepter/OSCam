@@ -4,8 +4,6 @@
 
 #ifdef MODULE_NEWCAMD
 
-#include "cscrypt/des.h"
-#include "cscrypt/md5.h"
 #include "module-newcamd.h"
 #include "module-newcamd-des.h"
 #include "oscam-array.h"

@@ -2,8 +2,7 @@
 #define OSCAM_SIGNING_H_
 
 #ifdef WITH_SSL
-#include <openssl/x509.h>
-#include <openssl/pem.h>
+#include "oscam-ssl.h"
 #endif
 
 #define OBSM "!OBSM!" //Oscam Binary Signature Marker
