@@ -23,14 +23,6 @@ unsigned char *MD5(const unsigned char *d, size_t n, unsigned char *md)
 	return md;
 }
 
-/*
- * Classic MD5-crypt shim for MbedTLS-only OSCam builds
- * Compatible with old OpenSSL-based __md5_crypt implementation
- *
- * Output format: $1$salt$<hash>
- * Used by newcamd and other password checks
- */
-
 static const char *__md5__magic = "$1$";
 
 /* Internal 64-character mapping for crypt's base64 variant */
@@ -46,9 +38,6 @@ static void __md5_to64(char *s, unsigned long v, int n)
 	}
 }
 
-/*
- * Drop-in replacement for OpenSSL's __md5_crypt()
- */
 char *__md5_crypt(const char *pw, const char *salt, char *passwd)
 {
 	const char *sp, *ep;
