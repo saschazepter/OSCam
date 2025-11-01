@@ -2,7 +2,6 @@
 
 #include "globals.h"
 
-#include "cscrypt/md5.h"
 #include "module-anticasc.h"
 #include "module-cccam.h"
 #include "module-webif.h"

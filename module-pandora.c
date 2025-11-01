@@ -4,7 +4,6 @@
 
 #ifdef MODULE_PANDORA
 
-#include "cscrypt/md5.h"
 #include "oscam-client.h"
 #include "oscam-ecm.h"
 #include "oscam-net.h"
