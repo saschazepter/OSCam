@@ -2,17 +2,8 @@
 #define MODULE_WEBIF_LIB_H_
 
 #ifdef WITH_SSL
-#include <openssl/crypto.h>
-#include <openssl/ssl.h>
-#include <openssl/x509v3.h>
-#include <openssl/err.h>
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-#define X509_getm_notBefore X509_get_notBefore
-#define X509_getm_notAfter X509_get_notAfter
+#include "oscam-ssl.h"
 #endif
-#endif
-
-#include "cscrypt/md5.h"
 
 /* The server string in the http header */
 #define SERVER "webserver/1.0"
@@ -41,7 +32,7 @@ struct s_connection
 	struct s_client *cl;
 	IN_ADDR_T remote;
 #ifdef WITH_SSL
-	SSL *ssl;
+	oscam_ssl_t *ssl;
 #endif
 };
 
@@ -112,8 +103,8 @@ extern int8_t get_stats_linux(const pid_t pid, struct pstat* result);
 extern void calc_cpu_usage_pct(struct pstat* cur_usage, struct pstat* last_usage);
 
 #ifdef WITH_SSL
-extern SSL *cur_ssl(void);
-extern SSL_CTX *SSL_Webif_Init(void);
+extern oscam_ssl_t *cur_ssl(void);
+extern oscam_ssl_conf_t *SSL_Webif_Init(void);
 #endif
 
 #endif

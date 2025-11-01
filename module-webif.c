@@ -7,7 +7,6 @@
 // OSCam HTTP server module
 //
 #include <locale.h>
-#include "cscrypt/md5.h"
 #include "module-anticasc.h"
 #include "module-cacheex.h"
 #include "module-cccam.h"
@@ -30,6 +29,9 @@
 #include "oscam-string.h"
 #include "oscam-time.h"
 #include "oscam-work.h"
+#ifdef WITH_SSL
+#include "oscam-ssl.h"
+#endif
 #ifdef MODULE_GBOX
 #include "module-gbox-sms.h"
 #include "module-gbox.h"
@@ -52,7 +54,6 @@ pthread_key_t getkeepalive;
 static pthread_key_t getip;
 pthread_key_t getssl;
 static CS_MUTEX_LOCK http_lock;
-CS_MUTEX_LOCK *lock_cs;
 
 static uint8_t useLocal = 1;
 #define PRINTF_LOCAL_D useLocal ? "%'d" : "%d"
@@ -9061,10 +9062,7 @@ static int32_t readRequest(FILE * f, IN_ADDR_T in, char **result, int8_t forcePl
 			{
 				if(errno != ECONNRESET)
 				{
-					int32_t errcode = ERR_peek_error();
-					char errstring[128];
-					ERR_error_string_n(errcode, errstring, sizeof(errstring) - 1);
-					cs_log_dbg(D_TRACE, "WebIf: read error ret=%d (%d%s%s)", n, SSL_get_error(cur_ssl(), n), errcode ? " " : "", errcode ? errstring : "");
+					cs_log_dbg(D_TRACE, "WebIf: read error ret=%d (SSL read failed)", oscam_ssl_get_error(cur_ssl(), n));
 				}
 				return -1;
 			}
@@ -9096,12 +9094,12 @@ static int32_t readRequest(FILE * f, IN_ADDR_T in, char **result, int8_t forcePl
 		if(ssl_active && !forcePlain)
 		{
 			int32_t len = 0;
-			len = SSL_pending((SSL *)f);
+			len = oscam_ssl_pending((oscam_ssl_t *)f);
 
 			if(len > 0)
 				{ continue; }
 
-			pfd2[0].fd = SSL_get_fd((SSL *)f);
+			pfd2[0].fd = oscam_ssl_get_fd((oscam_ssl_t *)f);
 
 		}
 		else
@@ -9647,7 +9645,7 @@ static void *serve_process(void *conn)
 	set_thread_name(__func__);
 
 #ifdef WITH_SSL
-	SSL *ssl = myconn->ssl;
+	oscam_ssl_t *ssl = myconn->ssl;
 	SAFE_SETSPECIFIC(getssl, ssl);
 #endif
 	NULLFREE(myconn);
@@ -9661,16 +9659,16 @@ static void *serve_process(void *conn)
 #ifdef WITH_SSL
 	if(ssl_active)
 	{
-		if(SSL_set_fd(ssl, s))
+		if (ssl)
 		{
-			int32_t ok = (SSL_accept(ssl) != -1);
+			int32_t ok = (oscam_ssl_handshake(ssl) != -1);
 			if(!ok)
 			{
 				int8_t tries = 100;
 				while(!ok && tries--)
 				{
-					int32_t err = SSL_get_error(ssl, -1);
-					if(err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE)
+					int32_t err = oscam_ssl_get_error(ssl, -1);
+					if(err != OSCAM_SSL_WANT_READ && err != OSCAM_SSL_WANT_WRITE)
 						{ break; }
 					else
 					{
@@ -9684,7 +9682,7 @@ static void *serve_process(void *conn)
 							break;
 						}
 						if(rc == 1)
-							{ ok = (SSL_accept(ssl) != -1); }
+							{ ok = (oscam_ssl_handshake(ssl) != -1); }
 					}
 				}
 			}
@@ -9731,9 +9729,9 @@ static void *serve_process(void *conn)
 			}
 		}
 		else { cs_log("WebIf: Error calling SSL_set_fd()."); }
-		SSL_shutdown(ssl);
+		oscam_ssl_close_notify(ssl);
 		close(s);
-		SSL_free(ssl);
+		oscam_ssl_free(ssl);
 	}
 	else
 #endif
@@ -9887,7 +9885,7 @@ static void *http_server(void *UNUSED(d))
 		cs_log("Could not create getssl");
 	}
 
-	SSL_CTX *ctx = NULL;
+	oscam_ssl_conf_t *ctx = NULL;
 	if(cfg.http_use_ssl)
 	{
 		ctx = SSL_Webif_Init();
@@ -9896,7 +9894,7 @@ static void *http_server(void *UNUSED(d))
 		else { ssl_active = 1; }
 	}
 	else { ssl_active = 0; }
-	cs_log("HTTP%s Server running. ip=%s port=%d (%s)", ssl_active ? "S" : "", cs_inet_ntoa(SIN_GET_ADDR(sin)), cfg.http_port, ssl_active ? OPENSSL_VERSION_TEXT : "no SSL");
+	cs_log("HTTP%s Server running. ip=%s port=%d (%s)", ssl_active ? "S" : "", cs_inet_ntoa(SIN_GET_ADDR(sin)), cfg.http_port, ssl_active ? oscam_ssl_version() : "no SSL");
 #else
 	cs_log("HTTP Server running. ip=%s port=%d", cs_inet_ntoa(SIN_GET_ADDR(sin)), cfg.http_port);
 #endif
@@ -9951,7 +9949,7 @@ static void *http_server(void *UNUSED(d))
 			conn->ssl = NULL;
 			if(ssl_active)
 			{
-				conn->ssl = SSL_new(ctx);
+				conn->ssl = oscam_ssl_new(ctx, s);
 				if(conn->ssl == NULL)
 				{
 					close(s);
@@ -9971,14 +9969,7 @@ static void *http_server(void *UNUSED(d))
 	// Wait a bit so that we don't close ressources while http threads are active
 	cs_sleepms(300);
 #ifdef WITH_SSL
-	SSL_CTX_free(ctx);
-	CRYPTO_set_dynlock_create_callback(NULL);
-	CRYPTO_set_dynlock_lock_callback(NULL);
-	CRYPTO_set_dynlock_destroy_callback(NULL);
-	CRYPTO_set_locking_callback(NULL);
-	CRYPTO_set_id_callback(NULL);
-	OPENSSL_free(lock_cs);
-	lock_cs = NULL;
+	oscam_ssl_conf_free(ctx);
 #endif
 	cs_log("HTTP Server stopped");
 	free_client(cl);

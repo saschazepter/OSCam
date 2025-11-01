@@ -195,23 +195,24 @@ DEFAULT_SSL_LIB :=
 MBEDTLS_DIR      := mbedtls
 MBEDTLS_INC      := $(MBEDTLS_DIR)/include
 MBEDTLS_SRC_ALL  := $(wildcard $(MBEDTLS_DIR)/library/*.c)
-MBEDTLS_SRC      := $(filter-out $(MBEDTLS_DIR)/library/psa_%.c, $(MBEDTLS_SRC_ALL))
+MBEDTLS_SRC      := $(MBEDTLS_SRC_ALL)
 MBEDTLS_CORE_SRC := $(filter-out $(wildcard $(MBEDTLS_DIR)/library/ssl_%.c), $(MBEDTLS_SRC))
 MBEDTLS_CORE_SRC := $(filter-out $(MBEDTLS_DIR)/library/x509_%.c, $(MBEDTLS_CORE_SRC))
+MBEDTLS_CORE_SRC := $(filter-out $(MBEDTLS_DIR)/library/psa_%.c, $(MBEDTLS_CORE_SRC))
 
 ifeq ($(USE_SSL),1)
 	# Full SSL build (includes MbedTLS + shim)
-	CFLAGS  += -DWITH_SSL -DWITH_MBEDTLS
+	CFLAGS  += -DWITH_SSL -DWITH_LIBCRYPTO -DWITH_MBEDTLS
 	CFLAGS  += -I. -I$(MBEDTLS_INC)
 	CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
-	SRC-y   += $(MBEDTLS_SRC) oscam-ssl.c
+	SRC-y   += $(MBEDTLS_SRC) oscam-ssl.c oscam-crypto.c
 	CC_WARN := $(filter-out -Wredundant-decls,$(CC_WARN))
 else ifeq ($(USE_LIBCRYPTO),1)
 	# Crypto-only build (no SSL parts, smaller binary)
 	CFLAGS  += -DWITH_LIBCRYPTO -DWITH_MBEDTLS
 	CFLAGS  += -I. -I$(MBEDTLS_INC)
 	CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
-	SRC-y   += $(MBEDTLS_CORE_SRC)
+	SRC-y   += $(MBEDTLS_CORE_SRC) oscam-crypto.c
 	CC_WARN := $(filter-out -Wredundant-decls,$(CC_WARN))
 endif
 
@@ -296,7 +297,8 @@ ifdef USE_SSL
 #	SSL_HEADER = $(shell find $(subst -DWITH_SSL=1,,$(subst -I,,$(SSL_FLAGS))) -name opensslv.h -print 2>/dev/null | tail -n 1)
 #	SSL_VER    = ${shell ($(GREP) 'OpenSSL [[:digit:]][^ ]*' $(SSL_HEADER) /dev/null 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
 #	SSL_INFO   = $(shell echo ', $(SSL_VER)')
-	SSL_INFO   = $(shell echo ', mbedTLS (built-in)')
+	SSL_VER    = ${shell ($(GREP) '^#define MBEDTLS_VERSION_STRING_FULL' $(MBEDTLS_DIR)/include/mbedtls/build_info.h 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
+	SSL_INFO   = $(shell echo ', $(SSL_VER) (built-in)')
 endif
 
 # Add PLUS_TARGET and EXTRA_TARGET to TARGET
@@ -344,29 +346,29 @@ ifndef USE_LIBUSB
 	override LIST_SMARGO_BIN =
 endif
 
-SRC-$(CONFIG_LIB_AES) += cscrypt/aes.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_add.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_asm.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_ctx.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_div.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_exp.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_lib.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_mul.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_print.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_shift.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_sqr.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_word.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/mem.c
-SRC-$(CONFIG_LIB_DES) += cscrypt/des.c
-SRC-$(CONFIG_LIB_IDEA) += cscrypt/i_cbc.c
-SRC-$(CONFIG_LIB_IDEA) += cscrypt/i_ecb.c
-SRC-$(CONFIG_LIB_IDEA) += cscrypt/i_skey.c
-SRC-y += cscrypt/md5.c
-SRC-$(CONFIG_LIB_RC6) += cscrypt/rc6.c
-SRC-$(CONFIG_LIB_SHA1) += cscrypt/sha1.c
-SRC-$(CONFIG_LIB_MDC2) += cscrypt/mdc2.c
-SRC-$(CONFIG_LIB_FAST_AES) += cscrypt/fast_aes.c
-SRC-$(CONFIG_LIB_SHA256) += cscrypt/sha256.c
+#SRC-$(CONFIG_LIB_AES) += cscrypt/aes.c
+#SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_add.c
+#SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_asm.c
+#SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_ctx.c
+#SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_div.c
+#SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_exp.c
+#SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_lib.c
+#SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_mul.c
+#SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_print.c
+#SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_shift.c
+#SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_sqr.c
+#SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_word.c
+#SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/mem.c
+#SRC-$(CONFIG_LIB_DES) += cscrypt/des.c
+#SRC-$(CONFIG_LIB_IDEA) += cscrypt/i_cbc.c
+#SRC-$(CONFIG_LIB_IDEA) += cscrypt/i_ecb.c
+#SRC-$(CONFIG_LIB_IDEA) += cscrypt/i_skey.c
+#SRC-y += cscrypt/md5.c
+#SRC-$(CONFIG_LIB_RC6) += cscrypt/rc6.c
+#SRC-$(CONFIG_LIB_SHA1) += cscrypt/sha1.c
+#SRC-$(CONFIG_LIB_MDC2) += cscrypt/mdc2.c
+#SRC-$(CONFIG_LIB_FAST_AES) += cscrypt/fast_aes.c
+#SRC-$(CONFIG_LIB_SHA256) += cscrypt/sha256.c
 
 SRC-$(CONFIG_WITH_CARDREADER) += csctapi/atr.c
 SRC-$(CONFIG_WITH_CARDREADER) += csctapi/icc_async.c
