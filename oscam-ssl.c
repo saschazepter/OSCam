@@ -480,26 +480,87 @@ cleanup:
 	return ret;
 }
 
-int oscam_ssl_pk_clone(mbedtls_pk_context *dst, const mbedtls_pk_context *src)
+void oscam_ssl_strerror(int err, char *buf, size_t len)
+{
+	mbedtls_strerror(err, buf, len);
+}
+
+// ---- Certificate Handling ----
+void oscam_ssl_cert_init(oscam_x509_crt *crt)
+{
+	mbedtls_x509_crt_init(&crt->crt);
+}
+
+void oscam_ssl_cert_free(oscam_x509_crt *crt)
+{
+	mbedtls_x509_crt_free(&crt->crt);
+}
+
+int oscam_ssl_cert_parse(oscam_x509_crt *crt, const unsigned char *buf, size_t len)
+{
+	return mbedtls_x509_crt_parse(&crt->crt, buf, len);
+}
+
+int oscam_ssl_cert_parse_file(oscam_x509_crt *crt, const char *path)
+{
+	return mbedtls_x509_crt_parse_file(&crt->crt, path);
+}
+
+int oscam_ssl_cert_verify(oscam_x509_crt *crt, oscam_x509_crt *trust)
+{
+	uint32_t flags = 0;
+	return mbedtls_x509_crt_verify(&crt->crt, &trust->crt, NULL, NULL, &flags, NULL, NULL);
+}
+
+oscam_x509_crt *oscam_ssl_cert_get_next(oscam_x509_crt *crt)
+{
+	if (!crt || !crt->crt.next)
+		return NULL;
+	return (oscam_x509_crt *) crt->crt.next;
+}
+
+const oscam_pk_context *oscam_ssl_cert_get_pubkey(const oscam_x509_crt *crt)
+{
+	return (const oscam_pk_context *)&crt->crt.pk;
+}
+
+int oscam_ssl_cert_dn_gets(char *buf, size_t size, const void *dn)
+{
+	return mbedtls_x509_dn_gets(buf, size, (const mbedtls_x509_name *)dn);
+}
+
+void oscam_ssl_cert_serial_gets(const oscam_x509_crt *crt, char *buf, size_t len)
+{
+	mbedtls_x509_serial_gets(buf, len, &crt->crt.serial);
+}
+
+const void *oscam_ssl_cert_get_subject(const oscam_x509_crt *crt)
+{
+	return &crt->crt.subject;
+}
+
+// ---- Public Key ----
+int oscam_ssl_pk_clone(oscam_pk_context *dst, const oscam_pk_context *src)
 {
 	if (!dst || !src)
 		return MBEDTLS_ERR_PK_BAD_INPUT_DATA;
 
-	mbedtls_pk_init(dst);
-
-	const mbedtls_pk_info_t *info = mbedtls_pk_info_from_type(mbedtls_pk_get_type(src));
+	const mbedtls_pk_type_t type = mbedtls_pk_get_type(&src->pk);
+	const mbedtls_pk_info_t *info = mbedtls_pk_info_from_type(type);
 	if (!info)
 		return MBEDTLS_ERR_PK_TYPE_MISMATCH;
 
-	int ret = mbedtls_pk_setup(dst, info);
+	mbedtls_pk_init(&dst->pk);
+
+	int ret = mbedtls_pk_setup(&dst->pk, info);
 	if (ret != 0)
 		return ret;
 
-	switch (mbedtls_pk_get_type(src))
+	switch (type)
 	{
 #if defined(MBEDTLS_RSA_C)
 	case MBEDTLS_PK_RSA:
-		ret = mbedtls_rsa_copy(mbedtls_pk_rsa(*dst), mbedtls_pk_rsa(*src));
+		ret = mbedtls_rsa_copy(mbedtls_pk_rsa(dst->pk), mbedtls_pk_rsa(src->pk));
 		break;
 #endif
 
@@ -508,12 +569,19 @@ int oscam_ssl_pk_clone(mbedtls_pk_context *dst, const mbedtls_pk_context *src)
 	case MBEDTLS_PK_ECKEY_DH:
 	case MBEDTLS_PK_ECDSA:
 	{
-		unsigned char buf[2048];
-		ret = mbedtls_pk_write_key_der((const mbedtls_pk_context *)src, buf, sizeof(buf));
-		if (ret > 0)
-			ret = mbedtls_pk_parse_key(dst, buf + sizeof(buf) - ret, ret, NULL, 0, NULL, NULL);
-		else
-			ret = MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
+		const mbedtls_ecp_keypair *src_ec = mbedtls_pk_ec(src->pk);
+		mbedtls_ecp_keypair *dst_ec = mbedtls_pk_ec(dst->pk);
+
+		if (!src_ec || !dst_ec)
+			return MBEDTLS_ERR_PK_BAD_INPUT_DATA;
+
+		mbedtls_ecp_keypair_init(dst_ec);
+
+		ret = mbedtls_ecp_group_copy(&dst_ec->MBEDTLS_PRIVATE(grp),
+									 &src_ec->MBEDTLS_PRIVATE(grp));
+		if (ret == 0)
+			ret = mbedtls_ecp_copy(&dst_ec->MBEDTLS_PRIVATE(Q),
+								   &src_ec->MBEDTLS_PRIVATE(Q));
 		break;
 	}
 #endif
@@ -521,10 +589,12 @@ int oscam_ssl_pk_clone(mbedtls_pk_context *dst, const mbedtls_pk_context *src)
 #if defined(MBEDTLS_PK_PARSE_C)
 	default:
 	{
-		unsigned char buf[2048];
-		ret = mbedtls_pk_write_key_der((mbedtls_pk_context *) src, buf, sizeof(buf));
+		/* Fallback: clone via DER public key serialization */
+		unsigned char buf[512];
+		ret = mbedtls_pk_write_pubkey_der(&src->pk, buf, sizeof(buf));
 		if (ret > 0)
-			ret = mbedtls_pk_parse_key(dst, buf + sizeof(buf) - ret, ret, NULL, 0, NULL, NULL);
+			ret = mbedtls_pk_parse_public_key(&dst->pk,
+											  buf + sizeof(buf) - ret, ret);
 		else
 			ret = MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
 		break;
@@ -539,5 +609,56 @@ int oscam_ssl_pk_clone(mbedtls_pk_context *dst, const mbedtls_pk_context *src)
 	return ret;
 }
 
+void oscam_ssl_pk_free(oscam_pk_context *pk)
+{
+	mbedtls_pk_free(&pk->pk);
+}
+
+int oscam_ssl_pk_verify(oscam_pk_context *pk,
+						const unsigned char *hash, size_t hash_len,
+						const unsigned char *sig,  size_t sig_len)
+{
+	return mbedtls_pk_verify(&pk->pk, MBEDTLS_MD_SHA256, hash, hash_len, sig, sig_len);
+}
+
+int oscam_ssl_pk_get_type(const oscam_pk_context *pk)
+{
+	return mbedtls_pk_get_type(&pk->pk);
+}
+
+// ---- Hashing ----
+int oscam_ssl_sha1(const unsigned char *data, size_t len, unsigned char *out)
+{
+	SHA_CTX ctx;
+	SHA1_Init(&ctx);
+	SHA1_Update(&ctx, data, len);
+	SHA1_Final(out, &ctx);
+	return 0;
+}
+
+int oscam_ssl_sha256(const unsigned char *data, size_t len, unsigned char *out)
+{
+	mbedtls_sha256_context ctx;
+	mbedtls_sha256_init(&ctx);
+	mbedtls_sha256_starts(&ctx, 0);
+	mbedtls_sha256_update(&ctx, data, len);
+	mbedtls_sha256_finish(&ctx, out);
+	mbedtls_sha256_free(&ctx);
+	return 0;
+}
+
+int oscam_ssl_sha256_stream(const unsigned char *data1, size_t len1,
+							const unsigned char *data2, size_t len2,
+							unsigned char *out)
+{
+	mbedtls_sha256_context ctx;
+	mbedtls_sha256_init(&ctx);
+	mbedtls_sha256_starts(&ctx, 0);
+	if (data1 && len1) mbedtls_sha256_update(&ctx, data1, len1);
+	if (data2 && len2) mbedtls_sha256_update(&ctx, data2, len2);
+	mbedtls_sha256_finish(&ctx, out);
+	mbedtls_sha256_free(&ctx);
+	return 0;
+}
 
 #endif /* WITH_SSL */
