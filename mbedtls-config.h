@@ -85,14 +85,20 @@
 #define MBEDTLS_X509_USE_C
 #define MBEDTLS_X509_CRT_PARSE_C
 #define MBEDTLS_PEM_PARSE_C
+#define MBEDTLS_X509_CRT_WRITE_C
+#define MBEDTLS_PEM_WRITE_C
+#define MBEDTLS_X509_CREATE_C
 
 /* ============================================================================
- *  TLS / SSL (TLS 1.2 only)
+ *  TLS / SSL (TLS 1.2 + 1.3 only)
  * ========================================================================== */
 #define MBEDTLS_SSL_TLS_C
 #define MBEDTLS_SSL_SRV_C
 #define MBEDTLS_SSL_CLI_C
 #define MBEDTLS_SSL_PROTO_TLS1_2
+#define MBEDTLS_SSL_PROTO_TLS1_3
+#define MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_EPHEMERAL_ENABLED
+#define MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_PSK_EPHEMERAL_ENABLED
 #define MBEDTLS_SSL_KEEP_PEER_CERTIFICATE
 #define MBEDTLS_SSL_MAX_CONTENT_LEN 4096
 
@@ -105,7 +111,7 @@
 #define MBEDTLS_PK_CAN_ECDSA_SIGN
 
 /* ============================================================================
- *  Force-disable PSA, CCM/GCM, TLS 1.3 and other extras
+ *  Force-disable PSA, CCM/GCM and other extras
  * ========================================================================== */
 #undef MBEDTLS_PSA_CRYPTO_C
 #undef MBEDTLS_PSA_CRYPTO_DRIVERS
@@ -120,9 +126,6 @@
 #undef MBEDTLS_GCM_C
 #undef MBEDTLS_LMS_C
 
-#undef MBEDTLS_SSL_PROTO_TLS1_3
-#undef MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_EPHEMERAL_ENABLED
-#undef MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_PSK_EPHEMERAL_ENABLED
 #undef MBEDTLS_SSL_TICKET_C
 #undef MBEDTLS_SSL_CONTEXT_SERIALIZATION
 
@@ -134,6 +137,9 @@
 #undef MBEDTLS_SSL_SRV_C
 #undef MBEDTLS_SSL_TLS_C
 #undef MBEDTLS_SSL_PROTO_TLS1_2
+#undef MBEDTLS_SSL_PROTO_TLS1_3
+#undef MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_EPHEMERAL_ENABLED
+#undef MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_PSK_EPHEMERAL_ENABLED
 #undef MBEDTLS_SSL_SERVER_NAME_INDICATION
 #undef MBEDTLS_PKCS7_C
 #undef MBEDTLS_X509_CSR_PARSE_C
@@ -141,6 +147,9 @@
 #undef MBEDTLS_X509_CRL_PARSE_C
 #undef MBEDTLS_X509_CRT_PARSE_C
 #undef MBEDTLS_PEM_PARSE_C
+#undef MBEDTLS_X509_CRT_WRITE_C
+#undef MBEDTLS_PEM_WRITE_C
+#undef MBEDTLS_X509_CREATE_C
 #endif
 
 /* ============================================================================
