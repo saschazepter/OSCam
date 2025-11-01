@@ -1,7 +1,6 @@
 #define MODULE_LOG_PREFIX "ecm"
 
 #include "globals.h"
-#include "cscrypt/md5.h"
 #include "module-anticasc.h"
 #include "module-cacheex.h"
 #include "module-led.h"
