@@ -5,8 +5,6 @@
 #ifndef MODULE_CCCAM_DATA_H_
 #define MODULE_CCCAM_DATA_H_
 
-#include "cscrypt/rc6.h"
-#include "cscrypt/idea.h"
 
 #define CAID_KEY 0x20
 
