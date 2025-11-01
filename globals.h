@@ -63,11 +63,6 @@
 # define WITH_LIBCRYPTO 1
 #endif
 
-/* For deprecated but still needed cryptography functions:
- * 10002 corresponds to OpenSSL version 1.0.2*/
-
-#define OPENSSL_API_COMPAT 10002
-
 #if defined(__CYGWIN__) || defined(__arm__) || defined(__SH4__) || defined(__MIPS__) || defined(__MIPSEL__) || defined(__powerpc__)
 # define CS_LOGFILE "/dev/tty"
 #endif
@@ -115,7 +110,9 @@
 #define MAC_OS_X_VERSION_MIN_REQUIRED MAC_OS_X_VERSION_10_6
 #endif
 
-#include "cscrypt/aes.h"
+#ifdef WITH_LIBCRYPTO
+#include "oscam-crypto.h"
+#endif
 
 #ifdef IPV6SUPPORT
 #define IN_ADDR_T struct in6_addr
@@ -1948,8 +1945,8 @@ struct s_reader										// contains device info, reader info and card info
 #ifdef READER_VIACCESS
 	AES_ENTRY		*aes_list;						// multi AES linked list
 	uint8_t			initCA28;						// To set when CA28 succeed
-	uint32_t		key_schedule1[32];
-	uint32_t		key_schedule2[32];
+	des_key_schedule key_schedule1;
+	des_key_schedule key_schedule2;
 #endif
 
 #if defined(READER_DRE) || defined(READER_DRECAS)
