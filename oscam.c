@@ -45,26 +45,16 @@
 #include "module-gbox.h"
 
 #ifdef WITH_SSL
-#include <openssl/crypto.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
+#include "oscam-ssl.h"
 
 static void ssl_init(void)
 {
-	SSL_load_error_strings();
-	ERR_load_BIO_strings();
-	ERR_load_SSL_strings();
-	SSL_library_init();
+	oscam_ssl_global_init();
 }
 
 static void ssl_done(void)
 {
-#if OPENSSL_VERSION_NUMBER < 0x1010005fL
-	ERR_remove_state(0);
-#endif
-	ERR_free_strings();
-	EVP_cleanup();
-	CRYPTO_cleanup_all_ex_data();
+	oscam_ssl_global_free();
 }
 
 #else
