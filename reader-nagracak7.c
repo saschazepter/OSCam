@@ -1,15 +1,11 @@
 #include "globals.h"
 #ifdef READER_NAGRA_MERLIN
 #include "math.h"
-#include "cscrypt/bn.h"
-#include "cscrypt/idea.h"
 #include "csctapi/icc_async.h"
 #include "oscam-time.h"
 #include "reader-common.h"
 #include "reader-nagra-common.h"
 #include "oscam-work.h"
-#include "cscrypt/des.h"
-#include "cscrypt/mdc2.h"
 
 static uint8_t public_exponent[] = { 0x01, 0x00, 0x01 };
 static const uint8_t d00ff[] = { 0x00, 0xFF, 0xFF, 0xFF };
