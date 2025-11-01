@@ -27,11 +27,11 @@ static char* cert_dn_to_str(const mbedtls_x509_name *dn)
 {
 	if (!dn) return NULL;
 	char buf[256];
-	mbedtls_x509_dn_gets(buf, sizeof(buf), dn);
+	oscam_ssl_cert_dn_gets(buf, sizeof(buf), dn);
 	return cs_strdup(buf);
 }
 
-static void format_mbedtls_time(const mbedtls_x509_time *t, char *buf, size_t len)
+static void format_cert_time(const mbedtls_x509_time *t, char *buf, size_t len)
 {
 	struct tm tmv;
 	memset(&tmv, 0, sizeof(tmv));
@@ -44,78 +44,193 @@ static void format_mbedtls_time(const mbedtls_x509_time *t, char *buf, size_t le
 	strftime(buf, len, "%d.%m.%Y %H:%M:%S", &tmv);
 }
 
-static mbedtls_pk_context *verify_cert(void)
+static bool issuer_in_system_store(const char *issuer_dn)
 {
-	mbedtls_x509_crt crt;
-	mbedtls_x509_crt_init(&crt);
-	if (mbedtls_x509_crt_parse(&crt, (const unsigned char*)config_cert,
-							   strlen(config_cert) + 1) != 0)
+	if (!issuer_dn || !*issuer_dn)
+		return false;
+
+	char system_ca_file[MAX_LEN];
+	snprintf(system_ca_file, sizeof(system_ca_file), "%s/%s",
+	         CA_SYSTEM_LOCATION, CA_FILE_NAME);
+
+	oscam_x509_crt sys;
+	oscam_ssl_cert_init(&sys);
+
+	if (oscam_ssl_cert_parse_file(&sys, system_ca_file) != 0)
 	{
-		cs_log("Error: unable to parse built-in certificate");
-		return NULL;
+		oscam_ssl_cert_free(&sys);
+		return false;
 	}
 
-	// Version
-	osi.cert_version = crt.version;
-
-	// Validity
-	format_mbedtls_time(&crt.valid_from,  osi.cert_valid_from, sizeof(osi.cert_valid_from));
-	format_mbedtls_time(&crt.valid_to,	osi.cert_valid_to,   sizeof(osi.cert_valid_to));
-
-	// Expiry check
-	time_t now = time(NULL);
-	struct tm t;
-	memset(&t, 0, sizeof(t));   // prevents GCC uninitialized warning
-	localtime_r(&now, &t);
-	osi.cert_is_expired =
-		(crt.valid_to.year  <  t.tm_year + 1900) ||
-		(crt.valid_to.year == t.tm_year + 1900 && crt.valid_to.mon < t.tm_mon + 1);
-
-	// Serial
-	char serial_hex[128];
-	mbedtls_x509_serial_gets(serial_hex, sizeof(serial_hex), &crt.serial);
-	osi.cert_serial = cs_strdup(strtolower(serial_hex));
-
-	// Fingerprint (SHA-1 of raw DER)
-	unsigned char fp[20];
-	SHA_CTX sctx;
-	SHA1_Init(&sctx);
-	SHA1_Update(&sctx, crt.raw.p, crt.raw.len);
-	SHA1_Final(fp, &sctx);
-	char fphex[41];
-	hex_encode(fp, fphex, 20);
-	osi.cert_fingerprint = cs_strdup(strtolower(fphex));
-
-	// Subject / issuer
-	osi.cert_subject = cert_dn_to_str(&crt.subject);
-	osi.cert_issuer  = cert_dn_to_str(&crt.issuer);
-	osi.cert_is_cacert = strcmp(osi.cert_subject, osi.cert_issuer) != 0;
-	osi.cert_is_valid_self   = (strcmp(osi.cert_subject, osi.cert_issuer) == 0);
-	osi.cert_is_valid_system = 1;
-
-	// Public-key type
-	char ptype[64];
-	const mbedtls_pk_type_t ptype_id = mbedtls_pk_get_type(&crt.pk);
-	snprintf(ptype, sizeof(ptype), "%d-bit %s Key",
-			 (int)mbedtls_pk_get_bitlen(&crt.pk),
-			 (ptype_id == MBEDTLS_PK_RSA) ? "RSA" :
-			 (ptype_id == MBEDTLS_PK_ECDSA) ? "ECDSA" : "Other");
-	osi.pkey_type = cs_strdup(ptype);
-
-	// Copy pk context so caller can verify
-	mbedtls_pk_context *pk = malloc(sizeof(*pk));
-	if (pk) {
-		int rc = oscam_ssl_pk_clone(pk, &crt.pk);
-		if (rc != 0) {
-			cs_log("Error: failed to clone public key (rc=%d)", rc);
-			free(pk);
-			pk = NULL;
+	bool found = false;
+	for (const oscam_x509_crt *c = &sys; c != NULL && c->crt.raw.p != NULL; c = (oscam_x509_crt *)c->crt.next)
+	{
+		char dn[512];
+		oscam_ssl_cert_dn_gets(dn, sizeof(dn), oscam_ssl_cert_get_subject(c));
+		if (strcmp(dn, issuer_dn) == 0)
+		{
+			found = true;
+			break;
 		}
 	}
 
-	mbedtls_x509_crt_free(&crt);
+	oscam_ssl_cert_free(&sys);
+	return found;
+}
+
+static oscam_pk_context *verify_cert(void)
+{
+	oscam_x509_crt crt;
+	oscam_ssl_cert_init(&crt);
+
+	int ret = oscam_ssl_cert_parse(&crt,
+									 (const unsigned char *)config_cert,
+									 strlen(config_cert) + 1);
+	if (ret != 0)
+	{
+		char estr[128];
+		oscam_ssl_strerror(ret, estr, sizeof(estr));
+		cs_log("Error: unable to parse built-in certificate (%s)", estr);
+		return NULL;
+	}
+
+	// ---- Certificate information ----
+
+	osi.cert_version = crt.crt.version;
+
+	format_cert_time(&crt.crt.valid_from, osi.cert_valid_from, sizeof(osi.cert_valid_from));
+	format_cert_time(&crt.crt.valid_to, osi.cert_valid_to, sizeof(osi.cert_valid_to));
+
+	time_t now = time(NULL);
+	struct tm t;
+	memset(&t, 0, sizeof(t));
+	localtime_r(&now, &t);
+	osi.cert_is_expired =
+		(crt.crt.valid_to.year  <  t.tm_year + 1900) ||
+		(crt.crt.valid_to.year == t.tm_year + 1900 && crt.crt.valid_to.mon < t.tm_mon + 1);
+
+	// Serial
+	char serial_hex[128];
+	oscam_ssl_cert_serial_gets(&crt, serial_hex, sizeof(serial_hex));
+	osi.cert_serial = cs_strdup(strtolower(serial_hex));
+
+	// Fingerprint (SHA-1 of raw DER)
+	unsigned char fp[SHA_DIGEST_LENGTH];
+	oscam_ssl_sha1(crt.crt.raw.p, crt.crt.raw.len, fp);
+	char fphex[2 * SHA_DIGEST_LENGTH + 1];
+	hex_encode(fp, fphex, SHA_DIGEST_LENGTH);
+	osi.cert_fingerprint = cs_strdup(strtolower(fphex));
+
+	// Subject / issuer
+	osi.cert_subject = cert_dn_to_str(&crt.crt.subject);
+	osi.cert_issuer  = cert_dn_to_str(&crt.crt.issuer);
+	osi.cert_is_cacert = strcmp(osi.cert_subject, osi.cert_issuer) != 0;
+	osi.cert_is_valid_self  = false;
+	osi.cert_is_valid_system = false;
+	osi.cert_is_internal_ca = false;
+
+	/* Parse the full built-in certificate chain (one or more PEM blocks) */
+	oscam_x509_crt chain;
+	oscam_ssl_cert_init(&chain);
+
+	int rself = oscam_ssl_cert_parse(&chain,
+									 (const unsigned char *)config_cert,
+									 strlen(config_cert) + 1);
+	if (rself == 0) {
+		/* The first cert in the chain is our leaf (signing cert).
+		   Any additional certs in the same PEM block become chain.next, chain.next->next, etc. */
+		oscam_x509_crt *crt_leaf  = &chain;
+		oscam_x509_crt *trust_self = (oscam_x509_crt *) oscam_ssl_cert_get_next(crt_leaf);
+
+
+		if (trust_self) {
+			int vr = oscam_ssl_cert_verify(crt_leaf, trust_self);
+			if (vr == 0) {
+				osi.cert_is_valid_self = true;
+			}
+		}
+	}
+
+	oscam_ssl_cert_free(&chain);
+
+	/* If not trusted by the built-in chain, try system CA bundle */
+	if (!osi.cert_is_valid_self) {
+		char system_ca_file[MAX_LEN];
+		const char *ca_path = NULL;
+
+		/* default location (matches your macros) */
+		snprintf(system_ca_file, sizeof(system_ca_file), "%s/%s",
+				 CA_SYSTEM_LOCATION, CA_FILE_NAME);
+
+		if (!file_exists(system_ca_file)) {
+			/* emulate the OpenSSL fallback behavior */
+			ca_path = getenv("SSL_CERT_DIR");  /* like X509_get_default_cert_dir_env() */
+			if (!ca_path) {
+				/* OpenSSL default; you already define CA_SYSTEM_LOCATION/FILE; keep a fallback */
+				ca_path = "/etc/ssl/certs";
+			}
+			snprintf(system_ca_file, sizeof(system_ca_file), "%s/%s",
+					 ca_path, CA_FILE_NAME);
+		}
+
+		if (cs_malloc(&osi.system_ca_file, cs_strlen(system_ca_file) + 1)) {
+			cs_strncpy(osi.system_ca_file, system_ca_file,
+					   cs_strlen(system_ca_file) + 1);
+		}
+
+		oscam_x509_crt trust_sys;
+		oscam_ssl_cert_init(&trust_sys);
+
+		int rsys = oscam_ssl_cert_parse_file(&trust_sys, system_ca_file);
+		if (rsys == 0) {
+			int vr = oscam_ssl_cert_verify(&crt, &trust_sys);
+			if (vr == 0) {
+				osi.cert_is_valid_system = true;
+			}
+		} else {
+			cs_log("Error: unable to load CA bundle from %s", system_ca_file);
+		}
+		oscam_ssl_cert_free(&trust_sys);
+	}
+
+	if (osi.cert_is_valid_self && !osi.cert_is_valid_system)
+	{
+		if (!issuer_in_system_store(osi.cert_issuer))
+			osi.cert_is_internal_ca = true;
+	}
+
+	// Public-key type
+	char ptype[2 * SHA256_DIGEST_LENGTH];
+	const int ptype_id = oscam_ssl_pk_get_type(oscam_ssl_cert_get_pubkey(&crt));
+	snprintf(ptype, sizeof(ptype), "%d-bit %s Key",
+			 (int)mbedtls_pk_get_bitlen(&crt.crt.pk),
+			 (ptype_id == MBEDTLS_PK_RSA) ? "RSA" :
+			 (ptype_id == MBEDTLS_PK_ECKEY) ? "ECDSA" : "Other");
+	osi.pkey_type = cs_strdup(ptype);
+
+	// ---- Clone the public key ----
+	oscam_pk_context *pk = malloc(sizeof(*pk));
+	if (!pk)
+	{
+		oscam_ssl_cert_free(&crt);
+		return NULL;
+	}
+
+	const oscam_pk_context *pub = oscam_ssl_cert_get_pubkey(&crt);
+	int rc = oscam_ssl_pk_clone(pk, pub);
+	if (rc != 0)
+	{
+		char estr[128];
+		oscam_ssl_strerror(ret, estr, sizeof(estr));
+		cs_log("Error: failed to clone public key (rc=%d, %s)", rc, estr);
+		free(pk);
+		pk = NULL;
+	}
+
+	oscam_ssl_cert_free(&crt);
 	return pk;
 }
+
 
 static DIGEST hashBinary(const char *binfile, DIGEST *sign)
 {
@@ -177,14 +292,15 @@ static DIGEST hashBinary(const char *binfile, DIGEST *sign)
 					}
 
 					// SHA256 hash binary (excluding signature)
-					mbedtls_sha256_context ctx;
-					mbedtls_sha256_init(&ctx);
-					mbedtls_sha256_starts(&ctx, 0);
-					mbedtls_sha256_update(&ctx, data, offset);
-					mbedtls_sha256_update(&ctx, signature_end, file_size - end);
-					mbedtls_sha256_finish(&ctx, arRetval.data = malloc(SHA256_DIGEST_LENGTH));
-					arRetval.size = SHA256_DIGEST_LENGTH;
-					mbedtls_sha256_free(&ctx);
+					arRetval.data = malloc(SHA256_DIGEST_LENGTH);
+					if (arRetval.data) {
+						oscam_ssl_sha256_stream(
+							data, offset,                       // first part of file
+							signature_end, file_size - end,     // second part of file
+							arRetval.data
+						);
+						arRetval.size = SHA256_DIGEST_LENGTH;
+					}
 
 					munmap(data, file_size);
 				}
@@ -197,38 +313,50 @@ static DIGEST hashBinary(const char *binfile, DIGEST *sign)
 	return arRetval;
 }
 
-static bool verifyBin(const char *binfile, mbedtls_pk_context *pubkey)
+static bool verifyBin(const char *binfile, oscam_pk_context *pubkey)
 {
-	osi.is_verified = false;
 	DIGEST sign = { NULL, 0 };
 	DIGEST hash = hashBinary(binfile, &sign);
 
+	osi.is_verified = false;
 	osi.sign_digest_size = sign.size;
+
 	if (hash.data)
 	{
 		char shaVal[2 * hash.size + 1];
 		hex_encode(hash.data, shaVal, hash.size);
+
 		osi.hash_digest_size = hash.size;
 		osi.hash_size = strlen(shaVal);
-		osi.hash_sha256 = cs_strdup(strtolower(shaVal));
+		if (cs_malloc(&osi.hash_sha256, osi.hash_size + 1))
+			cs_strncpy(osi.hash_sha256, strtolower(shaVal), osi.hash_size + 1);
 
 		if (pubkey && sign.data)
 		{
-			int ret = mbedtls_pk_verify(pubkey, MBEDTLS_MD_SHA256,
-										hash.data, hash.size,
+			/* behavior: final_digest = SHA256( lowercase_hex(sha256(file_wo_sig)) ) */
+			unsigned char final_digest[32];
+			oscam_ssl_sha256((const unsigned char *)osi.hash_sha256,
+							 strlen(osi.hash_sha256),
+							 final_digest);
+
+			int ret = oscam_ssl_pk_verify(pubkey,
+										final_digest, sizeof(final_digest),
 										sign.data, sign.size);
+
 			osi.is_verified = (ret == 0);
 		}
-
 		free(hash.data);
 	}
-	if (sign.data) free(sign.data);
+
+	if (sign.data)
+		free(sign.data);
+
 	return osi.is_verified;
 }
 
 bool init_signing_info(const char *binfile)
 {
-	mbedtls_pk_context *pubkey = NULL;
+	oscam_pk_context *pubkey = NULL;
 	memset(&osi, 0, sizeof(struct o_sign_info));
 
 	// verify signing certificate and extract public key
@@ -239,7 +367,7 @@ bool init_signing_info(const char *binfile)
 	osi.binfile_exists = (tmp != NULL);
 	snprintf(osi.resolved_binfile, sizeof(osi.resolved_binfile), "%s", tmp ? tmp : binfile);
 
-	cs_log ("Binary		 = %s file %s%s",
+	cs_log ("Binary         = %s file %s%s",
 			(osi.binfile_exists ? "Verifying" : "Unable to access"),
 			osi.resolved_binfile,
 			(osi.binfile_exists ? "..." : "!"));
@@ -247,25 +375,26 @@ bool init_signing_info(const char *binfile)
 	// verify binfile using public key
 	bool ret = verifyBin(osi.resolved_binfile, pubkey);
 
-	cs_log ("Signature	  = %s", (ret ? "Valid - Binary's signature was successfully verified using the built-in Public Key"
+	cs_log ("Signature      = %s", (ret ? "Valid - Binary's signature was successfully verified using the built-in Public Key"
 										: "Error: Binary's signature is invalid! Shutting down..."));
 
 	if (pubkey)
 	{
-		cs_log("Certificate	= %s %s Certificate, %s %s",
+		cs_log("Certificate    = %s %s%s Certificate, %s %s",
 				((osi.cert_is_valid_self || osi.cert_is_valid_system) ? "Trusted" : "Untrusted"),
+				(osi.cert_is_internal_ca ? "Internal " : ""),
 				(osi.cert_is_cacert ? "CA" : "Self Signed"),
 				(osi.cert_is_expired ? "expired since" : "valid until"),
 				osi.cert_valid_to);
 	}
 	else
 	{
-		cs_log("Certificate	= Error: Built-in Public Key could not be extracted!");
+		cs_log("Certificate    = Error: Built-in Public Key could not be extracted!");
 	}
 
 	if (tmp) free(tmp);
 	if (pubkey) {
-		mbedtls_pk_free(pubkey);
+		oscam_ssl_pk_free(pubkey);
 		free(pubkey);
 	}
 

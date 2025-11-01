@@ -39,6 +39,7 @@ struct o_sign_info
 	bool	cert_is_cacert;
 	bool	cert_is_valid_self;
 	bool	cert_is_valid_system;
+	bool	cert_is_internal_ca;
 	char	*system_ca_file;
 	char	*pkey_type;
 	int		sign_digest_size;
