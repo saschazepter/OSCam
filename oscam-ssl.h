@@ -13,6 +13,7 @@
 #include "mbedtls/ecp.h"
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/entropy.h"
+#include "mbedtls/error.h"
 
 /* ---------------------------------------------------------------------
  * Status codes
@@ -92,7 +93,43 @@ int oscam_ssl_random(void *buf, size_t len);
 int oscam_ssl_get_error(oscam_ssl_t *ssl, int ret);
 void oscam_ssl_conf_strict_ciphers(oscam_ssl_conf_t *conf);
 int oscam_ssl_generate_selfsigned(const char *path);
-int oscam_ssl_pk_clone(mbedtls_pk_context *dst, const mbedtls_pk_context *src);
+void oscam_ssl_strerror(int err, char *buf, size_t len);
 
+
+/* --- Abstracted types --- */
+typedef struct {
+	mbedtls_x509_crt crt;
+} oscam_x509_crt;
+
+typedef struct {
+	mbedtls_pk_context pk;
+} oscam_pk_context;
+
+// ---- Certificate Handling ----
+int oscam_ssl_cert_parse(oscam_x509_crt  *crt, const unsigned char *buf, size_t buflen);
+int oscam_ssl_cert_parse_file(oscam_x509_crt  *crt, const char *path);
+int oscam_ssl_cert_verify(oscam_x509_crt  *crt, oscam_x509_crt  *trust);
+void oscam_ssl_cert_free(oscam_x509_crt  *crt);
+void oscam_ssl_cert_init(oscam_x509_crt  *crt);
+oscam_x509_crt *oscam_ssl_cert_get_next(oscam_x509_crt *crt);
+const oscam_pk_context *oscam_ssl_cert_get_pubkey(const oscam_x509_crt *crt);
+int oscam_ssl_cert_dn_gets(char *buf, size_t size, const void *dn);
+void oscam_ssl_cert_serial_gets(const oscam_x509_crt *crt, char *buf, size_t len);
+const void *oscam_ssl_cert_get_subject(const oscam_x509_crt *crt);
+
+// ---- Public Key Handling ----
+int oscam_ssl_pk_clone(oscam_pk_context *dst, const oscam_pk_context *src);
+void oscam_ssl_pk_free(oscam_pk_context *pk);
+int oscam_ssl_pk_verify(oscam_pk_context *pk, const unsigned char *hash, size_t hash_len,
+						const unsigned char *sig, size_t sig_len);
+int oscam_ssl_pk_get_type(const oscam_pk_context *pk);
+
+
+// ---- Hashing ----
+int oscam_ssl_sha1(const unsigned char *data, size_t len, unsigned char *out);
+int oscam_ssl_sha256(const unsigned char *data, size_t len, unsigned char *out);
+int oscam_ssl_sha256_stream(const unsigned char *data1, size_t len1,
+							const unsigned char *data2, size_t len2,
+							unsigned char *out);
 #endif /* WITH_SSL */
 #endif /* OSCAM_SSL_H */
