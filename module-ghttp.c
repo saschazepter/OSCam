@@ -9,9 +9,7 @@
 #include "oscam-work.h"
 #include "module-dvbapi.h"
 #ifdef WITH_SSL
-#include <openssl/crypto.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
+#include "oscam-ssl.h"
 #endif
 
 typedef struct
@@ -23,7 +21,7 @@ typedef struct
 	LLIST *post_contexts;
 	LLIST *ecm_q;
 #ifdef WITH_SSL
-	SSL *ssl_handle;
+	oscam_ssl_t *ssl;
 #endif
 } s_ghttp;
 
@@ -37,7 +35,7 @@ typedef struct
 
 static LLIST *ghttp_ignored_contexts;
 #ifdef WITH_SSL
-static SSL_CTX *ghttp_ssl_context;
+static oscam_ssl_conf_t *ghttp_ssl_conf;
 #endif
 
 static int32_t _ghttp_post_ecmdata(struct s_client *client, ECM_REQUEST *er);
@@ -47,46 +45,32 @@ static bool _ssl_connect(struct s_client *client, int32_t fd)
 {
 	s_ghttp *context = (s_ghttp *)client->ghttp;
 
-	if(context->ssl_handle) // cleanup previous
+	if (context->ssl)
 	{
-		SSL_shutdown(context->ssl_handle);
-		SSL_free(context->ssl_handle);
+		oscam_ssl_close_notify(context->ssl);
+		oscam_ssl_free(context->ssl);
+		context->ssl = NULL;
 	}
 
 	cs_log_dbg(D_CLIENT, "%s: trying ssl...", client->reader->label);
 
-	context->ssl_handle = SSL_new(ghttp_ssl_context);
-	if(context->ssl_handle == NULL)
+	context->ssl = oscam_ssl_new(ghttp_ssl_conf, fd);
+	if (!context->ssl)
 	{
-		ERR_print_errors_fp(stderr);
-#if OPENSSL_VERSION_NUMBER < 0x1010005fL
-		ERR_remove_state(0);
-#endif
+		cs_log("%s: oscam_ssl_new failed", client->reader->label);
 		return false;
 	}
-	if(!SSL_set_fd(context->ssl_handle, fd))
+
+	if (oscam_ssl_handshake(context->ssl) != OSCAM_SSL_OK)
 	{
-		ERR_print_errors_fp(stderr);
-#if OPENSSL_VERSION_NUMBER < 0x1010005fL
-		ERR_remove_state(0);
-#endif
+		cs_log("%s: SSL handshake failed", client->reader->label);
+		oscam_ssl_free(context->ssl);
+		context->ssl = NULL;
 		return false;
 	}
-	if(SSL_connect(context->ssl_handle) != 1)
-	{
-		ERR_print_errors_fp(stderr);
-#if OPENSSL_VERSION_NUMBER < 0x1010005fL
-		ERR_remove_state(0);
-#endif
-	}
 
-	if(context->ssl_handle)
-	{
-		cs_log_dbg(D_CLIENT, "%s: ssl established", client->reader->label);
-		return true;
-	}
-
-	return false;
+	cs_log_dbg(D_CLIENT, "%s: ssl established", client->reader->label);
+	return true;
 }
 #endif
 
@@ -97,13 +81,12 @@ int32_t ghttp_client_init(struct s_client *cl)
 
 	ghttp_ignored_contexts = ll_create("ignored contexts");
 #ifdef WITH_SSL
-	ghttp_ssl_context = SSL_CTX_new(SSLv23_client_method());
-	if(ghttp_ssl_context == NULL)
+	oscam_ssl_global_init();
+	ghttp_ssl_conf = oscam_ssl_conf_new();
+	if (!ghttp_ssl_conf)
 	{
-		ERR_print_errors_fp(stderr);
-#if OPENSSL_VERSION_NUMBER < 0x1010005fL
-		ERR_remove_state(0);
-#endif
+		cs_log("%s: SSL conf creation failed", cl->reader->label);
+		return -1;
 	}
 #endif
 
@@ -160,11 +143,6 @@ int32_t ghttp_client_init(struct s_client *cl)
 		return -1;
 #endif
 #ifdef WITH_SSL
-		if(ghttp_ssl_context == NULL)
-		{
-			return -1;
-		}
-
 		if(_ssl_connect(cl, handle))
 		{
 			cl->crypted = 1;
@@ -204,7 +182,7 @@ static int32_t ghttp_send_int(struct s_client *client, uint8_t *buf, int32_t l)
 	s_ghttp *context = (s_ghttp *)client->ghttp;
 	if(client->reader->ghttp_use_ssl)
 	{
-		return SSL_write(context->ssl_handle, buf, l);
+		return oscam_ssl_write(context->ssl, buf, l);
 	}
 #endif
 	return send(client->pfd, buf, l, 0);
@@ -233,7 +211,7 @@ static int32_t ghttp_recv_int(struct s_client *client, uint8_t *buf, int32_t l)
 	if(client->reader->ghttp_use_ssl)
 	{
 #ifdef WITH_SSL
-		n = SSL_read(context->ssl_handle, buf, l);
+		n = oscam_ssl_read(context->ssl, buf, l);
 #endif
 	}
 	else
@@ -766,12 +744,15 @@ static void ghttp_cleanup(struct s_client *client)
 		ll_destroy_data(&context->post_contexts);
 
 #ifdef WITH_SSL
-		if(context->ssl_handle)
+		if (context->ssl)
 		{
-			SSL_shutdown(context->ssl_handle);
-			SSL_free(context->ssl_handle);
+			oscam_ssl_close_notify(context->ssl);
+			oscam_ssl_free(context->ssl);
+			context->ssl = NULL;
 		}
-		SSL_CTX_free(ghttp_ssl_context);
+
+		oscam_ssl_conf_free(ghttp_ssl_conf);
+		oscam_ssl_global_free();
 #endif
 		NULLFREE(context);
 	}
