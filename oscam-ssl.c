@@ -556,12 +556,14 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	mbedtls_x509write_cert crt;
 	mbedtls_entropy_context entropy;
 	mbedtls_ctr_drbg_context ctr_drbg;
-	unsigned char output_buf[4096];
+	unsigned char cert_buf[4096];
+	unsigned char key_buf[2048];
 	const char *pers = "oscam_selfsign_ec";
 	FILE *f = NULL;
 	char not_before[16], not_after[16];
 	time_t now = time(NULL);
 	struct tm start_tm, end_tm;
+	struct utsname buffer;
 
 	mbedtls_pk_init(&key);
 	mbedtls_x509write_crt_init(&crt);
@@ -569,50 +571,49 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	mbedtls_ctr_drbg_init(&ctr_drbg);
 
 	if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
-									 (const unsigned char *)pers, strlen(pers))) != 0)
+		(const unsigned char *)pers, strlen(pers))) != 0)
 		goto cleanup;
 
-	// Use ECDSA key
-	if ((ret = mbedtls_pk_setup(&key,
-			mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY))) != 0)
+	// Generate ECDSA key (P-256)
+	if ((ret = mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY))) != 0)
 		goto cleanup;
 
 	if ((ret = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1,
-			mbedtls_pk_ec(key),
-			mbedtls_ctr_drbg_random, &ctr_drbg)) != 0)
+		mbedtls_pk_ec(key), mbedtls_ctr_drbg_random, &ctr_drbg)) != 0)
 		goto cleanup;
+
+	// Get system nodename for CN
+	const char *cn = !uname(&buffer) ? buffer.nodename : "localhost";
+	size_t cn_len = MIN(strlen(cn), 63);
+
+	char subject_name[128];
+	snprintf(subject_name, sizeof(subject_name),
+		"CN=%.*s,O=OSCam Distribution,OU=Private Webif Certificate", (int)cn_len, cn);
 
 	// Configure certificate metadata
 	mbedtls_x509write_crt_set_subject_key(&crt, &key);
 	mbedtls_x509write_crt_set_issuer_key(&crt, &key);
 	mbedtls_x509write_crt_set_md_alg(&crt, MBEDTLS_MD_SHA256);
 	mbedtls_x509write_crt_set_version(&crt, MBEDTLS_X509_CRT_VERSION_3);
+	mbedtls_x509write_crt_set_subject_name(&crt, subject_name);
+	mbedtls_x509write_crt_set_issuer_name(&crt, subject_name);
 
-	mbedtls_x509write_crt_set_subject_name(&crt, "CN=OSCam,O=OSCam WebIf,C=XX");
-	mbedtls_x509write_crt_set_issuer_name(&crt,  "CN=OSCam,O=OSCam WebIf,C=XX");
-
-	// validity: 2 years
-	// Convert current time
+	// Validity (2 years)
 	gmtime_r(&now, &start_tm);
-
-	// Validity: OSCAM_SSL_CERT_YEARS
 	end_tm = start_tm;
 	end_tm.tm_year += OSCAM_SSL_CERT_YEARS;
-
-	// Format: "YYYYMMDDhhmmss" as required by mbedTLS
 	strftime(not_before, sizeof(not_before), "%Y%m%d%H%M%S", &start_tm);
 	strftime(not_after, sizeof(not_after), "%Y%m%d%H%M%S", &end_tm);
-
 	mbedtls_x509write_crt_set_validity(&crt, not_before, not_after);
 
-	// Serial number (optional but good practice)
-	mbedtls_mpi serial_mpi;
-	mbedtls_mpi_init(&serial_mpi);
+	// Serial number
+	mbedtls_mpi serial;
+	mbedtls_mpi_init(&serial);
 	unsigned char serial_bytes[16];
 	mbedtls_ctr_drbg_random(&ctr_drbg, serial_bytes, sizeof(serial_bytes));
-	mbedtls_mpi_read_binary(&serial_mpi, serial_bytes, sizeof(serial_bytes));
-	mbedtls_x509write_crt_set_serial(&crt, &serial_mpi);
-	mbedtls_mpi_free(&serial_mpi);
+	mbedtls_mpi_read_binary(&serial, serial_bytes, sizeof(serial_bytes));
+	mbedtls_x509write_crt_set_serial(&crt, &serial);
+	mbedtls_mpi_free(&serial);
 
 	// Basic constraints & key usage
 	mbedtls_x509write_crt_set_basic_constraints(&crt, 0, -1);
@@ -621,23 +622,31 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	mbedtls_x509write_crt_set_ns_cert_type(&crt,
 		MBEDTLS_X509_NS_CERT_TYPE_SSL_SERVER);
 
-	if ((ret = mbedtls_x509write_crt_pem(&crt, output_buf, sizeof(output_buf),
-										 mbedtls_ctr_drbg_random, &ctr_drbg)) < 0)
+	// Write certificate to PEM
+	if ((ret = mbedtls_x509write_crt_pem(&crt, cert_buf, sizeof(cert_buf),
+		mbedtls_ctr_drbg_random, &ctr_drbg)) < 0)
 		goto cleanup;
 
+	// Write private key to PEM
+	if ((ret = mbedtls_pk_write_key_pem(&key, key_buf, sizeof(key_buf))) != 0)
+		goto cleanup;
+
+	// Save both into the same file
 	f = fopen(path, "wb");
 	if (!f) {
 		ret = -1;
 		goto cleanup;
 	}
-	fwrite(output_buf, 1, strlen((char *)output_buf), f);
+	fwrite(cert_buf, 1, strlen((char *)cert_buf), f);
+	fwrite(key_buf, 1, strlen((char *)key_buf), f);
 	fclose(f);
 
+	cs_log("SSL: generated new self-signed certificate for CN=%s", cn);
 	ret = 0;
 
 cleanup:
 	if (ret != 0)
-		cs_log("SSL: ECDSA self-signed certificate generation failed (%d)", ret);
+		cs_log("SSL: self-signed certificate generation failed (%d)", ret);
 
 	mbedtls_pk_free(&key);
 	mbedtls_x509write_crt_free(&crt);
