@@ -787,9 +787,24 @@ oscam_ssl_conf_t *SSL_Webif_Init(void)
 		return NULL;
 	}
 
+	oscam_ssl_mode_t mode =
+			cfg.https_force_secure_mode ? OSCAM_SSL_MODE_STRICT : OSCAM_SSL_MODE_LEGACY;
+
+	switch (mode)
+	{
+		case OSCAM_SSL_MODE_STRICT:
+			cs_log("SSL: secure HTTPS mode (TLS ≥ 1.2, AEAD-only)");
+			break;
+		case OSCAM_SSL_MODE_LEGACY:
+			cs_log("SSL: legacy HTTPS mode (TLS 1.2 + CBC fallback)");
+			break;
+		default:
+			cs_log("SSL: standard HTTPS mode (TLS ≥ 1.2, mixed ciphers)");
+			break;
+	}
+
 	/* Allocate SSL config context */
-	oscam_ssl_conf_t *conf = oscam_ssl_conf_build(
-		cfg.https_force_secure_mode ? OSCAM_SSL_MODE_STRICT : OSCAM_SSL_MODE_LEGACY);
+	oscam_ssl_conf_t *conf = oscam_ssl_conf_build(mode);
 	if (!conf) {
 		cs_log("SSL: failed to create SSL config (%d)", ret);
 		return NULL;
