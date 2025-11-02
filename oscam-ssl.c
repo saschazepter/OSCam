@@ -168,18 +168,15 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 
 	switch (mode) {
 		case OSCAM_SSL_MODE_STRICT:
-			cs_log("SSL: enforcing secure HTTPS mode (TLS ≥ 1.2, AEAD-only)");
 			suites = suites_strict;
 			min_minor = MBEDTLS_SSL_MINOR_VERSION_3;
 			max_minor = MBEDTLS_SSL_MINOR_VERSION_4;
 			break;
 		case OSCAM_SSL_MODE_LEGACY:
-			cs_log("SSL: legacy HTTPS mode (TLS 1.2 + CBC)");
 			suites = suites_legacy;
 			max_minor = MBEDTLS_SSL_MINOR_VERSION_3;  /* lock to TLS 1.2 */
 			break;
 		default:
-			cs_log("SSL: standard HTTPS mode (TLS 1.2–1.3, mixed)");
 			suites = suites_default;
 			break;
 	}
@@ -538,19 +535,7 @@ int oscam_ssl_random(void *buf, size_t len)
 
 const char *oscam_ssl_version(void)
 {
-	static char version_str[64];
-	snprintf(version_str, sizeof(version_str),
-			 "MbedTLS %s (TLS %d.%d%s)",
-			 MBEDTLS_VERSION_STRING,
-#if defined(MBEDTLS_SSL_PROTO_TLS1_3)
-			 1, 3, ""
-#elif defined(MBEDTLS_SSL_PROTO_TLS1_2)
-			 1, 2, ""
-#else
-			 1, 1, " or older"
-#endif
-	);
-	return version_str;
+	return MBEDTLS_VERSION_STRING_FULL;
 }
 
 int oscam_ssl_get_error(oscam_ssl_t *ssl, int ret)
