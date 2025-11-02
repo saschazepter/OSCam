@@ -101,6 +101,8 @@
 #define MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_PSK_EPHEMERAL_ENABLED
 #define MBEDTLS_SSL_KEEP_PEER_CERTIFICATE
 #define MBEDTLS_SSL_MAX_CONTENT_LEN 4096
+#define MBEDTLS_SSL_TICKET_C
+#define MBEDTLS_SSL_CONTEXT_SERIALIZATION
 
 /* Key-exchange methods */
 #define MBEDTLS_KEY_EXCHANGE_RSA_ENABLED
@@ -126,9 +128,6 @@
 #undef MBEDTLS_CCM_C
 #undef MBEDTLS_GCM_C
 #undef MBEDTLS_LMS_C
-
-#undef MBEDTLS_SSL_TICKET_C
-#undef MBEDTLS_SSL_CONTEXT_SERIALIZATION
 
 /* ============================================================================
  *  Disable unused features when building without SSL
