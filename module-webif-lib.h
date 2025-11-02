@@ -23,8 +23,6 @@
 #define MAXGETPARAMS 300
 /* The refresh delay (in seconds) when stopping OSCam via http. */
 #define SHUTDOWNREFRESH 30
-/* The expiry of the certificate; 365 days */
-#define CERT_EXPIRY_TIME (60*60*24*365)
 
 struct s_connection
 {
