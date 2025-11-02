@@ -306,7 +306,7 @@ int32_t webif_write_raw(char *buf, FILE *f, int32_t len)
 #ifdef WITH_SSL
 	if(ssl_active)
 	{
-		return oscam_ssl_write((oscam_ssl_t *)f, buf, (size_t)len);
+		return oscam_ssl_write((oscam_ssl_t *)f, (const unsigned char *)buf, (size_t)len);
 	}
 	else
 #endif
@@ -788,14 +788,12 @@ oscam_ssl_conf_t *SSL_Webif_Init(void)
 	}
 
 	/* Allocate SSL config context */
-	oscam_ssl_conf_t *conf = oscam_ssl_conf_new();
+	oscam_ssl_conf_t *conf = oscam_ssl_conf_build(
+		cfg.https_force_secure_mode ? OSCAM_SSL_MODE_STRICT : OSCAM_SSL_MODE_LEGACY);
 	if (!conf) {
 		cs_log("SSL: failed to create SSL config (%d)", ret);
 		return NULL;
 	}
-
-	/* Restrict to TLS 1.2 only (secure mode) */
-	oscam_ssl_conf_set_min_tls12(conf);
 
 	/* Auto-create certificate if missing */
 	if (!file_exists(path) && cfg.https_auto_create_cert) {
@@ -808,16 +806,10 @@ oscam_ssl_conf_t *SSL_Webif_Init(void)
 	}
 
 	/* Load certificate and private key */
-	if ((ret = oscam_ssl_conf_load_own_cert(conf, path, path, NULL)) != 0) {
+	if ((ret = oscam_ssl_conf_use_own_cert_pem(conf, path, NULL)) != 0) {
 		cs_log("SSL: failed to load certificate/key from %s (%d)", path, ret);
 		oscam_ssl_conf_free(conf);
 		return NULL;
-	}
-
-	/* Optionally enforce secure mode */
-	if (cfg.https_force_secure_mode) {
-		cs_log("SSL: enforcing secure HTTPS mode");
-		oscam_ssl_conf_strict_ciphers(conf);
 	}
 
 	cs_log("SSL: initialized WebIf TLS context using %s", path);
