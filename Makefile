@@ -2,7 +2,7 @@ SHELL = /bin/sh
 
 .SUFFIXES:
 .SUFFIXES: .o .c
-.PHONY: all tests help README.build README.config simple default debug config menuconfig allyesconfig allnoconfig defconfig clean distclean
+.PHONY: all tests help README.build README.config simple default debug config menuconfig allyesconfig allnoconfig defconfig clean distclean submodules
 
 VER        := $(shell ./config.sh --oscam-version)
 GIT_SHA    := $(shell ./config.sh --oscam-commit)
@@ -502,7 +502,7 @@ SRC := $(subst config.c,$(OBJDIR)/config.c,$(SRC))
 
 # The default build target rebuilds the config.mak if needed and then
 # starts the compilation.
-all:
+all: submodules
 	@./config.sh --use-flags "$(USE_FLAGS)" --objdir "$(OBJDIR)" --make-config.mak
 	@-mkdir -p $(OBJDIR)/cscrypt $(OBJDIR)/csctapi $(OBJDIR)/minilzo $(OBJDIR)/webif $(OBJDIR)/signing $(OBJDIR)/$(MBEDTLS_DIR)/library
 	@-printf "\
@@ -605,6 +605,33 @@ distclean: clean
 		rm -rf $$FILE; \
 	done
 	@-$(MAKE) --no-print-directory --quiet -C webif clean
+
+submodules:
+	@if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
+		if git submodule status --recursive | grep -qE '^-'; then \
+			echo "Updating missing git submodules..."; \
+			git submodule update --init --recursive || { \
+				echo "Error: failed to init submodules. Please check your network or permissions."; \
+				exit 1; }; \
+		else \
+			echo "All git submodules are already initialized."; \
+		fi; \
+	else \
+		echo "Skipping git submodule initialization (not a git repository)."; \
+		MODULES=$$(awk '/path *=/ {print $$3}' .gitmodules 2>/dev/null || true); \
+		if [ -n "$$MODULES" ]; then \
+			echo "Hint: If you are building from a source archive, ensure these submodules/components are present:"; \
+			for m in $$MODULES; do \
+				if [ ! -d "$$m" ]; then \
+					echo "  - $$m (missing)"; \
+				else \
+					echo "  - $$m (found)"; \
+				fi; \
+			done; \
+		else \
+			echo "Hint: Ensure all required external components (e.g. 'mbedtls', 'webif') are included."; \
+		fi; \
+	fi
 
 README.build:
 	@echo "Extracting 'make help' into $@ file."
