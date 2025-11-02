@@ -7,12 +7,6 @@
 #include "io_serial.h"
 #include "ifd_phoenix.h"
 #include "../oscam-time.h"
-#ifdef READER_NAGRA_MERLIN
-#include "../cscrypt/fast_aes.h"
-#include "../cscrypt/sha256.h"
-#include "../cscrypt/mdc2.h"
-#include "../cscrypt/idea.h"
-#endif
 
 #define OK 0
 #define ERROR 1
