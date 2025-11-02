@@ -306,7 +306,7 @@ ifdef USE_SSL
 #	SSL_HEADER = $(shell find $(subst -DWITH_SSL=1,,$(subst -I,,$(SSL_FLAGS))) -name opensslv.h -print 2>/dev/null | tail -n 1)
 #	SSL_VER    = ${shell ($(GREP) 'OpenSSL [[:digit:]][^ ]*' $(SSL_HEADER) /dev/null 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
 #	SSL_INFO   = $(shell echo ', $(SSL_VER)')
-	SSL_VER    = ${shell ($(GREP) '^#define MBEDTLS_VERSION_STRING_FULL' $(MBEDTLS_DIR)/include/mbedtls/build_info.h 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
+	SSL_VER    = $(shell $(GREP) '^#define MBEDTLS_VERSION_STRING_FULL' $(MBEDTLS_DIR)/include/mbedtls/build_info.h 2>/dev/null | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs)
 	SSL_INFO   = $(shell echo ', $(SSL_VER) (built-in)')
 endif
 
