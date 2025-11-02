@@ -82,7 +82,7 @@ int32_t ghttp_client_init(struct s_client *cl)
 	ghttp_ignored_contexts = ll_create("ignored contexts");
 #ifdef WITH_SSL
 	oscam_ssl_global_init();
-	ghttp_ssl_conf = oscam_ssl_conf_new();
+	ghttp_ssl_conf = oscam_ssl_conf_build(OSCAM_SSL_MODE_DEFAULT);
 	if (!ghttp_ssl_conf)
 	{
 		cs_log("%s: SSL conf creation failed", cl->reader->label);
