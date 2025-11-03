@@ -1731,6 +1731,10 @@ int32_t main(int32_t argc, char *argv[])
 		exit(1);
 	}
 
+#if defined(USE_SSL) || defined(USE_LIBCRYPTO)
+	mbedtls_platform_setup();
+#endif
+
 	void (*mod_def[])(struct s_module *) =
 	{
 #ifdef MODULE_MONITOR
