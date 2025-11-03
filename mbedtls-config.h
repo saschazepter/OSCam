@@ -28,7 +28,6 @@
 #define MBEDTLS_HAVE_ASM
 #define MBEDTLS_PLATFORM_C
 #define MBEDTLS_PLATFORM_MEMORY
-#define MBEDTLS_PLATFORM_ZEROIZE_ALT
 #define MBEDTLS_PLATFORM_NO_STD_FUNCTIONS   /* no malloc/printf/time from libc */
 
 /* No time / timing API from glibc */
@@ -132,7 +131,7 @@
 #undef MBEDTLS_SELF_TEST   /* remove printf usage in self-tests */
 
 /* ============================================================================
- *  Disable unused features when building without SSL
+ *  Disable unused features when building without WITH_SSL or WITH_LIBCRYPTO
  * ========================================================================== */
 #ifndef WITH_SSL
 #undef MBEDTLS_SSL_CLI_C
@@ -152,6 +151,19 @@
 #undef MBEDTLS_X509_CRT_WRITE_C
 #undef MBEDTLS_PEM_WRITE_C
 #undef MBEDTLS_X509_CREATE_C
+#endif
+
+#ifndef WITH_LIBCRYPTO
+#undef MBEDTLS_MD5_C
+#undef MBEDTLS_SHA1_C
+#undef MBEDTLS_SHA256_C
+#undef MBEDTLS_SHA512_C
+#undef MBEDTLS_AES_C
+#undef MBEDTLS_BIGNUM_C
+#undef MBEDTLS_CIPHER_C
+#undef MBEDTLS_DES_C
+#undef MBEDTLS_MD_C
+#undef MBEDTLS_BASE64_C
 #endif
 
 #endif /* MBEDTLS_USER_CONFIG_H */
