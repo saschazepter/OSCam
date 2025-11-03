@@ -1,6 +1,6 @@
 /**
  * \file mbedtls-config.h
- * \brief Minimal working configuration for mbedTLS 3.6.5 (TLS 1.2, no PSA)
+ * \brief OSCam’s configuration for mbedTLS (glibc-free)
  */
 
 #ifndef MBEDTLS_USER_CONFIG_H
@@ -16,23 +16,33 @@
 #undef MBEDTLS_PSA_CRYPTO_C
 #undef MBEDTLS_USE_PSA_CRYPTO
 #undef MBEDTLS_PSA_CRYPTO_CONFIG
+#undef MBEDTLS_PSA_CRYPTO_DRIVERS
+#undef MBEDTLS_PSA_CRYPTO_STORAGE_C
+#undef MBEDTLS_PSA_CRYPTO_SE_C
+#undef MBEDTLS_PSA_CRYPTO_BUILTIN_KEYS
+#undef MBEDTLS_PSA_CRYPTO_ACCELERATION_SUPPORT
 
 /* ============================================================================
  *  Platform / system support
  * ========================================================================== */
 #define MBEDTLS_HAVE_ASM
-#define MBEDTLS_HAVE_TIME
 #define MBEDTLS_PLATFORM_C
-#define MBEDTLS_TIMING_C
+#define MBEDTLS_PLATFORM_MEMORY
+#define MBEDTLS_PLATFORM_ZEROIZE_ALT
+#define MBEDTLS_PLATFORM_NO_STD_FUNCTIONS   /* no malloc/printf/time from libc */
+
+/* No time / timing API from glibc */
+#undef  MBEDTLS_HAVE_TIME
+#undef  MBEDTLS_TIMING_C
+#define MBEDTLS_PLATFORM_TIME_ALT           /* optional: supply your own time */
 
 /* ============================================================================
  *  Entropy / RNG
  * ========================================================================== */
 #define MBEDTLS_ENTROPY_C
-#define MBEDTLS_MD_CAN_SHA256
 #define MBEDTLS_CTR_DRBG_C
-/* Do NOT define MBEDTLS_NO_PLATFORM_ENTROPY or MBEDTLS_TEST_NULL_ENTROPY */
-#define MBEDTLS_ENTROPY_HARDWARE_ALT   /* optional hook if you want your own source */
+#define MBEDTLS_MD_CAN_SHA256
+#define MBEDTLS_ENTROPY_HARDWARE_ALT        /* provide mbedtls_hardware_poll() */
 
 /* ============================================================================
  *  Hash / Message Digest
@@ -78,14 +88,16 @@
 #define MBEDTLS_PK_C
 #define MBEDTLS_PK_PARSE_C
 #define MBEDTLS_PK_WRITE_C
+#define MBEDTLS_PK_RSA_ALT_SUPPORT
+#define MBEDTLS_PK_CAN_ECDSA_SIGN
 
 /* ============================================================================
  *  X.509 certificates
  * ========================================================================== */
 #define MBEDTLS_X509_USE_C
 #define MBEDTLS_X509_CRT_PARSE_C
-#define MBEDTLS_PEM_PARSE_C
 #define MBEDTLS_X509_CRT_WRITE_C
+#define MBEDTLS_PEM_PARSE_C
 #define MBEDTLS_PEM_WRITE_C
 #define MBEDTLS_X509_CREATE_C
 
@@ -107,27 +119,17 @@
 /* Key-exchange methods */
 #define MBEDTLS_KEY_EXCHANGE_RSA_ENABLED
 #define MBEDTLS_KEY_EXCHANGE_ECDHE_RSA_ENABLED
-#define MBEDTLS_CAN_ECDH
-#define MBEDTLS_RSA_C
-#define MBEDTLS_PK_RSA_ALT_SUPPORT
 #define MBEDTLS_KEY_EXCHANGE_ECDHE_ECDSA_ENABLED
-#define MBEDTLS_PK_CAN_ECDSA_SIGN
+#define MBEDTLS_CAN_ECDH
 
 /* ============================================================================
- *  Force-disable PSA, CCM/GCM and other extras
+ *  Optional features disabled for glibc-free builds
  * ========================================================================== */
-#undef MBEDTLS_PSA_CRYPTO_C
-#undef MBEDTLS_PSA_CRYPTO_DRIVERS
-#undef MBEDTLS_PSA_CRYPTO_STORAGE_C
-#undef MBEDTLS_PSA_CRYPTO_SE_C
-#undef MBEDTLS_USE_PSA_CRYPTO
-#undef MBEDTLS_PSA_CRYPTO_CONFIG
-#undef MBEDTLS_PSA_CRYPTO_BUILTIN_KEYS
-#undef MBEDTLS_PSA_CRYPTO_ACCELERATION_SUPPORT
-
-#undef MBEDTLS_CCM_C
 #undef MBEDTLS_GCM_C
+#undef MBEDTLS_CCM_C
 #undef MBEDTLS_LMS_C
+
+#undef MBEDTLS_SELF_TEST   /* remove printf usage in self-tests */
 
 /* ============================================================================
  *  Disable unused features when building without SSL
@@ -151,10 +153,5 @@
 #undef MBEDTLS_PEM_WRITE_C
 #undef MBEDTLS_X509_CREATE_C
 #endif
-
-/* ============================================================================
- *  Misc / self-test
- * ========================================================================== */
-#define MBEDTLS_SELF_TEST
 
 #endif /* MBEDTLS_USER_CONFIG_H */
