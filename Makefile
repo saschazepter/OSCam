@@ -201,7 +201,12 @@ DEFAULT_SSL_LIB :=
 MBEDTLS_DIR      := mbedtls
 MBEDTLS_INC      := $(MBEDTLS_DIR)/include
 MBEDTLS_SRC_ALL  := $(wildcard $(MBEDTLS_DIR)/library/*.c)
-MBEDTLS_SRC      := $(MBEDTLS_SRC_ALL)
+MBEDTLS_SRC := $(filter-out \
+	$(MBEDTLS_DIR)/library/platform.c \
+	$(MBEDTLS_DIR)/library/platform_util.c, \
+	$(MBEDTLS_SRC_ALL) \
+)
+MBEDTLS_SRC += mbedtls_platform.c
 MBEDTLS_CORE_SRC := $(filter-out $(wildcard $(MBEDTLS_DIR)/library/ssl_%.c), $(MBEDTLS_SRC))
 MBEDTLS_CORE_SRC := $(filter-out $(MBEDTLS_DIR)/library/x509_%.c, $(MBEDTLS_CORE_SRC))
 MBEDTLS_CORE_SRC := $(filter-out $(MBEDTLS_DIR)/library/psa_%.c, $(MBEDTLS_CORE_SRC))
@@ -209,6 +214,7 @@ MBEDTLS_CORE_SRC := $(filter-out $(MBEDTLS_DIR)/library/psa_%.c, $(MBEDTLS_CORE_
 ifeq ($(USE_SSL),1)
 	# Full SSL build (includes MbedTLS + shim)
 	CFLAGS  += -DWITH_SSL -DWITH_LIBCRYPTO -DWITH_MBEDTLS
+	CFLAGS  += -DMBEDTLS_NO_PLATFORM_ENTROPY -DMBEDTLS_NO_DEFAULT_ENTROPY_SOURCES
 	CFLAGS  += -I. -I$(MBEDTLS_INC)
 	CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
 	SRC-y   += $(MBEDTLS_SRC) oscam-ssl.c oscam-crypto.c
@@ -216,6 +222,7 @@ ifeq ($(USE_SSL),1)
 else ifeq ($(USE_LIBCRYPTO),1)
 	# Crypto-only build (no SSL parts, smaller binary)
 	CFLAGS  += -DWITH_LIBCRYPTO -DWITH_MBEDTLS
+	CFLAGS  += -DMBEDTLS_NO_PLATFORM_ENTROPY -DMBEDTLS_NO_DEFAULT_ENTROPY_SOURCES
 	CFLAGS  += -I. -I$(MBEDTLS_INC)
 	CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
 	SRC-y   += $(MBEDTLS_CORE_SRC) oscam-crypto.c
