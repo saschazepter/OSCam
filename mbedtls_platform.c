@@ -1,7 +1,17 @@
 /*
- * Custom mbedTLS platform overrides for OSCam portable build
- * Eliminates strict dependency on glibc (e.g. explicit_bzero)
- * and allows control over memory / printf usage.
+ * Custom mbedTLS platform overrides for portable OSCam builds
+ * - No dependency on versioned glibc symbols (e.g. explicit_bzero@GLIBC_*).
+ * - Works on Linux (glibc/musl), macOS, and FreeBSD.
+ * - Allows overriding printf and memory functions without pulling mbedtls/library/platform.c.
+ *
+ * Build assumptions (recommended):
+ *   - You EXCLUDE: mbedtls/library/platform.c and mbedtls/library/platform_util.c
+ *   - You ENABLE in your user config (mbedtls-config.h):
+ *       #define MBEDTLS_PLATFORM_C
+ *       #define MBEDTLS_PLATFORM_MEMORY
+ *       #define MBEDTLS_PLATFORM_NO_STD_FUNCTIONS
+ *
+ * If you include platform.c later, our weak symbols will be overridden by the strong ones.
  */
 
 #include <stdio.h>
@@ -12,28 +22,70 @@
 #include <sys/time.h>
 
 #include "mbedtls/platform.h"
-#include "mbedtls/platform_util.h"
 #include "mbedtls/platform_time.h"
 
-/* --------------------------------------------------------------------
- * Secure zeroization replacement (avoids explicit_bzero@GLIBC_...)
- * ------------------------------------------------------------------*/
+/* ----------------------------------------------------------------------
+ * Portable "weak" attribute for GCC/Clang (Linux, FreeBSD, macOS)
+ * -------------------------------------------------------------------- */
+#if !defined(WEAK)
+# if defined(__GNUC__) || defined(__clang__)
+#  define WEAK __attribute__((weak))
+# else
+#  define WEAK
+# endif
+#endif
+
+/* ----------------------------------------------------------------------
+ * Secure zeroization (we exclude platform_util.c, so we provide this)
+ * -------------------------------------------------------------------- */
 void mbedtls_platform_zeroize(void *buf, size_t len)
 {
 	volatile unsigned char *p = (volatile unsigned char *) buf;
-	while (len--)
-		*p++ = 0;
+	while (len--) { *p++ = 0; }
 }
 
-/* --------------------------------------------------------------------
- * Custom printf / calloc / free wrappers
- * ------------------------------------------------------------------*/
+/* Some mbedTLS code calls this helper; provide it to avoid pulling
+ * platform_util.c and to ensure secrets are scrubbed before free. */
+void mbedtls_zeroize_and_free(void *ptr, size_t len)
+{
+	if (ptr == NULL) return;
+	mbedtls_platform_zeroize(ptr, len);
+	free(ptr);
+}
+
+/* ----------------------------------------------------------------------
+ * Time helpers (portable, high-resolution when available)
+ * -------------------------------------------------------------------- */
+mbedtls_ms_time_t mbedtls_ms_time(void)
+{
+#if defined(CLOCK_REALTIME)
+	struct timespec ts;
+	if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+		return (mbedtls_ms_time_t)((ts.tv_sec * 1000ULL) + (ts.tv_nsec / 1000000ULL));
+	}
+#endif
+	/* Fallback for older systems / environments */
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	return (mbedtls_ms_time_t)((tv.tv_sec * 1000ULL) + (tv.tv_usec / 1000ULL));
+}
+
+struct tm *mbedtls_platform_gmtime_r(const mbedtls_time_t *tt, struct tm *tm_buf)
+{
+	/* POSIX gmtime_r is available on Linux, FreeBSD, macOS */
+	return gmtime_r(tt, tm_buf);
+}
+
+/* ----------------------------------------------------------------------
+ * Minimal printf / calloc / free wrappers
+ * You can replace these with your own logging / allocator if desired.
+ * -------------------------------------------------------------------- */
 static int my_printf(const char *fmt, ...)
 {
 	va_list args;
-	int ret;
 	va_start(args, fmt);
-	ret = vfprintf(stdout, fmt, args);
+	/* Use stdout to mimic mbedtls default behavior */
+	int ret = vfprintf(stdout, fmt, args);
 	va_end(args);
 	return ret;
 }
@@ -48,45 +100,36 @@ static void my_free(void *ptr)
 	free(ptr);
 }
 
-/* --- Secure zeroize + free replacement --- */
-void mbedtls_zeroize_and_free(void *ptr, size_t len)
+/* ----------------------------------------------------------------------
+ * Weak stubs for mbedtls_platform_set_* to avoid linking platform.c
+ * If platform.c is ever linked, its strong symbols override these.
+ * -------------------------------------------------------------------- */
+WEAK int mbedtls_platform_set_printf(int (*printf_func)(const char *, ...))
 {
-	if (ptr == NULL)
-		return;
-
-	volatile unsigned char *p = ptr;
-	while (len--) *p++ = 0;
-
-	free(ptr);
+	(void) printf_func;
+	return 0; /* accept and ignore (we call our own in setup) */
 }
 
-/* --- Millisecond time replacement --- */
-mbedtls_ms_time_t mbedtls_ms_time(void)
+WEAK int mbedtls_platform_set_calloc_free(void *(*calloc_func)(size_t, size_t),
+											void (*free_func)(void *))
 {
-	struct timeval tv;
-	gettimeofday(&tv, NULL);
-	return (mbedtls_ms_time_t)((tv.tv_sec * 1000ULL) + (tv.tv_usec / 1000ULL));
+	(void) calloc_func;
+	(void) free_func;
+	return 0; /* accept and ignore (we call our own in setup) */
 }
 
-/* --- gmtime_r() wrapper --- */
-struct tm *mbedtls_platform_gmtime_r(const mbedtls_time_t *tt, struct tm *tm_buf)
-{
-	return gmtime_r(tt, tm_buf);
-}
-
-/* --------------------------------------------------------------------
- * Register our replacements with mbedTLS at startup.
- * ------------------------------------------------------------------*/
-int mbedtls_platform_set_printf(int (*printf_func)(const char *, ...));
-int mbedtls_platform_set_calloc_free(void *(*calloc_func)(size_t, size_t),
-									 void (*free_func)(void *));
-
+/* ----------------------------------------------------------------------
+ * Setup / teardown
+ * -------------------------------------------------------------------- */
 int mbedtls_platform_setup(mbedtls_platform_context *ctx)
 {
 	(void) ctx;
 
 	int ret = 0;
 
+	/* Register our printf and memory hooks. Even if these weak functions
+       are no-ops (because platform.c is linked and overrides them),
+       calling them is harmless. */
 	if (mbedtls_platform_set_printf(my_printf) != 0)
 		ret = -1;
 
@@ -99,4 +142,5 @@ int mbedtls_platform_setup(mbedtls_platform_context *ctx)
 void mbedtls_platform_teardown(mbedtls_platform_context *ctx)
 {
 	(void) ctx;
+	/* Nothing to clean up */
 }
