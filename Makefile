@@ -199,28 +199,31 @@ MBEDTLS_SRC_ALL  := $(wildcard $(MBEDTLS_DIR)/library/*.c)
 MBEDTLS_SRC := $(filter-out \
 	$(MBEDTLS_DIR)/library/platform.c \
 	$(MBEDTLS_DIR)/library/platform_util.c, \
-	$(MBEDTLS_SRC_ALL) \
-)
+	$(MBEDTLS_SRC_ALL))
 MBEDTLS_SRC += mbedtls_platform.c
-MBEDTLS_CORE_SRC := $(filter-out $(wildcard $(MBEDTLS_DIR)/library/ssl_%.c), $(MBEDTLS_SRC))
-MBEDTLS_CORE_SRC := $(filter-out $(MBEDTLS_DIR)/library/x509_%.c, $(MBEDTLS_CORE_SRC))
-MBEDTLS_CORE_SRC := $(filter-out $(MBEDTLS_DIR)/library/psa_%.c, $(MBEDTLS_CORE_SRC))
 
 ifeq ($(USE_SSL),1)
 	# Full SSL build (includes MbedTLS + shim)
-	CFLAGS  += -DWITH_SSL -DWITH_LIBCRYPTO -DWITH_MBEDTLS
-	CFLAGS  += -DMBEDTLS_NO_PLATFORM_ENTROPY -DMBEDTLS_NO_DEFAULT_ENTROPY_SOURCES
-	CFLAGS  += -I. -I$(MBEDTLS_INC)
-	CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
+	CFLAGS  += -DWITH_SSL -DWITH_LIBCRYPTO
 	SRC-y   += $(MBEDTLS_SRC) oscam-ssl.c oscam-crypto.c
-	CC_WARN := $(filter-out -Wredundant-decls,$(CC_WARN))
+
 else ifeq ($(USE_LIBCRYPTO),1)
 	# Crypto-only build (no SSL parts, smaller binary)
-	CFLAGS  += -DWITH_LIBCRYPTO -DWITH_MBEDTLS
-	CFLAGS  += -DMBEDTLS_NO_PLATFORM_ENTROPY -DMBEDTLS_NO_DEFAULT_ENTROPY_SOURCES
-	CFLAGS  += -I. -I$(MBEDTLS_INC)
-	CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
+	CFLAGS  += -DWITH_LIBCRYPTO
+	MBEDTLS_CORE_SRC := $(filter-out \
+		$(MBEDTLS_DIR)/library/ssl_%.c \
+		$(MBEDTLS_DIR)/library/x509%.c \
+		$(MBEDTLS_DIR)/library/psa_%.c, \
+		$(MBEDTLS_SRC))
 	SRC-y   += $(MBEDTLS_CORE_SRC) oscam-crypto.c
+endif
+
+# --- Common MbedTLS settings (shared for both builds) ---
+ifneq ($(or $(USE_SSL),$(USE_LIBCRYPTO)),)
+	CFLAGS  += -DMBEDTLS_NO_PLATFORM_ENTROPY -DMBEDTLS_NO_DEFAULT_ENTROPY_SOURCES
+	CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
+
+	# Remove noisy warnings for mbedtls headers
 	CC_WARN := $(filter-out -Wredundant-decls,$(CC_WARN))
 endif
 
@@ -349,6 +352,11 @@ LIST_SMARGO_BIN := $(BINDIR)/list_smargo-$(VER)@$(GIT_SHA)-$(subst cygwin,cygwin
 # Build list_smargo-.... only when WITH_LIBUSB build is requested.
 ifndef USE_LIBUSB
 	override LIST_SMARGO_BIN =
+endif
+
+# --- Ensure mbedTLS include paths are always visible ---
+ifneq ($(or $(USE_SSL),$(USE_LIBCRYPTO)),)
+	override CFLAGS += -I. -I$(MBEDTLS_INC)
 endif
 
 #SRC-$(CONFIG_LIB_AES) += cscrypt/aes.c
@@ -510,7 +518,7 @@ SRC := $(subst config.c,$(OBJDIR)/config.c,$(SRC))
 # starts the compilation.
 all: submodules
 	@./config.sh --use-flags "$(USE_FLAGS)" --objdir "$(OBJDIR)" --make-config.mak
-	@-mkdir -p $(OBJDIR)/cscrypt $(OBJDIR)/csctapi $(OBJDIR)/minilzo $(OBJDIR)/webif $(OBJDIR)/signing $(OBJDIR)/$(MBEDTLS_DIR)/library
+	@-mkdir -p $(OBJDIR)/csctapi $(OBJDIR)/minilzo $(OBJDIR)/webif $(OBJDIR)/signing $(OBJDIR)/$(MBEDTLS_DIR)/library
 	@-printf "\
 +-------------------------------------------------------------------------------\n\
 | OSCam Ver.: $(VER) sha: $(GIT_SHA) target: $(TARGET)\n\
