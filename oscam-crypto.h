@@ -96,42 +96,107 @@ unsigned char *SHA1(const unsigned char *d, size_t n, unsigned char *md);
 
 /* ===== AES compatibility layer ===== */
 
-/* key length in bytes */
+/* ---- Legacy constants ---- */
 #define KEY128 16
 #define KEY192 24
 #define KEY256 32
-/* block size in bytes */
 #define BLOCKSZ 16
-/* mode */
 #define EBC 0
 #define CBC 1
 
+/* ---- AesCtx: binary compatible with legacy version ---- */
 typedef struct
 {
-	unsigned int Ek[60]; /* unused in shim, for binary compatibility */
+	/* Legacy fast_aes fields (must not be reordered or removed) */
+	unsigned int Ek[60];
 	unsigned int Dk[60];
 	unsigned int Iv[4];
 	unsigned char Nr;
 	unsigned char Mode;
 
-	mbedtls_aes_context ctx;  /* real mbedtls context */
-	unsigned char iv[BLOCKSZ];
+	/* Appended shim internals for MbedTLS */
+	mbedtls_aes_context enc_ctx;
+	mbedtls_aes_context dec_ctx;
 } AesCtx;
 
-void AesCtxIni(AesCtx *c, const unsigned char *iv, const unsigned char *key, int keylen, int mode);
-void AesEncrypt(AesCtx *c, const unsigned char *input, unsigned char *output, int len);
-void AesDecrypt(AesCtx *c, const unsigned char *input, unsigned char *output, int len);
+/* ---- Legacy API ---- */
+
+/**
+ * Initialize AES context.
+ * @param c       AES context
+ * @param iv      IV pointer (optional, may be NULL)
+ * @param key     AES key
+ * @param keylen  key length in bytes (16/24/32)
+ * @param mode    EBC(0) or CBC(1)
+ * @return 0 on success, -1 on invalid parameters
+ */
+int AesCtxIni(AesCtx *c, const unsigned char *iv,
+			  const unsigned char *key, int keylen, int mode);
+
+/**
+ * Encrypt data in-place.
+ * @param c       AES context
+ * @param input   plaintext (multiple of 16 bytes)
+ * @param output  ciphertext buffer
+ * @param len     data length (must be multiple of 16)
+ * @return number of bytes processed or -1 on error
+ */
+int AesEncrypt(AesCtx *c, const unsigned char *input,
+			   unsigned char *output, int len);
+
+/**
+ * Decrypt data in-place.
+ * @param c       AES context
+ * @param input   ciphertext
+ * @param output  plaintext buffer
+ * @param len     data length (must be multiple of 16)
+ * @return number of bytes processed or -1 on error
+ */
+int AesDecrypt(AesCtx *c, const unsigned char *input,
+			   unsigned char *output, int len);
+
+/**
+ * Free AES context memory (optional).
+ * Safe to call even if AesCtxIni failed or was never initialized.
+ */
+static inline void AesFree(AesCtx *c)
+{
+	if (!c) return;
+	mbedtls_aes_free(&c->enc_ctx);
+	mbedtls_aes_free(&c->dec_ctx);
+}
 
 #define AES_ENCRYPT 1
 #define AES_DECRYPT 0
+#define AES_BLOCK_SIZE 16
 
+/* Simple wrapper context around MbedTLS */
 typedef struct {
 	mbedtls_aes_context ctx;
 } AES_KEY;
 
+/**
+ * Initialize AES key for encryption (OpenSSL compatible).
+ * @param userKey  Key bytes
+ * @param bits     128, 192, or 256
+ * @param key      AES_KEY output context
+ * @return 0 on success, <0 on error
+ */
 int AES_set_encrypt_key(const unsigned char *userKey, const int bits, AES_KEY *key);
+
+/**
+ * Initialize AES key for decryption (OpenSSL compatible).
+ */
 int AES_set_decrypt_key(const unsigned char *userKey, const int bits, AES_KEY *key);
+
+/**
+ * Encrypt one 16-byte block (ECB mode).
+ */
 void AES_encrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key);
+
+/**
+ * Decrypt one 16-byte block (ECB mode).
+ */
 void AES_decrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key);
 
 #ifndef AES_ENCRYPT
@@ -139,9 +204,28 @@ void AES_decrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key
 #define AES_DECRYPT MBEDTLS_AES_DECRYPT
 #endif
 
+/**
+ * Encrypt/decrypt data in CBC mode (OpenSSL compatible).
+ * @param in      Input buffer
+ * @param out     Output buffer
+ * @param length  Data length (multiple of 16)
+ * @param key     AES_KEY context
+ * @param ivec    IV (updated in-place)
+ * @param enc     AES_ENCRYPT or AES_DECRYPT
+ * @return 0 on success, <0 on error
+ */
 int AES_cbc_encrypt(const unsigned char *in, unsigned char *out,
-					size_t length, const AES_KEY *key, unsigned char *ivec,
-					const int enc);
+					size_t length, const AES_KEY *key,
+					unsigned char *ivec, const int enc);
+
+/**
+ * Free internal resources (optional).
+ */
+static inline void AES_free(AES_KEY *key)
+{
+	if (key)
+		mbedtls_aes_free(&key->ctx);
+}
 
 /* ===== SHA256 compatibility ===== */
 typedef mbedtls_sha256_context SHA256_CTX;

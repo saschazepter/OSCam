@@ -334,14 +334,13 @@ void rc6_block_decrypt(unsigned int *ct, unsigned int *pt, int block_count, RC6K
 
 static inline void idea_mul(IDEA_INT *r, IDEA_INT a, IDEA_INT b)
 {
-	uint32_t p = (uint32_t)a * b;
-	if (p != 0) {
-		uint32_t lo = p & 0xFFFF;
-		uint32_t hi = p >> 16;
-		uint32_t v = lo - hi + (lo < hi);
-		*r = (IDEA_INT)v;
+	uint32_t ul = (uint32_t)a * (uint32_t)b;
+	if (ul != 0) {
+		uint32_t x = (ul & 0xFFFF) - (ul >> 16);
+		x -= (x >> 16);
+		*r = (IDEA_INT)(x & 0xFFFF);
 	} else {
-		*r = (IDEA_INT)(1 - a - b);
+		*r = (IDEA_INT)(1 - a - b); // 0 maps to 65536
 	}
 }
 
@@ -370,7 +369,7 @@ void idea_set_encrypt_key(const unsigned char *key, IDEA_KEY_SCHEDULE *ks)
 		if ((i & 7) < 6)
 			kt[i] = ((kt[j + 1] << 9) | (kt[j + 2] >> 7)) & 0xFFFF;
 		else if ((i & 7) == 6)
-			kt[i] = ((kt[j + 2] << 9) | (kt[j - 5] >> 7)) & 0xFFFF;
+			kt[i] = ((kt[j + 1] << 9) | (kt[j - 6] >> 7)) & 0xFFFF;   // correct branch
 		else
 			kt[i] = ((kt[j - 7] << 9) | (kt[j - 6] >> 7)) & 0xFFFF;
 	}
@@ -400,6 +399,11 @@ void idea_set_decrypt_key(IDEA_KEY_SCHEDULE *ek, IDEA_KEY_SCHEDULE *dk)
 		}
 		tp += 6;
 	}
+
+	/* final swaps to match legacy/OpenSSL layout */
+	IDEA_INT t;
+	t = dk->data[0][1]; dk->data[0][1] = dk->data[0][2]; dk->data[0][2] = t;
+	t = dk->data[8][1]; dk->data[8][1] = dk->data[8][2]; dk->data[8][2] = t;
 }
 
 void idea_encrypt(uint32_t *d, IDEA_KEY_SCHEDULE *ks)
@@ -426,28 +430,28 @@ void idea_encrypt(uint32_t *d, IDEA_KEY_SCHEDULE *ks)
 
 	IDEA_INT r;
 	idea_mul(&r, x1, *p++); x1 = r;
-	uint32_t t0 = (x3 + *p++) & 0xFFFF;
-	uint32_t t1 = (x2 + *p++) & 0xFFFF;
-	idea_mul(&r, x4, *p++); x4 = r;
+	uint32_t t0 = (x3 + *p++) & 0xFFFF;   /* X2' */
+	uint32_t t1 = (x2 + *p++) & 0xFFFF;   /* X3' */
+	idea_mul(&r, x4, *p++); x4 = r;	   /* X4' */
 
-	d[0] = (x1 << 16) | t0;
-	d[1] = (x4 << 16) | t1;
+	d[0] = (x1 << 16) | t0;               /* [X1' | X2'] */
+	d[1] = (t1 << 16) | x4;               /* [X3' | X4']  <<< FIX */
 }
 
 void idea_ecb_encrypt(const unsigned char *in, unsigned char *out, IDEA_KEY_SCHEDULE *ks)
 {
-	uint32_t l0 = (in[0] << 24) | (in[1] << 16) | (in[2] << 8) | in[3];
-	uint32_t l1 = (in[4] << 24) | (in[5] << 16) | (in[6] << 8) | in[7];
+	uint32_t l0 = ((uint32_t)in[0] << 24) | ((uint32_t)in[1] << 16) | ((uint32_t)in[2] << 8) | (uint32_t)in[3];
+	uint32_t l1 = ((uint32_t)in[4] << 24) | ((uint32_t)in[5] << 16) | ((uint32_t)in[6] << 8) | (uint32_t)in[7];
 	uint32_t d[2] = { l0, l1 };
 	idea_encrypt(d, ks);
-	out[0] = (d[0] >> 24) & 0xFF;
-	out[1] = (d[0] >> 16) & 0xFF;
-	out[2] = (d[0] >> 8) & 0xFF;
-	out[3] = d[0] & 0xFF;
-	out[4] = (d[1] >> 24) & 0xFF;
-	out[5] = (d[1] >> 16) & 0xFF;
-	out[6] = (d[1] >> 8) & 0xFF;
-	out[7] = d[1] & 0xFF;
+	out[0] = (unsigned char)((d[0] >> 24) & 0xFF);
+	out[1] = (unsigned char)((d[0] >> 16) & 0xFF);
+	out[2] = (unsigned char)((d[0] >> 8)  & 0xFF);
+	out[3] = (unsigned char)( d[0]        & 0xFF);
+	out[4] = (unsigned char)((d[1] >> 24) & 0xFF);
+	out[5] = (unsigned char)((d[1] >> 16) & 0xFF);
+	out[6] = (unsigned char)((d[1] >> 8)  & 0xFF);
+	out[7] = (unsigned char)( d[1]        & 0xFF);
 }
 
 void idea_cbc_encrypt(const unsigned char *in, unsigned char *out, long length,
@@ -459,12 +463,12 @@ void idea_cbc_encrypt(const unsigned char *in, unsigned char *out, long length,
 
 	for (long i = 0; i < length; i += IDEA_BLOCK) {
 		if (enc == IDEA_ENCRYPT) {
-			for (int j = 0; j < IDEA_BLOCK; j++) tmp[j] = in[i + j] ^ prev[j];
+			for (int j = 0; j < IDEA_BLOCK; j++) tmp[j] = (unsigned char)(in[i + j] ^ prev[j]);
 			idea_ecb_encrypt(tmp, out + i, ks);
 			memcpy(prev, out + i, IDEA_BLOCK);
 		} else {
-			idea_ecb_encrypt(in + i, tmp, ks);
-			for (int j = 0; j < IDEA_BLOCK; j++) out[i + j] = tmp[j] ^ prev[j];
+			idea_ecb_encrypt(in + i, tmp, ks);	  /* ks must be decrypt schedule if you mirror legacy */
+			for (int j = 0; j < IDEA_BLOCK; j++) out[i + j] = (unsigned char)(tmp[j] ^ prev[j]);
 			memcpy(prev, in + i, IDEA_BLOCK);
 		}
 	}
@@ -485,12 +489,10 @@ void idea_cfb64_encrypt(const unsigned char *in, unsigned char *out,
 		}
 
 		if (enc) {
-			/* Encrypt: C = P ^ KS; IV[n] = C */
 			unsigned char c = (unsigned char)(*in ^ keystream[n]);
 			*out = c;
 			iv[n] = c;
 		} else {
-			/* Decrypt: P = C ^ KS; IV[n] = C */
 			unsigned char c = *in;
 			*out = (unsigned char)(c ^ keystream[n]);
 			iv[n] = c;
@@ -498,10 +500,7 @@ void idea_cfb64_encrypt(const unsigned char *in, unsigned char *out,
 
 		in++; out++;
 		n = (n + 1) & 7;
-		if (n == 0) {
-			/* On each full block, copy new IV = last ciphertext block is already in iv[] */
-			/* (We’ve been updating iv[n] as we go, so iv[] contains C_{i} now.) */
-		}
+		/* when n==0, iv[] already holds last ciphertext block */
 	}
 
 	if (num) *num = n;
@@ -519,19 +518,14 @@ void idea_ofb64_encrypt(const unsigned char *in, unsigned char *out,
 			/* OFB uses keystream chaining: IV = E(IV) */
 			unsigned char tmp[IDEA_BLOCK];
 			idea_ecb_encrypt(iv, tmp, ks);
-			/* Copy tmp back into IV */
-			for (int i = 0; i < IDEA_BLOCK; i++) iv[i] = tmp[i];
-			/* And use iv as keystream */
-			for (int i = 0; i < IDEA_BLOCK; i++) keystream[i] = iv[i];
+			memcpy(iv, tmp, IDEA_BLOCK);
+			memcpy(keystream, iv, IDEA_BLOCK);
 		}
 
 		*out = (unsigned char)(*in ^ keystream[n]);
 
 		in++; out++;
 		n = (n + 1) & 7;
-		if (n == 0) {
-			/* regenerate next keystream by encrypting updated IV again (done at top of loop) */
-		}
 	}
 
 	if (num) *num = n;
@@ -560,76 +554,124 @@ int SHA1_Final(unsigned char *md, SHA_CTX *c)
 	return ret;
 }
 
-void AesCtxIni(AesCtx *c, const unsigned char *iv, const unsigned char *key, int keylen, int mode)
+/* === Legacy fast_aes API === */
+
+int AesCtxIni(AesCtx *c, const unsigned char *iv,
+			  const unsigned char *key, int keylen, int mode)
 {
-	mbedtls_aes_init(&c->ctx);
-	memcpy(c->iv, iv, BLOCKSZ);
-	c->Mode = mode;
+	if (!c || !key || !(keylen == 16 || keylen == 24 || keylen == 32))
+		return -1;
+
+	mbedtls_aes_init(&c->enc_ctx);
+	mbedtls_aes_init(&c->dec_ctx);
 
 	int keybits = keylen * 8;
-	mbedtls_aes_setkey_enc(&c->ctx, key, keybits);
+	if (mbedtls_aes_setkey_enc(&c->enc_ctx, key, keybits) != 0)
+		return -1;
+	if (mbedtls_aes_setkey_dec(&c->dec_ctx, key, keybits) != 0)
+		return -1;
+
+	if (iv)
+		memcpy(c->Iv, iv, BLOCKSZ);
+
+	c->Mode = (unsigned char)mode;
+	c->Nr = (keylen == 16 ? 10 : (keylen == 24 ? 12 : 14));
+	return 0;
 }
 
-void AesEncrypt(AesCtx *c, const unsigned char *input, unsigned char *output, int len)
+int AesEncrypt(AesCtx *c, const unsigned char *input,
+			   unsigned char *output, int len)
 {
-	if (c->Mode == CBC)
-	{
-		mbedtls_aes_crypt_cbc(&c->ctx, MBEDTLS_AES_ENCRYPT, len, c->iv, input, output);
-	}
-	else  /* EBC (legacy typo for ECB) */
-	{
+	if (!c || !input || !output || (len & 0x0F))
+		return -1;
+
+	if (c->Mode == CBC) {
+		unsigned char iv_local[BLOCKSZ];
+		memcpy(iv_local, c->Iv, BLOCKSZ);
+		int rc = mbedtls_aes_crypt_cbc(&c->enc_ctx, MBEDTLS_AES_ENCRYPT,
+									   (size_t)len, iv_local, input, output);
+		if (rc != 0)
+			return -1;
+		memcpy(c->Iv, iv_local, BLOCKSZ);
+	} else { /* ECB */
 		int blocks = len / BLOCKSZ;
-		for (int i = 0; i < blocks; i++)
-			mbedtls_aes_crypt_ecb(&c->ctx, MBEDTLS_AES_ENCRYPT, input + i * BLOCKSZ, output + i * BLOCKSZ);
+		for (int i = 0; i < blocks; i++) {
+			int rc = mbedtls_aes_crypt_ecb(&c->enc_ctx, MBEDTLS_AES_ENCRYPT,
+										   input + i * BLOCKSZ,
+										   output + i * BLOCKSZ);
+			if (rc != 0)
+				return -1;
+		}
 	}
+	return len;
 }
 
-void AesDecrypt(AesCtx *c, const unsigned char *input, unsigned char *output, int len)
+int AesDecrypt(AesCtx *c, const unsigned char *input,
+			   unsigned char *output, int len)
 {
-	if (c->Mode == CBC)
-	{
-		mbedtls_aes_crypt_cbc(&c->ctx, MBEDTLS_AES_DECRYPT, len, c->iv, input, output);
-	}
-	else  /* EBC (legacy typo for ECB) */
-	{
+	if (!c || !input || !output || (len & 0x0F))
+		return -1;
+
+	if (c->Mode == CBC) {
+		unsigned char iv_local[BLOCKSZ];
+		memcpy(iv_local, c->Iv, BLOCKSZ);
+		int rc = mbedtls_aes_crypt_cbc(&c->dec_ctx, MBEDTLS_AES_DECRYPT,
+									   (size_t)len, iv_local, input, output);
+		if (rc != 0)
+			return -1;
+		memcpy(c->Iv, iv_local, BLOCKSZ);
+	} else { /* ECB */
 		int blocks = len / BLOCKSZ;
-		for (int i = 0; i < blocks; i++)
-			mbedtls_aes_crypt_ecb(&c->ctx, MBEDTLS_AES_DECRYPT, input + i * BLOCKSZ, output + i * BLOCKSZ);
+		for (int i = 0; i < blocks; i++) {
+			int rc = mbedtls_aes_crypt_ecb(&c->dec_ctx, MBEDTLS_AES_DECRYPT,
+										   input + i * BLOCKSZ,
+										   output + i * BLOCKSZ);
+			if (rc != 0)
+				return -1;
+		}
 	}
+	return len;
 }
+
+/* === OpenSSL-compatible wrappers using mbedtls === */
 
 int AES_set_encrypt_key(const unsigned char *userKey, const int bits, AES_KEY *key)
 {
+	if (!key) return -1;
 	mbedtls_aes_init(&key->ctx);
 	return mbedtls_aes_setkey_enc(&key->ctx, userKey, bits);
 }
 
 int AES_set_decrypt_key(const unsigned char *userKey, const int bits, AES_KEY *key)
 {
+	if (!key) return -1;
 	mbedtls_aes_init(&key->ctx);
 	return mbedtls_aes_setkey_dec(&key->ctx, userKey, bits);
 }
 
 void AES_encrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key)
 {
-	mbedtls_aes_crypt_ecb(&((AES_KEY *)key)->ctx, MBEDTLS_AES_ENCRYPT, in, out);
+	if (!key) return;
+	(void) mbedtls_aes_crypt_ecb((mbedtls_aes_context *)&key->ctx,
+								 MBEDTLS_AES_ENCRYPT, in, out);
 }
 
 void AES_decrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key)
 {
-	mbedtls_aes_crypt_ecb(&((AES_KEY *)key)->ctx, MBEDTLS_AES_DECRYPT, in, out);
+	if (!key) return;
+	(void) mbedtls_aes_crypt_ecb((mbedtls_aes_context *)&key->ctx,
+								 MBEDTLS_AES_DECRYPT, in, out);
 }
 
+/* OpenSSL-style CBC API */
 int AES_cbc_encrypt(const unsigned char *in, unsigned char *out,
-					size_t length, const AES_KEY *key, unsigned char *ivec,
-					const int enc)
+					size_t length, const AES_KEY *key,
+					unsigned char *ivec, const int enc)
 {
-	return mbedtls_aes_crypt_cbc(&((AES_KEY *)key)->ctx,
-								 enc == AES_ENCRYPT ? MBEDTLS_AES_ENCRYPT : MBEDTLS_AES_DECRYPT,
-								 length,
-								 ivec,
-								 in,
-								 out);
+	if (!key || !ivec) return -1;
+
+	return mbedtls_aes_crypt_cbc((mbedtls_aes_context *)&key->ctx,
+		enc, length, ivec, in, out);
 }
 
 // Compatibility wrapper for the old API
