@@ -776,7 +776,7 @@ oscam_ssl_conf_t *SSL_Webif_Init(void)
 	int ret;
 
 	/* Determine certificate path */
-	if (!cfg.http_cert)
+	if (!cfg.http_cert || cfg.http_cert[0] == '\0')
 		get_config_filename(path, sizeof(path), cs_cert);
 	else
 		cs_strncpy(path, cfg.http_cert, sizeof(path));
