@@ -40,12 +40,11 @@ static void calculate_cak7_vars(struct s_reader *reader, const ATR *atr)
 {
 	uint8_t aes_key[32];
 	const uint8_t aes_iv[] = { 0x4E, 0x61, 0x67, 0x72, 0x61, 0x63, 0x61, 0x72, 0x64, 0x28, 0x63, 0x29, 0x32, 0x30, 0x30, 0x36 }; // Nagracard(c)2006
-	mbedtls_sha256_context ctx_sha256;
-	mbedtls_sha256_init(&ctx_sha256);
-	mbedtls_sha256_starts(&ctx_sha256, 0);
-	mbedtls_sha256_update(&ctx_sha256, atr->hb, atr->hbn);
-	mbedtls_sha256_finish(&ctx_sha256, aes_key);
-	mbedtls_sha256_free(&ctx_sha256);
+	SHA256_CTX ctx_sha256;
+	SHA256_Init(&ctx_sha256);
+	SHA256_Update(&ctx_sha256, atr->hb, atr->hbn);
+	SHA256_Final(&ctx_sha256, aes_key);
+	SHA256_Free(&ctx_sha256);
 	memcpy(reader->cak7_aes_key,aes_key,32);
 	memcpy(reader->cak7_aes_iv,aes_iv,16);
 	char tmp[128];
