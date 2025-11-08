@@ -130,9 +130,9 @@
 
 #undef MBEDTLS_SELF_TEST   /* remove printf usage in self-tests */
 
-/* ============================================================================
- *  Disable unused features when building without WITH_SSL or WITH_LIBCRYPTO
- * ========================================================================== */
+/* =======================================================
+ *  Disable unused features when building without WITH_SSL
+ * ======================================================= */
 #ifndef WITH_SSL
 #undef MBEDTLS_SSL_CLI_C
 #undef MBEDTLS_SSL_SRV_C
@@ -153,17 +153,27 @@
 #undef MBEDTLS_X509_CREATE_C
 #endif
 
-#ifndef WITH_LIBCRYPTO
+#if !defined(CONFIG_WITH_LIB_AES) && !defined(WITH_SSL)
+#undef MBEDTLS_AES_C
+#endif
+#if !defined(CONFIG_WITH_LIB_AES) && !defined(WITH_SSL)
+#undef MBEDTLS_CIPHER_C
+#endif
+#if !defined(CONFIG_WITH_LIB_DES) && !defined(CONFIG_WITH_LIB_MDC2)) && !defined(WITH_SSL)
+#undef MBEDTLS_DES_C
+#endif
+#if !defined(CONFIG_WITH_LIB_MD5) && !defined(WITH_SSL)
 #undef MBEDTLS_MD5_C
+#endif
+#if !defined(CONFIG_WITH_LIB_SHA1) && !defined(WITH_SSL)
 #undef MBEDTLS_SHA1_C
+#endif
+#if !defined(CONFIG_WITH_LIB_SHA256) && !defined(WITH_SSL)
 #undef MBEDTLS_SHA256_C
 #undef MBEDTLS_SHA512_C
-#undef MBEDTLS_AES_C
+#endif
+#if !defined(CONFIG_WITH_LIB_BIGNUM) && !defined(WITH_SSL)
 #undef MBEDTLS_BIGNUM_C
-#undef MBEDTLS_CIPHER_C
-#undef MBEDTLS_DES_C
-#undef MBEDTLS_MD_C
-#undef MBEDTLS_BASE64_C
 #endif
 
 #endif /* MBEDTLS_USER_CONFIG_H */
