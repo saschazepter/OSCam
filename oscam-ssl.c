@@ -1,3 +1,5 @@
+#define MODULE_LOG_PREFIX "ssl"
+
 #include "globals.h"
 #include "oscam-time.h"
 #include "oscam-ssl.h"
@@ -413,7 +415,7 @@ oscam_ssl_t *oscam_ssl_new(oscam_ssl_conf_t *conf, int fd)
 	/* wire BIO */
 	mbedtls_ssl_set_bio(&ssl->ssl, (void *)(intptr_t)fd, bio_send, bio_recv, NULL);
 
-	/* IMPORTANT: complete the handshake now (OpenSSL-like behavior). 
+	/* IMPORTANT: complete the handshake now (OpenSSL-like behavior).
 	   Reasonable server-side timeout so browsers don't spin forever. */
 	int hr = handshake_blocking_impl(&ssl->ssl, fd, 10000 /* 10s */);
 	if (hr != 0) {
@@ -813,12 +815,11 @@ int oscam_ssl_sha1(const unsigned char *data, size_t len, unsigned char *out)
 
 int oscam_ssl_sha256(const unsigned char *data, size_t len, unsigned char *out)
 {
-	mbedtls_sha256_context ctx;
-	mbedtls_sha256_init(&ctx);
-	mbedtls_sha256_starts(&ctx, 0);
-	mbedtls_sha256_update(&ctx, data, len);
-	mbedtls_sha256_finish(&ctx, out);
-	mbedtls_sha256_free(&ctx);
+	SHA256_CTX ctx;
+	SHA256_Init(&ctx);
+	SHA256_Update(&ctx, data, len);
+	SHA256_Final(&ctx, out);
+	SHA256_Free(&ctx);
 	return 0;
 }
 
@@ -826,13 +827,12 @@ int oscam_ssl_sha256_stream(const unsigned char *data1, size_t len1,
 							const unsigned char *data2, size_t len2,
 							unsigned char *out)
 {
-	mbedtls_sha256_context ctx;
-	mbedtls_sha256_init(&ctx);
-	mbedtls_sha256_starts(&ctx, 0);
-	if (data1 && len1) mbedtls_sha256_update(&ctx, data1, len1);
-	if (data2 && len2) mbedtls_sha256_update(&ctx, data2, len2);
-	mbedtls_sha256_finish(&ctx, out);
-	mbedtls_sha256_free(&ctx);
+	SHA256_CTX ctx;
+	SHA256_Init(&ctx);
+	if (data1 && len1) SHA256_Update(&ctx, data1, len1);
+	if (data2 && len2) SHA256_Update(&ctx, data2, len2);
+	SHA256_Final(&ctx, out);
+	SHA256_Free(&ctx);
 	return 0;
 }
 
