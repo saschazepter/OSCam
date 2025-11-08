@@ -1,11 +1,13 @@
-#include "globals.h"
-#include "oscam-crypto.h"
+#define MODULE_LOG_PREFIX "crypto"
 
-#ifdef WITH_LIBCRYPTO
+#include "oscam-crypto.h"
+#include "globals.h"
+#include "oscam-string.h"
 
 /* mbedTLS */
 #include "mbedtls/platform.h"
 
+#ifdef WITH_LIB_MD5
 unsigned char *MD5(const unsigned char *d, size_t n, unsigned char *md)
 {
 	static unsigned char m[MD5_DIGEST_LENGTH];
@@ -131,7 +133,9 @@ char *__md5_crypt(const char *pw, const char *salt, char *passwd)
 
 	return passwd;
 }
+#endif
 
+#ifdef WITH_LIB_MDC2
 static inline uint32_t c2l(const unsigned char **c)
 {
 	const unsigned char *p = *c;
@@ -255,7 +259,137 @@ int MDC2_Final(unsigned char *md, MDC2_CTX *c)
 	memcpy(md + MDC2_BLOCK, c->hh, MDC2_BLOCK);
 	return 1;
 }
+#endif
 
+#ifdef WITH_LIB_DES
+void des_set_key(const uint8_t *key, des_key_schedule *schedule)
+{
+	mbedtls_des_init(&schedule->ctx);
+	memcpy(schedule->key, key, 8);
+	mbedtls_des_setkey_enc(&schedule->ctx, schedule->key);
+}
+
+void des(uint8_t *data, des_key_schedule *schedule, int encrypt)
+{
+	if (encrypt)
+		mbedtls_des_setkey_enc(&schedule->ctx, schedule->key);
+	else
+		mbedtls_des_setkey_dec(&schedule->ctx, schedule->key);
+
+	mbedtls_des_crypt_ecb(&schedule->ctx, data, data);
+}
+
+// --- Single DES ECB ---
+void des_ecb_encrypt(uint8_t *data, const uint8_t *key, int32_t len)
+{
+	mbedtls_des_context ctx;
+	mbedtls_des_init(&ctx);
+	mbedtls_des_setkey_enc(&ctx, key);
+	len &= ~7;
+	for (int i = 0; i < len; i += 8)
+		mbedtls_des_crypt_ecb(&ctx, data + i, data + i);
+	mbedtls_des_free(&ctx);
+}
+
+void des_ecb_decrypt(uint8_t *data, const uint8_t *key, int32_t len)
+{
+	mbedtls_des_context ctx;
+	mbedtls_des_init(&ctx);
+	mbedtls_des_setkey_dec(&ctx, key);
+	len &= ~7;
+	for (int i = 0; i < len; i += 8)
+		mbedtls_des_crypt_ecb(&ctx, data + i, data + i);
+	mbedtls_des_free(&ctx);
+}
+
+// --- DES CBC ---
+void des_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len)
+{
+	mbedtls_des_context ctx;
+	unsigned char iv_copy[8];
+	memcpy(iv_copy, iv, 8);
+
+	mbedtls_des_init(&ctx);
+	mbedtls_des_setkey_enc(&ctx, key);
+	mbedtls_des_crypt_cbc(&ctx, MBEDTLS_DES_ENCRYPT, len & ~7, iv_copy, data, data);
+	mbedtls_des_free(&ctx);
+}
+
+void des_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len)
+{
+	mbedtls_des_context ctx;
+	unsigned char iv_copy[8];
+	memcpy(iv_copy, iv, 8);
+
+	mbedtls_des_init(&ctx);
+	mbedtls_des_setkey_dec(&ctx, key);
+	mbedtls_des_crypt_cbc(&ctx, MBEDTLS_DES_DECRYPT, len & ~7, iv_copy, data, data);
+	mbedtls_des_free(&ctx);
+}
+
+// --- 2-key 3DES (EDE2) CBC ---
+void des_ede2_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1, const uint8_t *key2, int32_t len)
+{
+	mbedtls_des3_context ctx;
+	unsigned char iv_copy[8];
+	unsigned char key24[24];
+
+	memcpy(iv_copy, iv, 8);
+	memcpy(key24, key1, 8);
+	memcpy(key24 + 8, key2, 8);
+	memcpy(key24 + 16, key1, 8); // repeat key1 for 2-key 3DES
+
+	mbedtls_des3_init(&ctx);
+	mbedtls_des3_set3key_enc(&ctx, key24);
+	mbedtls_des3_crypt_cbc(&ctx, MBEDTLS_DES_ENCRYPT, len & ~7, iv_copy, data, data);
+	mbedtls_des3_free(&ctx);
+}
+
+void des_ede2_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1, const uint8_t *key2, int32_t len)
+{
+	mbedtls_des3_context ctx;
+	unsigned char iv_copy[8];
+	unsigned char key24[24];
+
+	memcpy(iv_copy, iv, 8);
+	memcpy(key24, key1, 8);
+	memcpy(key24 + 8, key2, 8);
+	memcpy(key24 + 16, key1, 8);
+
+	mbedtls_des3_init(&ctx);
+	mbedtls_des3_set3key_dec(&ctx, key24);
+	mbedtls_des3_crypt_cbc(&ctx, MBEDTLS_DES_DECRYPT, len & ~7, iv_copy, data, data);
+	mbedtls_des3_free(&ctx);
+}
+
+// --- 3DES ECB ---
+
+void des_ecb3_decrypt(uint8_t *data, const uint8_t *key)
+{
+	mbedtls_des3_context ctx;
+	mbedtls_des3_init(&ctx);
+
+	// use 2-key EDE decryption
+	mbedtls_des3_set2key_dec(&ctx, key); // 3-key: mbedtls_des3_set3key_enc
+	mbedtls_des3_crypt_ecb(&ctx, data, data);
+
+	mbedtls_des3_free(&ctx);
+}
+
+void des_ecb3_encrypt(uint8_t *data, const uint8_t *key)
+{
+	mbedtls_des3_context ctx;
+	mbedtls_des3_init(&ctx);
+
+	// use 2-key EDE encryption
+	mbedtls_des3_set2key_enc(&ctx, key); // 3-key: mbedtls_des3_set3key_dec
+	mbedtls_des3_crypt_ecb(&ctx, data, data);
+
+	mbedtls_des3_free(&ctx);
+}
+#endif
+
+#ifdef WITH_LIB_RC6
 #define ROTL32(x,y) (((x) << ((y) & (RC6_W - 1))) | ((x) >> (RC6_W - ((y) & (RC6_W - 1)))))
 #define ROTR32(x,y) (((x) >> ((y) & (RC6_W - 1))) | ((x) << (RC6_W - ((y) & (RC6_W - 1)))))
 
@@ -331,7 +465,9 @@ void rc6_block_decrypt(unsigned int *ct, unsigned int *pt, int block_count, RC6K
 		ct += 4; pt += 4;
 	}
 }
+#endif
 
+#ifdef WITH_LIB_IDEA
 static inline void idea_mul(IDEA_INT *r, IDEA_INT a, IDEA_INT b)
 {
 	uint32_t ul = (uint32_t)a * (uint32_t)b;
@@ -535,7 +671,9 @@ const char *idea_options(void)
 {
 	return "IDEA-ECB/CBC (oscam-crypto)";
 }
+#endif
 
+#ifdef WITH_LIB_SHA1
 int SHA1_Init(SHA_CTX *c)
 {
 	mbedtls_sha1_init(&c->ctx);
@@ -553,11 +691,11 @@ int SHA1_Final(unsigned char *md, SHA_CTX *c)
 	mbedtls_sha1_free(&c->ctx);
 	return ret;
 }
+#endif
 
-/* === Legacy fast_aes API === */
-
+#ifdef WITH_LIB_AES
 int AesCtxIni(AesCtx *c, const unsigned char *iv,
-			  const unsigned char *key, int keylen, int mode)
+				const unsigned char *key, int keylen, int mode)
 {
 	if (!c || !key || !(keylen == 16 || keylen == 24 || keylen == 32))
 		return -1;
@@ -580,7 +718,7 @@ int AesCtxIni(AesCtx *c, const unsigned char *iv,
 }
 
 int AesEncrypt(AesCtx *c, const unsigned char *input,
-			   unsigned char *output, int len)
+				unsigned char *output, int len)
 {
 	if (!c || !input || !output || (len & 0x0F))
 		return -1;
@@ -607,7 +745,7 @@ int AesEncrypt(AesCtx *c, const unsigned char *input,
 }
 
 int AesDecrypt(AesCtx *c, const unsigned char *input,
-			   unsigned char *output, int len)
+				unsigned char *output, int len)
 {
 	if (!c || !input || !output || (len & 0x0F))
 		return -1;
@@ -633,174 +771,244 @@ int AesDecrypt(AesCtx *c, const unsigned char *input,
 	return len;
 }
 
-/* === OpenSSL-compatible wrappers using mbedtls === */
-
 int AES_set_encrypt_key(const unsigned char *userKey, const int bits, AES_KEY *key)
 {
 	if (!key) return -1;
-	mbedtls_aes_init(&key->ctx);
-	return mbedtls_aes_setkey_enc(&key->ctx, userKey, bits);
+	mbedtls_aes_init(&key->enc_ctx);
+	mbedtls_aes_init(&key->dec_ctx);
+	return mbedtls_aes_setkey_enc(&key->enc_ctx, userKey, bits);
 }
 
 int AES_set_decrypt_key(const unsigned char *userKey, const int bits, AES_KEY *key)
 {
 	if (!key) return -1;
-	mbedtls_aes_init(&key->ctx);
-	return mbedtls_aes_setkey_dec(&key->ctx, userKey, bits);
+	mbedtls_aes_init(&key->enc_ctx);
+	mbedtls_aes_init(&key->dec_ctx);
+	return mbedtls_aes_setkey_dec(&key->dec_ctx, userKey, bits);
 }
 
 void AES_encrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key)
 {
 	if (!key) return;
-	(void) mbedtls_aes_crypt_ecb((mbedtls_aes_context *)&key->ctx,
-								 MBEDTLS_AES_ENCRYPT, in, out);
+	(void)mbedtls_aes_crypt_ecb((mbedtls_aes_context *)&key->enc_ctx,
+								MBEDTLS_AES_ENCRYPT, in, out);
 }
 
 void AES_decrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key)
 {
 	if (!key) return;
-	(void) mbedtls_aes_crypt_ecb((mbedtls_aes_context *)&key->ctx,
-								 MBEDTLS_AES_DECRYPT, in, out);
+	(void)mbedtls_aes_crypt_ecb((mbedtls_aes_context *)&key->dec_ctx,
+								MBEDTLS_AES_DECRYPT, in, out);
 }
 
-/* OpenSSL-style CBC API */
 int AES_cbc_encrypt(const unsigned char *in, unsigned char *out,
 					size_t length, const AES_KEY *key,
 					unsigned char *ivec, const int enc)
 {
 	if (!key || !ivec) return -1;
-
-	return mbedtls_aes_crypt_cbc((mbedtls_aes_context *)&key->ctx,
-		enc, length, ivec, in, out);
+	return mbedtls_aes_crypt_cbc((mbedtls_aes_context *)
+								(enc ? &key->enc_ctx : &key->dec_ctx),
+								enc, length, ivec, in, out);
 }
 
-// Compatibility wrapper for the old API
-void des_set_key(const uint8_t *key, des_key_schedule *schedule)
+static inline void aes_init_pair(mbedtls_aes_context *enc, mbedtls_aes_context *dec, const uint8_t *key, int bits)
 {
-	mbedtls_des_init(&schedule->ctx);
-	memcpy(schedule->key, key, 8);
-	mbedtls_des_setkey_enc(&schedule->ctx, schedule->key);
+	mbedtls_aes_init(enc);
+	mbedtls_aes_init(dec);
+	mbedtls_aes_setkey_enc(enc, key, bits);
+	mbedtls_aes_setkey_dec(dec, key, bits);
 }
 
-void des(uint8_t *data, des_key_schedule *schedule, int encrypt)
+void aes_set_key(aes_keys *aes, char *key)
 {
-	if (encrypt)
-		mbedtls_des_setkey_enc(&schedule->ctx, schedule->key);
+	if (!aes || !key)
+		return;
+	/* legacy fixed 128-bit key */
+	aes_init_pair(&aes->enc_ctx, &aes->dec_ctx, (const uint8_t *)key, 128);
+}
+
+bool aes_set_key_alloc(aes_keys **aes, char *key)
+{
+	if (!cs_malloc(aes, sizeof(aes_keys)))
+		return false;
+	aes_set_key(*aes, key);
+	return true;
+}
+
+/* --- ECB/CBC helpers (block-multiple only, like legacy) --- */
+void aes_decrypt(aes_keys *aes, uint8_t *buf, int32_t n)
+{
+	for (int32_t i = 0; i < n; i += 16)
+		mbedtls_aes_crypt_ecb(&aes->dec_ctx, MBEDTLS_AES_DECRYPT, buf + i, buf + i);
+}
+
+void aes_encrypt_idx(aes_keys *aes, uint8_t *buf, int32_t n)
+{
+	for (int32_t i = 0; i < n; i += 16)
+		mbedtls_aes_crypt_ecb(&aes->enc_ctx, MBEDTLS_AES_ENCRYPT, buf + i, buf + i);
+}
+
+void aes_cbc_encrypt(aes_keys *aes, uint8_t *buf, int32_t n, uint8_t *iv)
+{
+	mbedtls_aes_crypt_cbc(&aes->enc_ctx, MBEDTLS_AES_ENCRYPT, n, iv, buf, buf);
+}
+
+void aes_cbc_decrypt(aes_keys *aes, uint8_t *buf, int32_t n, uint8_t *iv)
+{
+	mbedtls_aes_crypt_cbc(&aes->dec_ctx, MBEDTLS_AES_DECRYPT, n, iv, buf, buf);
+}
+
+/* --- List management for per-reader AES keys --- */
+void add_aes_entry(AES_ENTRY **list, uint16_t caid, uint32_t ident, int32_t keyid, uint8_t *aesKey)
+{
+	AES_ENTRY *new_entry, *cur, *next;
+
+	if (!cs_malloc(&new_entry, sizeof(AES_ENTRY)))
+		return;
+
+	memcpy(new_entry->plainkey, aesKey, 16);
+	new_entry->caid  = caid;
+	new_entry->ident = ident;
+	new_entry->keyid = keyid;
+	new_entry->next  = NULL;
+
+	mbedtls_aes_init(&new_entry->key);
+
+	/* FF FF ... means: card will decrypt itself => mark as dummy (zero context) */
+	if (memcmp(aesKey, "\xFF\xFF", 2) != 0)
+		mbedtls_aes_setkey_dec(&new_entry->key, aesKey, 128);
 	else
-		mbedtls_des_setkey_dec(&schedule->ctx, schedule->key);
+		memset(&new_entry->key, 0, sizeof(mbedtls_aes_context));
 
-	mbedtls_des_crypt_ecb(&schedule->ctx, data, data);
+	if (!*list) {
+		*list = new_entry;
+		return;
+	}
+	cur = *list;
+	next = cur->next;
+	while (next) { cur = next; next = cur->next; }
+	cur->next = new_entry;
 }
 
-// --- Single DES ECB ---
-void des_ecb_encrypt(uint8_t *data, const uint8_t *key, int32_t len)
+void parse_aes_entry(AES_ENTRY **list, char *label, char *value)
 {
-	mbedtls_des_context ctx;
-	mbedtls_des_init(&ctx);
-	mbedtls_des_setkey_enc(&ctx, key);
-	len &= ~7;
-	for (int i = 0; i < len; i += 8)
-		mbedtls_des_crypt_ecb(&ctx, data + i, data + i);
-	mbedtls_des_free(&ctx);
+	uint16_t caid, dummy;
+	uint32_t ident;
+	int32_t len;
+	char *tmp;
+	int32_t nb_keys = 0, key_id = 0;
+	uint8_t aes_key[16];
+	char *save = NULL;
+
+	tmp = strtok_r(value, "@", &save);
+	len = cs_strlen(tmp);
+	if (len == 0 || len > 4) return;
+
+	len = cs_strlen(save);
+	if (len == 0) return;
+
+	caid = a2i(tmp, 2);
+	tmp  = strtok_r(NULL, ":", &save);
+
+	len = cs_strlen(tmp);
+	if (len == 0 || len > 6) return;
+
+	ident = a2i(tmp, 3);
+
+	while ((tmp = strtok_r(NULL, ",", &save))) {
+		dummy = 0;
+		len = cs_strlen(tmp);
+
+		if (len != 32) {
+			dummy = a2i(tmp, 1);
+			/* FF => card decrypts; 00 => no key */
+			if ((dummy != 0xFF && dummy != 0x00) || len > 2) {
+				key_id++;
+				cs_log("AES key length error .. not adding");
+				continue;
+			}
+			if (dummy == 0x00) {
+				key_id++;
+				continue;
+			}
+		}
+
+		nb_keys++;
+		if (dummy)
+			memset(aes_key, 0xFF, 16);
+		else
+			key_atob_l(tmp, aes_key, 32);
+
+		add_aes_entry(list, caid, ident, key_id, aes_key);
+		key_id++;
+	}
+
+	cs_log("%d AES key(s) added on reader %s for %04X@%06X", nb_keys, label, caid, ident);
 }
 
-void des_ecb_decrypt(uint8_t *data, const uint8_t *key, int32_t len)
+void aes_clear_entries(AES_ENTRY **list)
 {
-	mbedtls_des_context ctx;
-	mbedtls_des_init(&ctx);
-	mbedtls_des_setkey_dec(&ctx, key);
-	len &= ~7;
-	for (int i = 0; i < len; i += 8)
-		mbedtls_des_crypt_ecb(&ctx, data + i, data + i);
-	mbedtls_des_free(&ctx);
+	AES_ENTRY *cur = *list, *next;
+	while (cur) {
+		next = cur->next;
+		/* free the mbedtls context explicitly, then the node */
+		mbedtls_aes_free(&cur->key);
+		free(cur);
+		cur = next;
+	}
+	*list = NULL;
 }
 
-// --- DES CBC ---
-void des_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len)
+void parse_aes_keys(struct s_reader *rdr, char *value)
 {
-	mbedtls_des_context ctx;
-	unsigned char iv_copy[8];
-	memcpy(iv_copy, iv, 8);
+	char *entry;
+	char *save = NULL;
+	AES_ENTRY *newlist = NULL, *savelist = rdr->aes_list;
 
-	mbedtls_des_init(&ctx);
-	mbedtls_des_setkey_enc(&ctx, key);
-	mbedtls_des_crypt_cbc(&ctx, MBEDTLS_DES_ENCRYPT, len & ~7, iv_copy, data, data);
-	mbedtls_des_free(&ctx);
+	for (entry = strtok_r(value, ";", &save); entry; entry = strtok_r(NULL, ";", &save))
+		parse_aes_entry(&newlist, rdr->label, entry);
+
+	rdr->aes_list = newlist;
+	aes_clear_entries(&savelist);
 }
 
-void des_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len)
+static AES_ENTRY *aes_list_find(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t keyid)
 {
-	mbedtls_des_context ctx;
-	unsigned char iv_copy[8];
-	memcpy(iv_copy, iv, 8);
-
-	mbedtls_des_init(&ctx);
-	mbedtls_des_setkey_dec(&ctx, key);
-	mbedtls_des_crypt_cbc(&ctx, MBEDTLS_DES_DECRYPT, len & ~7, iv_copy, data, data);
-	mbedtls_des_free(&ctx);
+	for (AES_ENTRY *cur = list; cur; cur = cur->next) {
+		if (cur->caid == caid && cur->ident == provid && cur->keyid == keyid)
+			return cur;
+	}
+	cs_log("AES Decrypt key %d not found for %04X@%06X (aka V %06X E%X ...)",
+	       keyid, caid, provid, provid, keyid);
+	return NULL;
 }
 
-// --- 2-key 3DES (EDE2) CBC ---
-void des_ede2_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1, const uint8_t *key2, int32_t len)
+int32_t aes_decrypt_from_list(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t keyid, uint8_t *buf, int32_t n)
 {
-	mbedtls_des3_context ctx;
-	unsigned char iv_copy[8];
-	unsigned char key24[24];
+	AES_ENTRY *cur = aes_list_find(list, caid, provid, keyid);
+	if (!cur)
+		return 0;
 
-	memcpy(iv_copy, iv, 8);
-	memcpy(key24, key1, 8);
-	memcpy(key24 + 8, key2, 8);
-	memcpy(key24 + 16, key1, 8); // repeat key1 for 2-key 3DES
+	mbedtls_aes_context dummy;
+	memset(&dummy, 0, sizeof(dummy));
 
-	mbedtls_des3_init(&ctx);
-	mbedtls_des3_set3key_enc(&ctx, key24);
-	mbedtls_des3_crypt_cbc(&ctx, MBEDTLS_DES_ENCRYPT, len & ~7, iv_copy, data, data);
-	mbedtls_des3_free(&ctx);
+	/* dummy means: do nothing (card will decrypt) */
+	if (memcmp(&cur->key, &dummy, sizeof(dummy)) == 0)
+		return 1;
+
+	for (int32_t i = 0; i < n; i += 16)
+		mbedtls_aes_crypt_ecb(&cur->key, MBEDTLS_AES_DECRYPT, buf + i, buf + i);
+
+	return 1;
 }
 
-void des_ede2_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1, const uint8_t *key2, int32_t len)
+int32_t aes_present(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t keyid)
 {
-	mbedtls_des3_context ctx;
-	unsigned char iv_copy[8];
-	unsigned char key24[24];
-
-	memcpy(iv_copy, iv, 8);
-	memcpy(key24, key1, 8);
-	memcpy(key24 + 8, key2, 8);
-	memcpy(key24 + 16, key1, 8);
-
-	mbedtls_des3_init(&ctx);
-	mbedtls_des3_set3key_dec(&ctx, key24);
-	mbedtls_des3_crypt_cbc(&ctx, MBEDTLS_DES_DECRYPT, len & ~7, iv_copy, data, data);
-	mbedtls_des3_free(&ctx);
+	return aes_list_find(list, caid, provid, keyid) != NULL;
 }
+#endif
 
-// --- 3DES ECB ---
-
-void des_ecb3_decrypt(uint8_t *data, const uint8_t *key)
-{
-	mbedtls_des3_context ctx;
-	mbedtls_des3_init(&ctx);
-
-	// use 2-key EDE decryption
-	mbedtls_des3_set2key_dec(&ctx, key); // 3-key: mbedtls_des3_set3key_enc
-	mbedtls_des3_crypt_ecb(&ctx, data, data);
-
-	mbedtls_des3_free(&ctx);
-}
-
-void des_ecb3_encrypt(uint8_t *data, const uint8_t *key)
-{
-	mbedtls_des3_context ctx;
-	mbedtls_des3_init(&ctx);
-
-	// use 2-key EDE encryption
-	mbedtls_des3_set2key_enc(&ctx, key); // 3-key: mbedtls_des3_set3key_dec
-	mbedtls_des3_crypt_ecb(&ctx, data, data);
-
-	mbedtls_des3_free(&ctx);
-}
-
+#ifdef WITH_LIB_BIGNUM
 BN_CTX *BN_CTX_new(void) { return (BN_CTX *)mbedtls_calloc(1, sizeof(BN_CTX)); }
 void BN_CTX_free(BN_CTX *ctx) { if (ctx) mbedtls_free(ctx); }
 void BN_CTX_start(BN_CTX *ctx) { (void)ctx; }
@@ -932,6 +1140,5 @@ unsigned long BN_get_word(const BIGNUM *a)
 
 	return (unsigned long)val;
 }
+#endif
 
-
-#endif /* WITH_LIBCRYPTO */
