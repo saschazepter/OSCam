@@ -2,7 +2,6 @@
 
 #ifdef READER_VIACCESS
 
-#include "oscam-aes.h"
 #include "oscam-time.h"
 #include "oscam-emm.h"
 #include "reader-common.h"
