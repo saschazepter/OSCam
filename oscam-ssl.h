@@ -3,7 +3,6 @@
 
 #ifdef WITH_SSL
 
-#include <stddef.h>
 #include "mbedtls/platform.h"
 #include "mbedtls/ssl.h"
 #include <mbedtls/ssl_ticket.h>
