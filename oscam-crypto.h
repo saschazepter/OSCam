@@ -1,16 +1,28 @@
 #ifndef OSCAM_CRYPTO_H
 #define OSCAM_CRYPTO_H
 
-#ifdef WITH_LIBCRYPTO
+#include "config.h"
 
-/* mbedTLS */
+#if defined(WITH_SSL) || defined(WITH_LIB_AES)
 #include "mbedtls/aes.h"
-#include "mbedtls/bignum.h"
+#endif
+#if defined(WITH_SSL) || defined(WITH_LIB_DES) || defined(WITH_LIB_MDC2)
 #include "mbedtls/des.h"
+#endif
+#if defined(WITH_SSL) || defined(WITH_LIB_MD5)
 #include "mbedtls/md5.h"
+#endif
+#if defined(WITH_SSL) || defined(WITH_LIB_SHA1)
 #include "mbedtls/sha1.h"
+#endif
+#if defined(WITH_SSL) || defined(WITH_LIB_SHA256)
 #include "mbedtls/sha256.h"
+#endif
+#if defined(WITH_SSL) || defined(WITH_LIB_BIGNUM)
+#include "mbedtls/bignum.h"
+#endif
 
+#ifdef WITH_LIB_MDC2
 /* ===== MDC2 compatibility ===== */
 
 #define MDC2_BLOCK		  8
@@ -27,7 +39,29 @@ typedef struct {
 int MDC2_Init(MDC2_CTX *c);
 int MDC2_Update(MDC2_CTX *c, const unsigned char *in, size_t len);
 int MDC2_Final(unsigned char *md, MDC2_CTX *c);
+#endif
 
+#ifdef WITH_LIB_DES
+/* ===== DES compatibility ===== */
+typedef struct {
+	mbedtls_des_context ctx;
+	unsigned char key[8];   // store raw key for decrypt mode
+} des_key_schedule;
+
+void des_set_key(const uint8_t *key, des_key_schedule *schedule);
+void des(uint8_t *data, des_key_schedule *schedule, int encrypt);
+
+void des_ecb_encrypt(uint8_t *data, const uint8_t *key, int32_t len);
+void des_ecb_decrypt(uint8_t *data, const uint8_t *key, int32_t len);
+void des_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len);
+void des_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len);
+void des_ede2_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1, const uint8_t *key2, int32_t len);
+void des_ede2_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1, const uint8_t *key2, int32_t len);
+void des_ecb3_encrypt(uint8_t *data, const uint8_t *key);
+void des_ecb3_decrypt(uint8_t *data, const uint8_t *key);
+#endif
+
+#ifdef WITH_LIB_MD5
 /* ===== MD5 compatibility ===== */
 #ifndef MD5_DIGEST_LENGTH
 #define MD5_DIGEST_LENGTH 16
@@ -35,7 +69,9 @@ int MDC2_Final(unsigned char *md, MDC2_CTX *c);
 
 unsigned char *MD5(const unsigned char *d, size_t n, unsigned char *md);
 char *__md5_crypt(const char *pw, const char *salt, char *passwd);
+#endif
 
+#ifdef WITH_LIB_RC6
 /* ===== RC6 compatibility ===== */
 #define RC6_W 32
 #define RC6_R 20
@@ -48,7 +84,9 @@ typedef uint32_t RC6KEY[2 * RC6_R + 4];
 void rc6_key_setup(unsigned char *K, int b, RC6KEY S);
 void rc6_block_encrypt(unsigned int *pt, unsigned int *ct, int block_count, RC6KEY S);
 void rc6_block_decrypt(unsigned int *ct, unsigned int *pt, int block_count, RC6KEY S);
+#endif
 
+#ifdef WITH_LIB_IDEA
 /* ===== IDEA compatibility ===== */
 #define IDEA_INT uint16_t
 #define IDEA_ENCRYPT 1
@@ -74,8 +112,10 @@ void idea_cfb64_encrypt(const unsigned char *in, unsigned char *out,
 void idea_ofb64_encrypt(const unsigned char *in, unsigned char *out,
 						long length, IDEA_KEY_SCHEDULE *ks, unsigned char *iv,
 						int *num);
+#endif
 
-/* ===== SHA1 compatibility ===== */
+#if defined(WITH_SSL) || defined(WITH_LIB_SHA1)
+
 #ifndef SHA_DIGEST_LENGTH
 #define SHA_DIGEST_LENGTH 20
 #endif
@@ -89,144 +129,12 @@ int SHA1_Update(SHA_CTX *c, const void *data, size_t len);
 int SHA1_Final(unsigned char *md, SHA_CTX *c);
 
 unsigned char *SHA1(const unsigned char *d, size_t n, unsigned char *md);
+#endif
 
+#ifdef WITH_LIB_SHA256
 #ifndef SHA256_DIGEST_LENGTH
 #define SHA256_DIGEST_LENGTH 32
 #endif
-
-/* ===== AES compatibility layer ===== */
-
-/* ---- Legacy constants ---- */
-#define KEY128 16
-#define KEY192 24
-#define KEY256 32
-#define BLOCKSZ 16
-#define EBC 0
-#define CBC 1
-
-/* ---- AesCtx: binary compatible with legacy version ---- */
-typedef struct
-{
-	/* Legacy fast_aes fields (must not be reordered or removed) */
-	unsigned int Ek[60];
-	unsigned int Dk[60];
-	unsigned int Iv[4];
-	unsigned char Nr;
-	unsigned char Mode;
-
-	/* Appended shim internals for MbedTLS */
-	mbedtls_aes_context enc_ctx;
-	mbedtls_aes_context dec_ctx;
-} AesCtx;
-
-/* ---- Legacy API ---- */
-
-/**
- * Initialize AES context.
- * @param c       AES context
- * @param iv      IV pointer (optional, may be NULL)
- * @param key     AES key
- * @param keylen  key length in bytes (16/24/32)
- * @param mode    EBC(0) or CBC(1)
- * @return 0 on success, -1 on invalid parameters
- */
-int AesCtxIni(AesCtx *c, const unsigned char *iv,
-			  const unsigned char *key, int keylen, int mode);
-
-/**
- * Encrypt data in-place.
- * @param c       AES context
- * @param input   plaintext (multiple of 16 bytes)
- * @param output  ciphertext buffer
- * @param len     data length (must be multiple of 16)
- * @return number of bytes processed or -1 on error
- */
-int AesEncrypt(AesCtx *c, const unsigned char *input,
-			   unsigned char *output, int len);
-
-/**
- * Decrypt data in-place.
- * @param c       AES context
- * @param input   ciphertext
- * @param output  plaintext buffer
- * @param len     data length (must be multiple of 16)
- * @return number of bytes processed or -1 on error
- */
-int AesDecrypt(AesCtx *c, const unsigned char *input,
-			   unsigned char *output, int len);
-
-/**
- * Free AES context memory (optional).
- * Safe to call even if AesCtxIni failed or was never initialized.
- */
-static inline void AesFree(AesCtx *c)
-{
-	if (!c) return;
-	mbedtls_aes_free(&c->enc_ctx);
-	mbedtls_aes_free(&c->dec_ctx);
-}
-
-#define AES_ENCRYPT 1
-#define AES_DECRYPT 0
-#define AES_BLOCK_SIZE 16
-
-/* Simple wrapper context around MbedTLS */
-typedef struct {
-	mbedtls_aes_context ctx;
-} AES_KEY;
-
-/**
- * Initialize AES key for encryption (OpenSSL compatible).
- * @param userKey  Key bytes
- * @param bits     128, 192, or 256
- * @param key      AES_KEY output context
- * @return 0 on success, <0 on error
- */
-int AES_set_encrypt_key(const unsigned char *userKey, const int bits, AES_KEY *key);
-
-/**
- * Initialize AES key for decryption (OpenSSL compatible).
- */
-int AES_set_decrypt_key(const unsigned char *userKey, const int bits, AES_KEY *key);
-
-/**
- * Encrypt one 16-byte block (ECB mode).
- */
-void AES_encrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key);
-
-/**
- * Decrypt one 16-byte block (ECB mode).
- */
-void AES_decrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key);
-
-#ifndef AES_ENCRYPT
-#define AES_ENCRYPT MBEDTLS_AES_ENCRYPT
-#define AES_DECRYPT MBEDTLS_AES_DECRYPT
-#endif
-
-/**
- * Encrypt/decrypt data in CBC mode (OpenSSL compatible).
- * @param in      Input buffer
- * @param out     Output buffer
- * @param length  Data length (multiple of 16)
- * @param key     AES_KEY context
- * @param ivec    IV (updated in-place)
- * @param enc     AES_ENCRYPT or AES_DECRYPT
- * @return 0 on success, <0 on error
- */
-int AES_cbc_encrypt(const unsigned char *in, unsigned char *out,
-					size_t length, const AES_KEY *key,
-					unsigned char *ivec, const int enc);
-
-/**
- * Free internal resources (optional).
- */
-static inline void AES_free(AES_KEY *key)
-{
-	if (key)
-		mbedtls_aes_free(&key->ctx);
-}
-
 /* ===== SHA256 compatibility ===== */
 typedef mbedtls_sha256_context SHA256_CTX;
 
@@ -241,30 +149,105 @@ static inline void SHA256_Update(SHA256_CTX *ctx, const void *data, size_t len)
 	mbedtls_sha256_update(ctx, data, len);
 }
 
-static inline void SHA256_Final(unsigned char *out, SHA256_CTX *ctx)
+static inline void SHA256_Final(SHA256_CTX *ctx, unsigned char *out)
 {
 	mbedtls_sha256_finish(ctx, out);
-	mbedtls_sha256_free(ctx);
 }
 
-/* ===== DES compatibility ===== */
+static inline void SHA256_Free(SHA256_CTX *ctx) {
+	mbedtls_sha256_free(ctx);
+}
+#endif
+
+#ifdef WITH_LIB_AES
+#define KEY128 16
+#define KEY192 24
+#define KEY256 32
+#define BLOCKSZ 16
+#define ECB 0
+#define CBC 1
+
+typedef struct
+{
+	/* Legacy fast_aes fields (must not be reordered or removed) */
+	unsigned int Ek[60];
+	unsigned int Dk[60];
+	unsigned int Iv[4];
+	unsigned char Nr;
+	unsigned char Mode;
+
+	/* Appended shim internals for MbedTLS */
+	mbedtls_aes_context enc_ctx;
+	mbedtls_aes_context dec_ctx;
+} AesCtx;
+
+int AesCtxIni(AesCtx *c, const unsigned char *iv, const unsigned char *key, int keylen, int mode);
+int AesEncrypt(AesCtx *c, const unsigned char *input, unsigned char *output, int len);
+int AesDecrypt(AesCtx *c, const unsigned char *input, unsigned char *output, int len);
+
+static inline void AesFree(AesCtx *c)
+{
+	if (!c) return;
+	mbedtls_aes_free(&c->enc_ctx);
+	mbedtls_aes_free(&c->dec_ctx);
+}
+
+#define AES_ENCRYPT 1
+#define AES_DECRYPT 0
+#define AES_BLOCK_SIZE 16
+
 typedef struct {
-	mbedtls_des_context ctx;
-	unsigned char key[8];   // store raw key for decrypt mode
-} des_key_schedule;
+	mbedtls_aes_context enc_ctx;
+	mbedtls_aes_context dec_ctx;
+} AES_CTX_MBED;
 
-void des_set_key(const uint8_t *key, des_key_schedule *schedule);
-void des(uint8_t *data, des_key_schedule *schedule, int encrypt);
+typedef AES_CTX_MBED AES_KEY;
+typedef AES_CTX_MBED aes_keys;
 
-void des_ecb_encrypt(uint8_t *data, const uint8_t *key, int32_t len);
-void des_ecb_decrypt(uint8_t *data, const uint8_t *key, int32_t len);
-void des_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len);
-void des_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len);
-void des_ede2_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1, const uint8_t *key2, int32_t len);
-void des_ede2_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1, const uint8_t *key2, int32_t len);
-void des_ecb3_encrypt(uint8_t *data, const uint8_t *key);
-void des_ecb3_decrypt(uint8_t *data, const uint8_t *key);
+int AES_set_encrypt_key(const unsigned char *userKey, const int bits, AES_KEY *key);
+int AES_set_decrypt_key(const unsigned char *userKey, const int bits, AES_KEY *key);
+void AES_encrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key);
+void AES_decrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key);
+int AES_cbc_encrypt(const unsigned char *in, unsigned char *out, size_t length, const AES_KEY *key, unsigned char *ivec, const int enc);
 
+static inline void AES_free(AES_KEY *key)
+{
+	if (key) {
+		mbedtls_aes_free(&key->enc_ctx);
+		mbedtls_aes_free(&key->dec_ctx);
+	}
+}
+
+typedef struct aes_entry {
+	uint16_t             caid;
+	uint32_t             ident;
+	int32_t              keyid;
+	uint8_t              plainkey[16];
+	mbedtls_aes_context  key;         /* decrypt-context for this entry */
+	struct aes_entry    *next;
+} AES_ENTRY;
+
+typedef struct aes_entry AES_ENTRY;
+struct s_reader;
+
+void aes_set_key(aes_keys *aes, char *key);
+bool aes_set_key_alloc(aes_keys **aes, char *key);
+void aes_decrypt(aes_keys *aes, uint8_t *buf, int32_t n);
+void aes_encrypt_idx(aes_keys *aes, uint8_t *buf, int32_t n);
+void aes_cbc_encrypt(aes_keys *aes, uint8_t *buf, int32_t n, uint8_t *iv);
+void aes_cbc_decrypt(aes_keys *aes, uint8_t *buf, int32_t n, uint8_t *iv);
+
+void add_aes_entry(AES_ENTRY **list, uint16_t caid, uint32_t ident, int32_t keyid, uint8_t *aesKey);
+void parse_aes_entry(AES_ENTRY **list, char *label, char *value);
+void parse_aes_keys(struct s_reader *rdr, char *value);
+void aes_clear_entries(AES_ENTRY **list);
+int32_t aes_decrypt_from_list(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t keyid, uint8_t *buf, int32_t n);
+int32_t aes_present(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t keyid);
+#else
+typedef void AES_ENTRY; /* forward placeholder to satisfy struct s_reader */
+#endif
+
+#ifdef WITH_LIB_BIGNUM
 /* ===== BIGNUM compatibility ===== */
 typedef mbedtls_mpi BIGNUM;
 typedef struct {
@@ -294,6 +277,6 @@ int BN_cmp(const BIGNUM *a, const BIGNUM *b);
 BIGNUM *BN_copy(BIGNUM *to, const BIGNUM *from);
 int BN_set_word(BIGNUM *a, unsigned long w);
 unsigned long BN_get_word(const BIGNUM *a);
+#endif
 
-#endif /* WITH_LIBCRYPTO */
 #endif /* OSCAM_CRYPTO_H */
