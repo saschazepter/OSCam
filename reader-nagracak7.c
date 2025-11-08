@@ -31,9 +31,7 @@ static time_t tier_date(uint64_t date, char *buf, int32_t l)
 static void rsa_decrypt(uint8_t *edata50, int len, uint8_t *out, uint8_t *key, int keylen, uint8_t *expo, uint8_t expolen)
 {
 	BN_CTX *ctx0 = BN_CTX_new();
-#ifdef WITH_LIBCRYPTO
 	BN_CTX_start(ctx0);
-#endif
 	BIGNUM *bnN0 = BN_CTX_get(ctx0);
 	BIGNUM *bnE0 = BN_CTX_get(ctx0);
 	BIGNUM *bnCT0 = BN_CTX_get(ctx0);
@@ -753,9 +751,7 @@ static void CreateRSAPair60(struct s_reader *reader, const unsigned char *key)
 	}
 
 	BN_CTX *ctx5 = BN_CTX_new();
-#ifdef WITH_LIBCRYPTO
 	BN_CTX_start(ctx5);
-#endif
 	BIGNUM *p = BN_CTX_get(ctx5);
 	BIGNUM *q = BN_CTX_get(ctx5);
 	BIGNUM *m = BN_CTX_get(ctx5);
@@ -810,9 +806,7 @@ static void CreateRSAPair68(struct s_reader *reader, const unsigned char *key)
 	}
 
 	BN_CTX *ctx6 = BN_CTX_new();
-#ifdef WITH_LIBCRYPTO
 	BN_CTX_start(ctx6);
-#endif
 	BIGNUM *p = BN_CTX_get(ctx6);
 	BIGNUM *q = BN_CTX_get(ctx6);
 	BIGNUM *m = BN_CTX_get(ctx6);
