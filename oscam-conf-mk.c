@@ -359,6 +359,14 @@ char *mk_t_gbox_dest_peers(void)
 /*
  * Creates a string ready to write as a token into config or WebIf for AESKeys. You must free the returned value through free_mk_t().
  */
+#if !defined(WITH_LIB_AES)
+/* AES disabled: no per-reader AES keys to render */
+char *mk_t_aeskeys(struct s_reader *rdr)
+{
+	(void)rdr;
+	return "";
+}
+#else
 char *mk_t_aeskeys(struct s_reader *rdr)
 {
 	AES_ENTRY *current = rdr->aes_list;
