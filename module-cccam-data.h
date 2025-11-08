@@ -186,9 +186,15 @@ struct cc_data
 
 	cc_cmd0c_mode cmd0c_mode;
 	struct cc_crypt_block cmd0c_cryptkey;
+#ifdef WITH_LIB_RC6
 	RC6KEY cmd0c_RC6_cryptkey;
+#endif
+#ifdef WITH_LIB_AES
 	AES_KEY cmd0c_AES_key;
+#endif
+#ifdef WITH_LIB_IDEA
 	IDEA_KEY_SCHEDULE cmd0c_IDEA_dkey;
+#endif
 
 	uint8_t receive_buffer[CC_MAXMSGSIZE];
 	uint8_t send_buffer[CC_MAXMSGSIZE];

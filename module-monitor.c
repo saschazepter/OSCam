@@ -3,7 +3,6 @@
 #include "globals.h"
 #ifdef MODULE_MONITOR
 #include "module-monitor.h"
-#include "oscam-aes.h"
 #include "oscam-array.h"
 #include "oscam-client.h"
 #include "oscam-config.h"
@@ -20,7 +19,7 @@ struct monitor_data
 {
 	bool            auth;
 	uint8_t         ucrc[4];
-	struct aes_keys aes_keys;
+	aes_keys        aes_keys;
 	int32_t         seq;
 	int32_t         counter;
 	char            btxt[256];
