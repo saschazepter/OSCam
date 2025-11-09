@@ -793,13 +793,13 @@ oscam_ssl_conf_t *SSL_Webif_Init(void)
 	switch (mode)
 	{
 		case OSCAM_SSL_MODE_STRICT:
-			cs_log("SSL: secure HTTPS mode (TLS ≥ 1.2, AEAD-only)");
+			cs_log("SSL: secure HTTPS mode (TLS 1.2, AEAD-only)");
 			break;
 		case OSCAM_SSL_MODE_LEGACY:
-			cs_log("SSL: legacy HTTPS mode (TLS 1.2 + CBC fallback)");
+			cs_log("SSL: legacy HTTPS mode (TLS 1.2, CBC fallback)");
 			break;
 		default:
-			cs_log("SSL: standard HTTPS mode (TLS ≥ 1.2, mixed ciphers)");
+			cs_log("SSL: standard HTTPS mode (TLS 1.2, mixed ciphers)");
 			break;
 	}
 
