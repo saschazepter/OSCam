@@ -11,7 +11,6 @@
  *       #define MBEDTLS_PLATFORM_MEMORY
  *       #define MBEDTLS_PLATFORM_NO_STD_FUNCTIONS
  *
- * If you include platform.c later, our weak symbols will be overridden by the strong ones.
  */
 
 #include <stdio.h>
@@ -20,20 +19,15 @@
 #include <stdarg.h>
 #include <time.h>
 #include <sys/time.h>
+#if defined(MBEDTLS_MEMORY_BUFFER_ALLOC_C)
+# include "mbedtls/memory_buffer_alloc.h"
+#endif
+#if defined(MBEDTLS_DEBUG_C)
+# include "mbedtls/debug.h"
+#endif
 
 #include "mbedtls/platform.h"
 #include "mbedtls/platform_time.h"
-
-/* ----------------------------------------------------------------------
- * Portable "weak" attribute for GCC/Clang (Linux, FreeBSD, macOS)
- * -------------------------------------------------------------------- */
-#if !defined(WEAK)
-# if defined(__GNUC__) || defined(__clang__)
-#  define WEAK __attribute__((weak))
-# else
-#  define WEAK
-# endif
-#endif
 
 /* ----------------------------------------------------------------------
  * Secure zeroization (we exclude platform_util.c, so we provide this)
@@ -77,70 +71,93 @@ struct tm *mbedtls_platform_gmtime_r(const mbedtls_time_t *tt, struct tm *tm_buf
 }
 
 /* ----------------------------------------------------------------------
- * Minimal printf / calloc / free wrappers
- * You can replace these with your own logging / allocator if desired.
+ * Minimal entropy source replacement for embedded / cross builds.
+ * Provides a weak entropy source using time and stack data.
+ * It’s NOT cryptographically secure, but sufficient to seed
+ * mbedtls_ctr_drbg when true randomness is unavailable.
  * -------------------------------------------------------------------- */
-static int my_printf(const char *fmt, ...)
+/* Local prototype – avoids including mbedtls/entropy_poll.h */
+int mbedtls_hardware_poll(void *data, unsigned char *output, size_t len, size_t *olen);
+
+/* Portable entropy source for cross-builds (no glibc lock-in). */
+int mbedtls_hardware_poll(void *data, unsigned char *output, size_t len, size_t *olen)
 {
-	va_list args;
-	va_start(args, fmt);
-	/* Use stdout to mimic mbedtls default behavior */
-	int ret = vfprintf(stdout, fmt, args);
-	va_end(args);
-	return ret;
+	(void)data;
+
+	/* Try best source first, if available on the target (no glibc dependency). */
+#if defined(__unix__) || defined(__linux__)
+	/* Optional: /dev/urandom without glibc-specific calls */
+	{
+		int fd;
+		ssize_t got;
+		/* Use minimal headers to avoid portability issues */
+		extern int open(const char *, int, ...);
+		extern ssize_t read(int, void *, size_t);
+		extern int close(int);
+
+		/* O_RDONLY = 0 */
+		fd = open("/dev/urandom", 0);
+		if (fd >= 0) {
+			got = read(fd, output, len);
+			close(fd);
+			if (got > 0) {
+				if (olen) *olen = (size_t)got;
+				return 0;
+			}
+		}
+	}
+#endif
+
+	/* Fallback (weak) entropy: mix time and stack address */
+	{
+		uint64_t t = (uint64_t) time(NULL);
+		uintptr_t sp = (uintptr_t) &t;
+		uint64_t mixed = t ^ (sp << 13) ^ (sp >> 7);
+
+		if (len > sizeof(mixed)) len = sizeof(mixed);
+		memcpy(output, &mixed, len);
+		if (olen) *olen = len;
+		return 0;
+	}
 }
 
-static void *my_calloc(size_t n, size_t size)
+int oscam_mbedtls_printf(const char *fmt, ...)
 {
-	return calloc(n, size);
+	va_list ap; va_start(ap, fmt);
+	int rc = vfprintf(stdout, fmt, ap);
+	va_end(ap);
+	return rc;
 }
 
-static void my_free(void *ptr)
+int oscam_mbedtls_snprintf(char *buf, size_t buflen, const char *fmt, ...)
 {
-	free(ptr);
+	va_list ap; va_start(ap, fmt);
+	int rc = vsnprintf(buf, buflen, fmt, ap);
+	va_end(ap);
+	return rc;
 }
+
+void *oscam_mbedtls_calloc(size_t n, size_t size) { return calloc(n, size); }
+void  oscam_mbedtls_free(void *p)                 { free(p); }
 
 /* ----------------------------------------------------------------------
- * Weak stubs for mbedtls_platform_set_* to avoid linking platform.c
- * If platform.c is ever linked, its strong symbols override these.
- * -------------------------------------------------------------------- */
-WEAK int mbedtls_platform_set_printf(int (*printf_func)(const char *, ...))
-{
-	(void) printf_func;
-	return 0; /* accept and ignore (we call our own in setup) */
-}
-
-WEAK int mbedtls_platform_set_calloc_free(void *(*calloc_func)(size_t, size_t),
-											void (*free_func)(void *))
-{
-	(void) calloc_func;
-	(void) free_func;
-	return 0; /* accept and ignore (we call our own in setup) */
-}
-
-/* ----------------------------------------------------------------------
- * Setup / teardown
+ * Platform setup / teardown
  * -------------------------------------------------------------------- */
 int mbedtls_platform_setup(mbedtls_platform_context *ctx)
 {
-	(void) ctx;
+	(void)ctx;
 
-	int ret = 0;
-
-	/* Register our printf and memory hooks. Even if these weak functions
-       are no-ops (because platform.c is linked and overrides them),
-       calling them is harmless. */
-	if (mbedtls_platform_set_printf(my_printf) != 0)
-		ret = -1;
-
-	if (mbedtls_platform_set_calloc_free(my_calloc, my_free) != 0)
-		ret = -1;
-
-	return ret;
+#if defined(MBEDTLS_MEMORY_BUFFER_ALLOC_C)
+	static unsigned char mbedtls_static_heap[32 * 1024]; /* tune size */
+	mbedtls_memory_buffer_alloc_init(mbedtls_static_heap, sizeof(mbedtls_static_heap));
+#endif
+	return 0;
 }
 
 void mbedtls_platform_teardown(mbedtls_platform_context *ctx)
 {
-	(void) ctx;
-	/* Nothing to clean up */
+	(void)ctx;
+#if defined(MBEDTLS_MEMORY_BUFFER_ALLOC_C)
+	mbedtls_memory_buffer_alloc_free();
+#endif
 }
