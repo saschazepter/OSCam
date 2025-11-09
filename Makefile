@@ -185,11 +185,6 @@ DEFAULT_COOLAPI_LIB = -lnxp -lrt
 DEFAULT_COOLAPI2_LIB = -llnxUKAL -llnxcssUsr -llnxscsUsr -llnxnotifyqUsr -llnxplatUsr -lrt
 DEFAULT_SU980_LIB = -lentropic -lrt
 DEFAULT_AZBOX_LIB = -Lextapi/openxcas -lOpenXCASAPI
-
-# We build mbedTLS directly from the local submodule at ./mbedtls
-MBEDTLS_DIR      := mbedtls
-MBEDTLS_INC      := $(MBEDTLS_DIR)/include
-
 DEFAULT_LIBDVBCSA_LIB = -ldvbcsa
 ifeq ($(uname_S),Linux)
 	DEFAULT_LIBUSB_LIB = -lusb-1.0 -lrt
@@ -199,12 +194,12 @@ endif
 # Since FreeBSD 8 (released in 2010) they are using their own
 # libusb that is API compatible to libusb but with different soname
 ifeq ($(uname_S),FreeBSD)
-	DEFAULT_SSL_FLAGS = -Imbedtls/include
+	DEFAULT_SSL_FLAGS = -I$(MBEDTLS_INC)
 	DEFAULT_LIBUSB_LIB = -lusb
 	DEFAULT_PCSC_FLAGS = -I/usr/local/include/PCSC
 	DEFAULT_PCSC_LIB = -L/usr/local/lib -lpcsclite
 else ifeq ($(uname_S),Darwin)
-	DEFAULT_SSL_FLAGS = -Imbedtls/include
+	DEFAULT_SSL_FLAGS = -I$(MBEDTLS_INC)
 	DEFAULT_LIBDVBCSA_FLAGS = -I/usr/local/opt/libdvbcsa/include
 	DEFAULT_LIBDVBCSA_LIB = -L/usr/local/opt/libdvbcsa/lib -ldvbcsa
 	DEFAULT_LIBUSB_FLAGS = -I/usr/local/opt/libusb/include
@@ -224,13 +219,70 @@ else
 	# We can't just use -I/usr/include/PCSC because it won't work in
 	# case of cross compilation.
 	TOOLCHAIN_INC_DIR := $(strip $(shell echo | $(CC) -Wp,-v -xc - -fsyntax-only 2>&1 | $(GREP) include$ | tail -n 1))
-	DEFAULT_SSL_FLAGS = -Imbedtls/include
+	DEFAULT_SSL_FLAGS = -I$(MBEDTLS_INC)
 	DEFAULT_PCSC_FLAGS = -I$(TOOLCHAIN_INC_DIR)/PCSC -I$(TOOLCHAIN_INC_DIR)/../../include/PCSC -I$(TOOLCHAIN_INC_DIR)/../local/include/PCSC
 	DEFAULT_PCSC_LIB = -lpcsclite
 endif
 
 ifeq ($(uname_S),Cygwin)
 	DEFAULT_PCSC_LIB += -lwinscard
+endif
+
+# MbedTLS common settings
+MBEDTLS_DIR      := mbedtls
+MBEDTLS_INC      := $(MBEDTLS_DIR)/include
+
+ifneq ($(strip $(shell ./config.sh --show-enabled libraries)),)
+	override CFLAGS += -I. -I$(MBEDTLS_DIR)/include
+	override CFLAGS  += -DMBEDTLS_NO_PLATFORM_ENTROPY -DMBEDTLS_NO_DEFAULT_ENTROPY_SOURCES
+	override CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
+	IS_MBEDTLS_FILE = $(or $(findstring $(MBEDTLS_DIR)/,$<),$(findstring mbedtls/,$(CFLAGS)))
+endif
+
+# MbedTLS base files
+MBEDTLS_SRC_BASE := \
+	$(shell $(GREP) -q '^\#define MBEDTLS_DEBUG_C' mbedtls-config.h 2>/dev/null && echo $(MBEDTLS_DIR)/library/debug.c) \
+	mbedtls_platform.c \
+	oscam-crypto.c
+
+# MbedTLS all files
+ifeq ($(USE_SSL),1)
+	MBEDTLS_SRC := $(filter-out \
+		$(MBEDTLS_DIR)/library/debug.c \
+		$(MBEDTLS_DIR)/library/platform.c \
+		$(MBEDTLS_DIR)/library/platform_util.c \
+		$(MBEDTLS_DIR)/library/psa_%.c \
+		$(MBEDTLS_DIR)/library/ssl_tls13_%.c, \
+		$(wildcard $(MBEDTLS_DIR)/library/*.c) oscam-ssl.c)
+else
+# MbedTLS optional files
+	ifeq "$(shell ./config.sh --enabled WITH_LIB_AES)" "Y"
+		MBEDTLS_SRC_CRYPTO += \
+			$(MBEDTLS_DIR)/library/aes.c \
+			$(MBEDTLS_DIR)/library/aesni.c
+	endif
+	ifeq ($(or $(shell ./config.sh --enabled WITH_LIB_DES),$(shell ./config.sh --enabled WITH_LIB_MDC2)),Y)
+		MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/des.c
+	endif
+	ifeq "$(shell ./config.sh --enabled WITH_LIB_MD5)" "Y"
+		MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/md5.c
+	endif
+	ifeq "$(shell ./config.sh --enabled WITH_LIB_SHA1)" "Y"
+		MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/sha1.c
+	endif
+	ifeq "$(shell ./config.sh --enabled WITH_LIB_SHA256)" "Y"
+		MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/sha256.c
+	endif
+	ifeq "$(shell ./config.sh --enabled WITH_LIB_BIGNUM)" "Y"
+		MBEDTLS_SRC_CRYPTO += \
+			$(MBEDTLS_DIR)/library/bignum.c \
+			$(MBEDTLS_DIR)/library/bignum_core.c \
+			$(MBEDTLS_DIR)/library/bignum_mod.c \
+			$(MBEDTLS_DIR)/library/constant_time.c
+	endif
+	ifneq ($(strip $(MBEDTLS_SRC_CRYPTO)),)
+		MBEDTLS_SRC += $(MBEDTLS_SRC_CRYPTO)
+	endif
 endif
 
 # Function to initialize USE related variables
@@ -267,7 +319,7 @@ $(eval $(call prepare_use_flags,LIBDVBCSA,libdvbcsa))
 $(eval $(call prepare_use_flags,COMPRESS,upx))
 
 ifdef USE_SSL
-	SSL_VER    = ${shell ($(GREP) '^\#define MBEDTLS_VERSION_STRING_FULL' $(MBEDTLS_DIR)/include/mbedtls/build_info.h /dev/null 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
+	SSL_VER    = ${shell ($(GREP) '^\#define MBEDTLS_VERSION_STRING_FULL' $(MBEDTLS_INC)/mbedtls/build_info.h /dev/null 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
 	SSL_INFO   = $(shell echo ', $(SSL_VER) (built-in)')
 endif
 
@@ -316,70 +368,9 @@ ifndef USE_LIBUSB
 	override LIST_SMARGO_BIN =
 endif
 
-# --- Common MbedTLS settings (shared for both builds) ---
-ifneq ($(or $(USE_SSL), \
-			$(CONFIG_WITH_LIB_AES), \
-			$(CONFIG_WITH_LIB_DES), \
-			$(CONFIG_WITH_LIB_MDC2), \
-			$(CONFIG_WITH_LIB_MD5), \
-			$(CONFIG_WITH_LIB_SHA1), \
-			$(CONFIG_WITH_LIB_SHA256), \
-			$(CONFIG_WITH_LIB_BIGNUM)),)
-	override CFLAGS += -I. -I$(MBEDTLS_DIR)/include
-	CFLAGS  += -DMBEDTLS_NO_PLATFORM_ENTROPY -DMBEDTLS_NO_DEFAULT_ENTROPY_SOURCES
-	CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
-	IS_MBEDTLS_FILE = $(or $(findstring $(MBEDTLS_DIR)/,$<),$(findstring mbedtls/,$(CFLAGS)))
-	# We build mbedTLS directly from the local submodule at ./mbedtls
-
-endif
-
-# ----- Modular MbedTLS source selection --------------------------------
-# --- Base  ---
-MBEDTLS_SRC_BASE := \
-	mbedtls_platform.c \
-	oscam-crypto.c
-
-# --- Complete ---
-ifeq ($(USE_SSL),1)
-	CFLAGS += -DWITH_SSL -DWITH_LIB_SHA1
-	MBEDTLS_SRC := $(filter-out \
-	$(MBEDTLS_DIR)/library/platform.c \
-	$(MBEDTLS_DIR)/library/platform_util.c, \
-	$(wildcard $(MBEDTLS_DIR)/library/*.c) oscam-ssl.c)
-else
-	# --- Optional crypto modules ---
-	ifeq ($(CONFIG_WITH_LIB_AES),y)
-		MBEDTLS_SRC_CRYPTO += \
-			$(MBEDTLS_DIR)/library/aes.c \
-			$(MBEDTLS_DIR)/library/aesni.c \
-			$(MBEDTLS_DIR)/library/cipher.c \
-			$(MBEDTLS_DIR)/library/cipher_wrap.c
-	endif
-	ifeq ($(or $(CONFIG_WITH_LIB_DES),$(CONFIG_WITH_LIB_MDC2)),y)
-		MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/des.c
-	endif
-	ifeq ($(CONFIG_WITH_LIB_MD5),y)
-		MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/md5.c
-	endif
-	ifeq ($(CONFIG_WITH_LIB_SHA1),y)
-		MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/sha1.c
-	endif
-	ifeq ($(CONFIG_WITH_LIB_SHA256),y)
-		MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/sha256.c
-	endif
-	ifeq ($(CONFIG_WITH_LIB_BIGNUM),y)
-		MBEDTLS_SRC_CRYPTO += \
-			$(MBEDTLS_DIR)/library/bignum.c \
-			$(MBEDTLS_DIR)/library/bignum_core.c \
-			$(MBEDTLS_DIR)/library/bignum_mod.c \
-			$(MBEDTLS_DIR)/library/constant_time.c
-	endif
-	ifneq ($(strip $(MBEDTLS_SRC_CRYPTO)),)
-		MBEDTLS_SRC += $(MBEDTLS_SRC_CRYPTO)
-	endif
-endif
+# mbedtls source files
 SRC-y += $(MBEDTLS_SRC) $(MBEDTLS_SRC_BASE)
-
+# cstapi source files
 SRC-$(CONFIG_WITH_CARDREADER) += csctapi/atr.c
 SRC-$(CONFIG_WITH_CARDREADER) += csctapi/icc_async.c
 SRC-$(CONFIG_WITH_CARDREADER) += csctapi/io_serial.c
@@ -400,9 +391,9 @@ SRC-$(CONFIG_CARDREADER_SMART) += csctapi/ifd_smartreader.c
 SRC-$(CONFIG_CARDREADER_STINGER) += csctapi/ifd_stinger.c
 SRC-$(CONFIG_CARDREADER_STAPI) += csctapi/ifd_stapi.c
 SRC-$(CONFIG_CARDREADER_STAPI5) += csctapi/ifd_stapi.c
-
+# minilzo source files
 SRC-$(CONFIG_WITH_LIB_MINILZO) += minilzo/minilzo.c
-
+# oscam source files
 SRC-$(CONFIG_CS_ANTICASC) += module-anticasc.c
 SRC-$(CONFIG_CS_CACHEEX) += module-cacheex.c
 SRC-$(CONFIG_MODULE_CAMD33) += module-camd33.c
@@ -642,10 +633,6 @@ submodules:
 			echo "Hint: Ensure all required external components (e.g. 'mbedtls', 'webif') are included."; \
 		fi; \
 	fi
-print-flags:
-	@echo "CFLAGS = $(CFLAGS)"
-	@echo "LDFLAGS = $(LDFLAGS)"
-	@echo "LIBS = $(LIBS)"
 
 README.build:
 	@echo "Extracting 'make help' into $@ file."
