@@ -3,15 +3,19 @@
 #include "globals.h"
 #include "oscam-time.h"
 #include "oscam-ssl.h"
-
+#if defined(MBEDTLS_DEBUG_C)
+#include "mbedtls/debug.h"
+#endif
 #ifdef WITH_SSL
 
 /* mbedTLS */
+#include "mbedtls/entropy.h"
+#include "mbedtls/error.h"
+#include "mbedtls/oid.h"
 #include "mbedtls/platform.h"
 #include "mbedtls/ssl_cookie.h"
-#include "mbedtls/error.h"
 #include "mbedtls/version.h"
-#include "mbedtls/oid.h"
+#include "mbedtls/asn1write.h"
 
 #define OSCAM_SSL_CERT_YEARS 2
 
@@ -23,34 +27,8 @@ static mbedtls_ctr_drbg_context g_drbg;
 static int g_init_ref = 0;
 
 /* ---------------------------------------------------------------------
- * BIO wrappers
+ * HELPERS
  * ------------------------------------------------------------------ */
-static int bio_send(void *ctx, const unsigned char *buf, size_t len)
-{
-	int fd = (int)(intptr_t)ctx;
-	ssize_t r = send(fd, buf, len, 0);
-	if (r < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK)
-			return MBEDTLS_ERR_SSL_WANT_WRITE;
-		return MBEDTLS_ERR_NET_SEND_FAILED;
-	}
-	return (int)r;
-}
-
-static int bio_recv(void *ctx, unsigned char *buf, size_t len)
-{
-	int fd = (int)(intptr_t)ctx;
-	ssize_t r = recv(fd, buf, len, 0);
-	if (r < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK)
-			return MBEDTLS_ERR_SSL_WANT_READ;
-		return MBEDTLS_ERR_NET_RECV_FAILED;
-	}
-	if (r == 0)
-		return MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY; /* EOF */
-	return (int)r;
-}
-
 static int map_tls_err(int ret)
 {
 	if (ret == MBEDTLS_ERR_SSL_WANT_READ)
@@ -60,16 +38,181 @@ static int map_tls_err(int ret)
 	return OSCAM_SSL_ERR;
 }
 
+static int san_write_dns(unsigned char **p, unsigned char *start, const char *name)
+{
+	int ret;
+	const unsigned char *s = (const unsigned char *) name;
+	size_t nlen = strlen(name);
+
+	/* Write IA5 string bytes, then wrap with context tag [2] */
+	MBEDTLS_ASN1_CHK_ADD(ret, mbedtls_asn1_write_raw_buffer(p, start, s, nlen));
+	MBEDTLS_ASN1_CHK_ADD(ret, mbedtls_asn1_write_len(p, start, nlen));
+	MBEDTLS_ASN1_CHK_ADD(ret, mbedtls_asn1_write_tag(p, start,
+						 MBEDTLS_ASN1_CONTEXT_SPECIFIC | 2));
+	return 0;
+}
+
+static int san_write_ip(unsigned char **p, unsigned char *start,
+						const unsigned char *ip, size_t iplen)
+{
+	int ret;
+	/* GeneralName iPAddress is OCTET STRING with context tag [7] (primitive) */
+	MBEDTLS_ASN1_CHK_ADD(ret, mbedtls_asn1_write_raw_buffer(p, start, ip, iplen));
+	MBEDTLS_ASN1_CHK_ADD(ret, mbedtls_asn1_write_len(p, start, iplen));
+	MBEDTLS_ASN1_CHK_ADD(ret, mbedtls_asn1_write_tag(p, start,
+						 MBEDTLS_ASN1_CONTEXT_SPECIFIC | 7));
+	return 0;
+}
+
+/* Build SubjectAltName DER and attach it as non-critical extension */
+static int write_san_ext_and_attach(mbedtls_x509write_cert *crt, const char *cn)
+{
+	unsigned char buf[512];
+	unsigned char *p = buf + sizeof(buf);
+	unsigned char *const start = p;
+	int ret;
+
+	/* Values to add (reverse order, since we write backwards) */
+	static const unsigned char ip6[16] = { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1 };
+	static const unsigned char ip4[4]  = { 127,0,0,1 };
+	char cn_local[128];
+	snprintf(cn_local, sizeof(cn_local), "%s.local", cn);
+
+	/* IP: ::1 */
+	MBEDTLS_ASN1_CHK_ADD(ret, san_write_ip(&p, buf, ip6, sizeof(ip6)));
+	/* IP: 127.0.0.1 */
+	MBEDTLS_ASN1_CHK_ADD(ret, san_write_ip(&p, buf, ip4, sizeof(ip4)));
+	/* DNS: <cn>.local */
+	MBEDTLS_ASN1_CHK_ADD(ret, san_write_dns(&p, buf, cn_local));
+	/* DNS: <cn> */
+	MBEDTLS_ASN1_CHK_ADD(ret, san_write_dns(&p, buf, cn));
+
+	/* Wrap as SEQUENCE OF GeneralName */
+	size_t gn_len = (size_t)(start - p);
+	MBEDTLS_ASN1_CHK_ADD(ret, mbedtls_asn1_write_len(&p, buf, gn_len));
+	MBEDTLS_ASN1_CHK_ADD(ret, mbedtls_asn1_write_tag(&p, buf,
+						 MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE));
+
+	/* Attach SAN extension (OID 2.5.29.17) */
+	return mbedtls_x509write_crt_set_extension(
+		crt, MBEDTLS_OID_SUBJECT_ALT_NAME,
+		MBEDTLS_OID_SIZE(MBEDTLS_OID_SUBJECT_ALT_NAME),
+		0 /* non-critical */, p, (size_t)(start - p));
+}
+
+/* classify peer-abort alerts we want to silence in logs */
+static inline int is_benign_handshake_abort(int ret)
+{
+	return ret == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE /* -0x7780 */
+		|| ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY   /* -0x7880 */
+		|| ret == MBEDTLS_ERR_SSL_CONN_EOF;           /* -0x6100 */
+}
+
+#if defined(MBEDTLS_DEBUG_C)
+static void oscam_ssl_debug(void *ctx, int level, const char *file, int line, const char *str)
+{
+	(void)ctx;  // suppress unused warning
+	const char *lvl = "DBG";
+	if (level == 1) lvl = "ERR";
+	else if (level == 2) lvl = "WARN";
+	else if (level == 3) lvl = "INFO";
+	else if (level == 4) lvl = "DBG";
+
+	cs_log("[mbedtls %s] %s:%d: %s", lvl, file, line, str);
+}
+
+static const char *grp_name(mbedtls_ecp_group_id id)
+{
+#if defined(MBEDTLS_ECP_C)
+	switch (id) {
+		case MBEDTLS_ECP_DP_SECP256R1: return "secp256r1";
+		case MBEDTLS_ECP_DP_SECP384R1: return "secp384r1";
+		case MBEDTLS_ECP_DP_SECP521R1: return "secp521r1";
+#if defined(MBEDTLS_ECP_DP_CURVE25519_ENABLED)
+		case MBEDTLS_ECP_DP_CURVE25519: return "x25519";
+#endif
+		default: return "unknown";
+	}
+#else
+	return "n/a";
+#endif
+}
+
+static inline mbedtls_ecp_group_id get_group_id_from_pk(const mbedtls_pk_context *pk)
+{
+#if defined(MBEDTLS_PK_HAVE_ECC)
+	const mbedtls_ecp_keypair *ec = mbedtls_pk_ec(*pk);
+	if (ec == NULL)
+		return MBEDTLS_ECP_DP_NONE;
+	return ec->grp.id;
+#else
+	(void) pk;
+	return MBEDTLS_ECP_DP_NONE;
+#endif
+}
+
+static void warn_if_ec_curve_not_advertised(const mbedtls_x509_crt *crt,
+											const mbedtls_pk_context *key,
+											const uint16_t *adv_groups)
+{
+#if defined(MBEDTLS_ECP_C)
+	if (!crt || !key || !adv_groups) return;
+	if (!(mbedtls_pk_get_type(key) == MBEDTLS_PK_ECKEY ||
+		  mbedtls_pk_get_type(key) == MBEDTLS_PK_ECDSA))
+		return;
+
+	uint16_t need = 0;
+	switch (get_group_id_from_pk(key)) {
+		case MBEDTLS_ECP_DP_SECP256R1: need = MBEDTLS_SSL_IANA_TLS_GROUP_SECP256R1; break;
+		case MBEDTLS_ECP_DP_SECP384R1: need = MBEDTLS_SSL_IANA_TLS_GROUP_SECP384R1; break;
+		case MBEDTLS_ECP_DP_SECP521R1: need = MBEDTLS_SSL_IANA_TLS_GROUP_SECP521R1; break;
+#if defined(MBEDTLS_ECP_DP_CURVE25519_ENABLED)
+		case MBEDTLS_ECP_DP_CURVE25519: need = MBEDTLS_SSL_IANA_TLS_GROUP_X25519; break;
+#endif
+		default: return;
+	}
+
+	for (const uint16_t *g = adv_groups; g && *g; g++) {
+		if (*g == need) return;
+	}
+	cs_log("SSL: WARNING: server key curve (%s) not in advertised groups; some clients will fail",
+		   grp_name(get_group_id_from_pk	(key)));
+#else
+	(void)crt; (void)key; (void)adv_groups;
+#endif
+}
+
+static const char *pk_type_name(mbedtls_pk_type_t t)
+{
+	switch (t) {
+		case MBEDTLS_PK_RSA:   return "RSA";
+		case MBEDTLS_PK_ECKEY: return "ECDSA";
+		case MBEDTLS_PK_ECDSA: return "ECDSA";
+		default:               return "UNKNOWN";
+	}
+}
+#endif
+
 /* ---------------------------------------------------------------------
  * Global init / free
  * ------------------------------------------------------------------ */
+extern int mbedtls_hardware_poll( void *data, unsigned char *output, size_t len, size_t *olen );
+ 
 int oscam_ssl_global_init(void)
 {
 	if (g_init_ref++ > 0)
 		return OSCAM_SSL_OK;
 
+	mbedtls_platform_setup(NULL);
 	mbedtls_entropy_init(&g_entropy);
 	mbedtls_ctr_drbg_init(&g_drbg);
+
+	/* ADD THIS: register a strong source */
+	mbedtls_entropy_add_source(&g_entropy,
+								mbedtls_hardware_poll, /* or your poll fn */
+								NULL,
+								32, /* minimum bytes the source can return */
+								MBEDTLS_ENTROPY_SOURCE_STRONG);
 
 	const char *pers = "oscam-mbedtls";
 	int ret = mbedtls_ctr_drbg_seed(&g_drbg, mbedtls_entropy_func, &g_entropy,
@@ -87,9 +230,18 @@ void oscam_ssl_global_free(void)
 {
 	if (g_init_ref == 0)
 		return;
+
 	if (--g_init_ref == 0) {
+		/* Free global MbedTLS contexts */
 		mbedtls_ctr_drbg_free(&g_drbg);
 		mbedtls_entropy_free(&g_entropy);
+
+		/* Deinitialize custom platform layer (static allocator, hooks, etc.) */
+		mbedtls_platform_teardown(NULL);
+
+		/* defensive cleanup to ensure contexts aren’t reused */
+		memset(&g_drbg, 0, sizeof(g_drbg));
+		memset(&g_entropy, 0, sizeof(g_entropy));
 	}
 }
 
@@ -110,12 +262,20 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 	mbedtls_entropy_init(&conf->entropy);
 	mbedtls_ctr_drbg_init(&conf->ctr_drbg);
 
-	const char *pers = "oscam_ssl_conf";
+	mbedtls_entropy_add_source(&conf->entropy,
+								mbedtls_hardware_poll, /* or your poll fn */
+								NULL,
+								32,
+								MBEDTLS_ENTROPY_SOURCE_STRONG);
+
+	const char *pers = "oscam_webif_conf";
 	if (mbedtls_ctr_drbg_seed(&conf->ctr_drbg, mbedtls_entropy_func, &conf->entropy,
-							  (const unsigned char *)pers, strlen(pers)) != 0) {
+								(const unsigned char *)pers, strlen(pers)) != 0) {
 		oscam_ssl_conf_free(conf);
 		return NULL;
 	}
+
+	mbedtls_ssl_conf_rng(&conf->ssl_conf, mbedtls_ctr_drbg_random, &conf->ctr_drbg);
 
 	/* ---- Configure as SERVER ---- */
 	if (mbedtls_ssl_config_defaults(&conf->ssl_conf,
@@ -125,6 +285,11 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 		oscam_ssl_conf_free(conf);
 		return NULL;
 	}
+
+#if defined(MBEDTLS_DEBUG_C)
+	mbedtls_ssl_conf_dbg(&conf->ssl_conf, oscam_ssl_debug, NULL);
+	mbedtls_debug_set_threshold(4);  // 0 = off, 1..4 = increasing verbosity
+#endif
 
 	/* ---- Common defaults ---- */
 	mbedtls_ssl_conf_rng(&conf->ssl_conf, mbedtls_ctr_drbg_random, &conf->ctr_drbg);
@@ -137,12 +302,12 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 	/* Cipher suite selection */
 	const int *suites = NULL;
 	static const int suites_default[] = {
-		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-		MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-		MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
 		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+		MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+		MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 		MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
 		MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
 		0
@@ -152,15 +317,15 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 		MBEDTLS_TLS1_3_AES_256_GCM_SHA384,
 		MBEDTLS_TLS1_3_AES_128_GCM_SHA256,
 #endif
+		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
 		MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 		0
 	};
 	static const int suites_legacy[] = {
-		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
 		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
 		MBEDTLS_TLS_RSA_WITH_AES_128_CBC_SHA,
@@ -170,9 +335,14 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 
 	switch (mode) {
 		case OSCAM_SSL_MODE_STRICT:
-			suites = suites_strict;
 			min_minor = MBEDTLS_SSL_MINOR_VERSION_3;
+#if defined(MBEDTLS_SSL_PROTO_TLS1_3)
 			max_minor = MBEDTLS_SSL_MINOR_VERSION_4;
+#else
+			/* Fallback to strong TLS 1.2 only if TLS 1.3 is disabled */
+			max_minor = MBEDTLS_SSL_MINOR_VERSION_3;
+#endif
+			suites = suites_strict;
 			break;
 		case OSCAM_SSL_MODE_LEGACY:
 			suites = suites_legacy;
@@ -190,7 +360,9 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 
 	/* Supported groups (curve list) */
 	static const uint16_t groups_all[] = {
+#if defined(MBEDTLS_ECP_C) && defined(MBEDTLS_ECP_HAVE_X25519)
 		MBEDTLS_SSL_IANA_TLS_GROUP_X25519,
+#endif
 		MBEDTLS_SSL_IANA_TLS_GROUP_SECP256R1,
 		MBEDTLS_SSL_IANA_TLS_GROUP_SECP384R1,
 		MBEDTLS_SSL_IANA_TLS_GROUP_SECP521R1,
@@ -200,8 +372,12 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 		MBEDTLS_SSL_IANA_TLS_GROUP_SECP256R1,
 		0
 	};
-	mbedtls_ssl_conf_groups(&conf->ssl_conf,
-		(mode == OSCAM_SSL_MODE_LEGACY) ? groups_legacy : groups_all);
+
+	const uint16_t *grp_list = (mode == OSCAM_SSL_MODE_LEGACY) ? groups_legacy : groups_all;
+	mbedtls_ssl_conf_groups(&conf->ssl_conf, grp_list);
+#if defined(MBEDTLS_DEBUG_C)
+	warn_if_ec_curve_not_advertised(&conf->own_cert, &conf->own_key, grp_list);
+#endif
 
 #if defined(MBEDTLS_SSL_TICKET_C)
 	static mbedtls_ssl_ticket_context ticket_ctx;
@@ -213,6 +389,17 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 											mbedtls_ssl_ticket_parse,
 											&ticket_ctx);
 	}
+#endif
+
+#if defined(MBEDTLS_DEBUG_C)
+if (mbedtls_pk_can_do(&conf->own_key, MBEDTLS_PK_ECDSA))
+	cs_log("SSL: loaded ECDSA key (%zu bits, curve %s)",
+		mbedtls_pk_get_bitlen(&conf->own_key),
+		mbedtls_pk_get_name(&conf->own_key));
+else if (mbedtls_pk_can_do(&conf->own_key, MBEDTLS_PK_RSA))
+	cs_log("SSL: loaded RSA key (%zu bits)", mbedtls_pk_get_bitlen(&conf->own_key));
+else
+	cs_log("SSL: loaded unknown key type");
 #endif
 
 	return conf;
@@ -274,6 +461,20 @@ int oscam_ssl_conf_use_own_cert_pem(oscam_ssl_conf_t *conf,
 		return ret;
 	}
 
+#if defined(MBEDTLS_DEBUG_C)
+mbedtls_pk_type_t kt = mbedtls_pk_get_type(&conf->own_key);
+if (kt == MBEDTLS_PK_ECKEY || kt == MBEDTLS_PK_ECDSA) {
+#if defined(MBEDTLS_ECP_C)
+	cs_log("SSL: loaded key type=%s curve=%s",
+		   pk_type_name(kt), grp_name(get_group_id_from_pk(&conf->own_key)));
+#else
+	cs_log("SSL: loaded key type=%s", pk_type_name(kt));
+#endif
+} else {
+	cs_log("SSL: loaded key type=%s", pk_type_name(kt));
+}
+#endif
+
 	// 3) Validate key matches leaf cert
 	if (!mbedtls_pk_can_do(&conf->own_key, MBEDTLS_PK_RSA) &&
 		!mbedtls_pk_can_do(&conf->own_key, MBEDTLS_PK_ECDSA)) {
@@ -317,13 +518,6 @@ int oscam_ssl_conf_load_ca(oscam_ssl_conf_t *conf, const char *ca_pem_path)
 /* ---------------------------------------------------------------------
  * SSL context
  * ------------------------------------------------------------------ */
-static void log_tls_error(int ret, const char *where)
-{
-	char e[128];
-	mbedtls_strerror(ret, e, sizeof(e));
-	cs_log_dbg(D_TRACE, "TLS: %s failed (%d: %s)", where, ret, e);
-}
-
 /* ---- internal: poll helper for WANT_READ/WRITE ---- */
 static int wait_on_fd_rw(int fd, int want_write, int timeout_ms)
 {
@@ -396,32 +590,69 @@ int oscam_ssl_handshake_blocking(oscam_ssl_t *ssl, int fd, int timeout_ms)
 /* ---- create SSL and COMPLETE the TLS handshake here ---- */
 oscam_ssl_t *oscam_ssl_new(oscam_ssl_conf_t *conf, int fd)
 {
-	if (!conf)
-		return NULL;
+	if (!conf) return NULL;
 
 	oscam_ssl_t *ssl = calloc(1, sizeof(*ssl));
-	if (!ssl)
-		return NULL;
+	if (!ssl) return NULL;
 
 	mbedtls_ssl_init(&ssl->ssl);
 	mbedtls_net_init(&ssl->net);
 	ssl->net.fd = fd;
 
-	if (mbedtls_ssl_setup(&ssl->ssl, &conf->ssl_conf) != 0) {
-		oscam_ssl_free(ssl);
+	int ret = mbedtls_ssl_setup(&ssl->ssl, &conf->ssl_conf);
+	if (ret != 0) {
+		char e[128]; mbedtls_strerror(ret, e, sizeof(e));
+		cs_log("SSL: mbedtls_ssl_setup() failed (%d: %s)", ret, e);
+		mbedtls_ssl_free(&ssl->ssl);
+		free(ssl);
 		return NULL;
 	}
 
-	/* wire BIO */
-	mbedtls_ssl_set_bio(&ssl->ssl, (void *)(intptr_t)fd, bio_send, bio_recv, NULL);
+	/* BIO / IO */
+	mbedtls_ssl_set_bio(&ssl->ssl, &ssl->net, mbedtls_net_send, mbedtls_net_recv, NULL);
 
-	/* IMPORTANT: complete the handshake now (OpenSSL-like behavior).
-	   Reasonable server-side timeout so browsers don't spin forever. */
-	int hr = handshake_blocking_impl(&ssl->ssl, fd, 10000 /* 10s */);
-	if (hr != 0) {
-		log_tls_error(hr, "handshake_blocking_impl");
-		oscam_ssl_free(ssl);
-		return NULL;
+	/* Handshake with WANT_READ/WRITE drive + short timeout slices */
+	const int slice_ms = 50;
+	const int max_ms   = 10000; /* 10s cap */
+	int elapsed = 0;
+
+	for (;;) {
+		ret = mbedtls_ssl_handshake(&ssl->ssl);
+		if (ret == 0)
+			break; /* handshake done */
+
+		if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+			int want_write = (ret == MBEDTLS_ERR_SSL_WANT_WRITE);
+			int w = wait_on_fd_rw(fd, want_write, slice_ms);
+			if (w == -1) { ret = MBEDTLS_ERR_SSL_INTERNAL_ERROR; break; }
+			if (w == -2) {
+				elapsed += slice_ms;
+				if (elapsed >= max_ms) { ret = MBEDTLS_ERR_SSL_TIMEOUT; break; }
+			}
+			continue;
+		}
+
+		/* fatal return from mbedTLS */
+		break;
+	}
+
+	if (ret != 0) {
+		if (!is_benign_handshake_abort(ret)) {
+			char e[128];
+			mbedtls_strerror(ret, e, sizeof(e));
+			cs_log("SSL: handshake failed (%d: %s)", ret, e);
+
+			/* Fatal error — clean up completely */
+			mbedtls_ssl_free(&ssl->ssl);
+			free(ssl);
+			return NULL;
+		} else {
+			/* Benign abort — client closed early */
+			cs_debug_mask(D_CLIENT, "SSL: benign peer abort during handshake (ret=%d)", ret);
+			mbedtls_ssl_free(&ssl->ssl);
+			ssl->net.fd = -1;  /* mark as invalid for caller */
+			return ssl;
+		}
 	}
 
 	return ssl;
@@ -572,6 +803,8 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	mbedtls_entropy_init(&entropy);
 	mbedtls_ctr_drbg_init(&ctr_drbg);
 
+	mbedtls_entropy_add_source(&entropy, mbedtls_hardware_poll, NULL, 32, MBEDTLS_ENTROPY_SOURCE_STRONG);
+
 	if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
 		(const unsigned char *)pers, strlen(pers))) != 0)
 		goto cleanup;
@@ -590,7 +823,7 @@ int oscam_ssl_generate_selfsigned(const char *path)
 
 	char subject_name[128];
 	snprintf(subject_name, sizeof(subject_name),
-		"CN=%.*s,O=OSCam Distribution,OU=Private Webif Certificate", (int)cn_len, cn);
+		"CN=%.*s,O=OSCam AutoCert,OU=Private Webif Certificate", (int)cn_len, cn);
 
 	// Configure certificate metadata
 	mbedtls_x509write_crt_set_subject_key(&crt, &key);
@@ -599,6 +832,13 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	mbedtls_x509write_crt_set_version(&crt, MBEDTLS_X509_CRT_VERSION_3);
 	mbedtls_x509write_crt_set_subject_name(&crt, subject_name);
 	mbedtls_x509write_crt_set_issuer_name(&crt, subject_name);
+
+	// X.509 V3 extensions
+	ret = write_san_ext_and_attach(&crt, cn);
+	if (ret != 0) {
+		cs_log("SSL: failed to set SAN (%d)", ret);
+		goto cleanup;
+	}
 
 	// Validity (2 years)
 	gmtime_r(&now, &start_tm);
