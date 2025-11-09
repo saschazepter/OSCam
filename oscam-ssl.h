@@ -32,7 +32,7 @@ enum {
  * Opaque handles
  * ------------------------------------------------------------------ */
 typedef struct oscam_ssl_conf_s oscam_ssl_conf_t;
-typedef struct oscam_ssl_s	  oscam_ssl_t;
+typedef struct oscam_ssl_s      oscam_ssl_t;
 
 /* ---------------------------------------------------------------------
  * Configuration structure
