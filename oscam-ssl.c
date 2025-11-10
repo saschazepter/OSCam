@@ -197,7 +197,7 @@ static const char *pk_type_name(mbedtls_pk_type_t t)
  * Global init / free
  * ------------------------------------------------------------------ */
 extern int mbedtls_hardware_poll( void *data, unsigned char *output, size_t len, size_t *olen );
- 
+
 int oscam_ssl_global_init(void)
 {
 	if (g_init_ref++ > 0)
