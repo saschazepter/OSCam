@@ -158,49 +158,4 @@ int   oscam_mbedtls_snprintf(char *buf, size_t buflen, const char *fmt, ...);
 
 #undef MBEDTLS_SELF_TEST   /* remove printf usage in self-tests */
 
-/* =======================================================
- *  Disable unused features when building without WITH_SSL
- * ======================================================= */
-#ifndef WITH_SSL
-#undef MBEDTLS_SSL_CLI_C
-#undef MBEDTLS_SSL_SRV_C
-#undef MBEDTLS_SSL_TLS_C
-#undef MBEDTLS_SSL_PROTO_TLS1_2
-#undef MBEDTLS_SSL_PROTO_TLS1_3
-#undef MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_EPHEMERAL_ENABLED
-#undef MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_PSK_EPHEMERAL_ENABLED
-#undef MBEDTLS_SSL_SERVER_NAME_INDICATION
-#undef MBEDTLS_PKCS7_C
-#undef MBEDTLS_X509_CSR_PARSE_C
-#undef MBEDTLS_X509_USE_C
-#undef MBEDTLS_X509_CRL_PARSE_C
-#undef MBEDTLS_X509_CRT_PARSE_C
-#undef MBEDTLS_PEM_PARSE_C
-#undef MBEDTLS_X509_CRT_WRITE_C
-#undef MBEDTLS_PEM_WRITE_C
-#endif
-
-#if !defined(WITH_LIB_AES) && !defined(WITH_SSL)
-#undef MBEDTLS_AES_C
-#endif
-#if !defined(WITH_LIB_AES) && !defined(WITH_SSL)
-#undef MBEDTLS_CIPHER_C
-#endif
-#if !defined(WITH_LIB_DES) && !defined(WITH_LIB_MDC2) && !defined(WITH_SSL)
-#undef MBEDTLS_DES_C
-#endif
-#if !defined(WITH_LIB_MD5) && !defined(WITH_SSL)
-#undef MBEDTLS_MD5_C
-#endif
-#if !defined(WITH_LIB_SHA1) && !defined(WITH_SSL)
-#undef MBEDTLS_SHA1_C
-#endif
-#if !defined(WITH_LIB_SHA256) && !defined(WITH_SSL)
-#undef MBEDTLS_SHA256_C
-#undef MBEDTLS_SHA512_C
-#endif
-#if !defined(WITH_LIB_BIGNUM) && !defined(WITH_SSL)
-#undef MBEDTLS_BIGNUM_C
-#endif
-
 #endif /* MBEDTLS_USER_CONFIG_H */
