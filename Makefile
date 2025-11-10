@@ -238,8 +238,7 @@ endif
 # MbedTLS base files
 MBEDTLS_SRC_BASE := \
 	$(shell $(GREP) -q '^\#define MBEDTLS_DEBUG_C' mbedtls-config.h 2>/dev/null && echo $(MBEDTLS_DIR)/library/debug.c) \
-	mbedtls_platform.c \
-	oscam-crypto.c
+	mbedtls_platform.c
 
 # MbedTLS all files
 ifeq ($(USE_SSL),1)
@@ -249,7 +248,7 @@ ifeq ($(USE_SSL),1)
 		$(MBEDTLS_DIR)/library/platform_util.c \
 		$(MBEDTLS_DIR)/library/psa_%.c \
 		$(MBEDTLS_DIR)/library/ssl_tls13_%.c, \
-		$(wildcard $(MBEDTLS_DIR)/library/*.c) oscam-ssl.c)
+		$(wildcard $(MBEDTLS_DIR)/library/*.c))
 else
 # MbedTLS optional files
 	ifeq "$(shell ./config.sh --enabled WITH_LIB_AES)" "Y"
@@ -470,6 +469,7 @@ SRC-y += oscam-config-account.c
 SRC-y += oscam-config-global.c
 SRC-y += oscam-config-reader.c
 SRC-y += oscam-config.c
+SRC-y += oscam-crypto.c
 SRC-y += oscam-ecm.c
 SRC-y += oscam-emm.c
 SRC-y += oscam-emm-cache.c
@@ -483,6 +483,7 @@ SRC-y += oscam-net.c
 SRC-y += oscam-llist.c
 SRC-y += oscam-reader.c
 SRC-y += oscam-simples.c
+SRC-$(if $(filter 1,$(USE_SSL)),y) += oscam-ssl.c
 SRC-y += oscam-string.c
 SRC-y += oscam-time.c
 SRC-y += oscam-work.c
@@ -526,6 +527,7 @@ $(SIGN_INFO_TOOL)\
 |  Protocols: $(shell ./config.sh --use-flags "$(USE_FLAGS)" --show-enabled protocols | sed -e 's|MODULE_||g')\n\
 |  Readers  : $(shell ./config.sh --use-flags "$(USE_FLAGS)" --show-enabled readers | sed -e 's|READER_||g')\n\
 |  CardRdrs : $(shell ./config.sh --use-flags "$(USE_FLAGS)" --show-enabled card_readers | sed -e 's|CARDREADER_||g')\n\
+|  Libraries: $(shell ./config.sh --use-flags "$(USE_FLAGS)" --show-enabled libraries | sed -e 's|WITH_LIB_||g')\n\
 |  Compiler : $(CCVERSION)$(SSL_INFO)\n\
 $(UPX_INFO)\
 $(SIGN_INFO)\
