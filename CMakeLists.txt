@@ -220,7 +220,7 @@ if (GIT)
 	if (GIT_RET EQUAL 0 AND GIT_INSIDE_WORK_TREE STREQUAL "true")
 		# Check if any submodules are missing ("-")
 		execute_process(
-			COMMAND "${GIT}" submodule status --recursive
+			COMMAND "${GIT}" submodule status
 			WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 			OUTPUT_VARIABLE SUBMODULE_STATUS
 			RESULT_VARIABLE SUBMODULE_RET
@@ -233,7 +233,7 @@ if (GIT)
 		if (MISSING_SUBMODULES)
 			message(STATUS "Updating missing git submodules...")
 			execute_process(
-				COMMAND "${GIT}" submodule update --init --recursive
+				COMMAND "${GIT}" submodule update --init --recommend-shallow
 				WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 				RESULT_VARIABLE UPDATE_RESULT
 			)
