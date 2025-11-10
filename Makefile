@@ -602,9 +602,9 @@ distclean: clean
 
 submodules:
 	@if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
-		if git submodule status --recursive | grep -qE '^-'; then \
+		if git submodule status | grep -qE '^-'; then \
 			echo "Updating missing git submodules..."; \
-			git submodule update --init --recursive || { \
+			git submodule update --init --recommend-shallow || { \
 				echo "Error: failed to init submodules. Please check your network or permissions."; \
 				exit 1; }; \
 		else \
