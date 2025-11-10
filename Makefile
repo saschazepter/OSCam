@@ -254,13 +254,14 @@ MBEDTLS_SRC_BASE := \
 
 # MbedTLS all files
 ifeq ($(USE_SSL),1)
+	MBEDTLS_SRC_BASE += oscam-ssl.c
 	MBEDTLS_SRC := $(filter-out \
 		$(MBEDTLS_DIR)/library/debug.c \
 		$(MBEDTLS_DIR)/library/platform.c \
 		$(MBEDTLS_DIR)/library/platform_util.c \
 		$(MBEDTLS_DIR)/library/psa_%.c \
 		$(MBEDTLS_DIR)/library/ssl_tls13_%.c, \
-		$(wildcard $(MBEDTLS_DIR)/library/*.c) oscam-ssl.c)
+		$(wildcard $(MBEDTLS_DIR)/library/*.c))
 else
 # MbedTLS optional files
 	ifeq "$(shell ./config.sh --enabled WITH_LIB_AES)" "Y"
