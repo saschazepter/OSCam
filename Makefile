@@ -83,6 +83,9 @@ else
 	ifeq ($(shell [ -z "$(GCC_MAJOR)" ] || [ "$(GCC_MAJOR)" -lt 11 ] 2>/dev/null && echo yes),yes)
 		CC_OPTS += -std=gnu11
 	endif
+	ifeq ($(shell [ -z "$(GCC_MAJOR)" ] || [ "$(GCC_MAJOR)" -lt 6 ] 2>/dev/null && echo yes),yes)
+		CC_OPTS += -Wno-unused-command-line-argument
+	endif
 endif
 
 LDFLAGS = -Wl,--gc-sections
