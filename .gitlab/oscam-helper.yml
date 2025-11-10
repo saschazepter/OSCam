@@ -275,11 +275,13 @@
       fi;
       cd ../..
     - !reference [.helper, terminal-color]
-    - | #evaluate build
-      if grep -ciq 'warning:' build/${ARCH}/oscam-make-${ARCH}${BIN_EXT}.log build/${ARCH}/oscam-cmake-${ARCH}${BIN_EXT}.log; then
-        echo -e "${TC_FNT_MAGENTA}Please check your commit, build warnings occurred!${TC_FNT_DEFAULT}";
-        exit 1;
-      fi;
+    - | #evaluate build, ignore assembler warning on old gcc 4.8
+      if grep -i 'warning:' build/${ARCH}/oscam-*.log \
+        | grep -vi 'conditional infixes are deprecated in unified syntax' \
+        | grep -q .; then
+          echo -e "${TC_FNT_MAGENTA}Please check your commit, build warnings occurred!${TC_FNT_DEFAULT}";
+          exit 1;
+      fi
 
   #runs a simple oscam startup test (needs variables OSCAM_BUILD: make|cmake and ARCH: native|aarch64|armv7|mips32el|powerpc|sh4|android12 to be set in the calling job)
   oscam-startup-test:
