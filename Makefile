@@ -79,13 +79,8 @@ ifneq (,$(findstring clang,$(CCVERSION)))
 	CC_OPTS = -O2 -ggdb -pipe -ffunction-sections -fdata-sections -fomit-frame-pointer
 else
 	CC_OPTS = -O2 -ggdb -pipe -ffunction-sections -fdata-sections -fomit-frame-pointer -fno-schedule-insns
-	GCC_MAJOR := $(shell echo $(CCVERSION) | $(GREP) -E -o '[0-9]+\.[0-9]+(\.[0-9]+)?' | tail -n1 | cut -d. -f1)
-
-	ifneq ($(strip $(GCC_MAJOR)),)
-		ifneq ($(filter-out 11 12 13 14 15 16 17 18 19 20,$(GCC_MAJOR)),)
-			CC_OPTS += -std=gnu11
-		endif
-	else
+	GCC_MAJOR := $(shell printf '%s\n' "$(CCVERSION)" | $(GREP) -E -o '[0-9]+(\.[0-9]+){1,2}' | tail -n1 | cut -d. -f1)
+	ifeq ($(shell [ -z "$(GCC_MAJOR)" ] || [ "$(GCC_MAJOR)" -lt 11 ] 2>/dev/null && echo yes),yes)
 		CC_OPTS += -std=gnu11
 	endif
 endif
@@ -620,7 +615,7 @@ submodules:
 	@if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
 		if git submodule status | grep -qE '^-'; then \
 			echo "Updating missing git submodules..."; \
-			git submodule update --init --recommend-shallow || { \
+			git submodule update --init --recommend-shallow --progress || { \
 				echo "Error: failed to init submodules. Please check your network or permissions."; \
 				exit 1; }; \
 		else \
