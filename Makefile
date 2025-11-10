@@ -84,7 +84,7 @@ else
 		CC_OPTS += -std=gnu11
 	endif
 	ifeq ($(shell [ -z "$(GCC_MAJOR)" ] || [ "$(GCC_MAJOR)" -lt 6 ] 2>/dev/null && echo yes),yes)
-		CC_WARN += -Wno-unused-command-line-argument
+		CC_OPTS += -mno-unified-syntax
 	endif
 endif
 
