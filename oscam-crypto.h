@@ -244,7 +244,8 @@ void aes_clear_entries(AES_ENTRY **list);
 int32_t aes_decrypt_from_list(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t keyid, uint8_t *buf, int32_t n);
 int32_t aes_present(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t keyid);
 #else
-typedef void AES_ENTRY; /* forward placeholder to satisfy struct s_reader */
+typedef void AES_ENTRY;
+typedef void aes_keys;
 #endif
 
 #ifdef WITH_LIB_BIGNUM
