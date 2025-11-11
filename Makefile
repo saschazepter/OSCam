@@ -63,6 +63,7 @@ SSL = $(shell which openssl 2>/dev/null || true)
 STAT = $(shell which gnustat 2>/dev/null || which stat 2>/dev/null)
 SPLIT = $(shell which gsplit 2>/dev/null || which split 2>/dev/null)
 GREP = $(shell which ggrep 2>/dev/null || which grep 2>/dev/null)
+GIT = $(shell which git 2>/dev/null || true)
 
 # Compiler warnings
 CC_WARN = -W -Wall -Wshadow -Wredundant-decls -Wstrict-prototypes -Wold-style-definition
@@ -253,6 +254,7 @@ else
 	ifeq "$(shell ./config.sh --enabled WITH_LIB_AES)" "Y"
 		MBEDTLS_SRC_CRYPTO += \
 			$(MBEDTLS_DIR)/library/aes.c \
+			$(MBEDTLS_DIR)/library/aesce.c \
 			$(MBEDTLS_DIR)/library/aesni.c
 	endif
 	ifeq ($(or $(shell ./config.sh --enabled WITH_LIB_DES),$(shell ./config.sh --enabled WITH_LIB_MDC2)),Y)
@@ -606,15 +608,19 @@ distclean: clean
 	@-$(MAKE) --no-print-directory --quiet -C webif clean
 
 submodules:
-	@if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
-		if git submodule status | grep -qE '^-'; then \
-			echo "Updating missing git submodules..."; \
-			git submodule update --init --recommend-shallow || { \
+	@if $(GIT) rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
+		if $(GIT) submodule status | grep -qE '^-'; then \
+			echo "Initializing missing git submodules..."; \
+			$(GIT) submodule update --init --recommend-shallow || { \
 				echo "Error: failed to init submodules. Please check your network or permissions."; \
 				exit 1; }; \
 		else \
 			echo "All git submodules are already initialized."; \
 		fi; \
+#		echo "Updating git submodules to latest tip of branch..."; \
+#		$(GIT) submodule update --remote || { \
+#			echo "Error: failed to update submodules. Please check your network or permissions."; \
+#			exit 1; }; \
 	else \
 		echo "Skipping git submodule initialization (not a git repository)."; \
 		MODULES=$$(awk '/path *=/ {print $$3}' .gitmodules 2>/dev/null || true); \
