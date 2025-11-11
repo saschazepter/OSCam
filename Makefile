@@ -254,6 +254,7 @@ else
 	ifeq "$(shell ./config.sh --enabled WITH_LIB_AES)" "Y"
 		MBEDTLS_SRC_CRYPTO += \
 			$(MBEDTLS_DIR)/library/aes.c \
+			$(MBEDTLS_DIR)/library/aesce.c \
 			$(MBEDTLS_DIR)/library/aesni.c
 	endif
 	ifeq ($(or $(shell ./config.sh --enabled WITH_LIB_DES),$(shell ./config.sh --enabled WITH_LIB_MDC2)),Y)
