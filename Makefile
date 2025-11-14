@@ -613,16 +613,12 @@ submodules:
 	@if $(GIT) rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
 		if $(GIT) submodule status | grep -qE '^-'; then \
 			echo "Initializing missing git submodules..."; \
-			$(GIT) submodule update --init --recommend-shallow || { \
+			$(GIT) submodule update --init --depth=1 || { \
 				echo "Error: failed to init submodules. Please check your network or permissions."; \
 				exit 1; }; \
 		else \
 			echo "All git submodules are already initialized."; \
 		fi; \
-#		echo "Updating git submodules to latest tip of branch..."; \
-#		$(GIT) submodule update --remote || { \
-#			echo "Error: failed to update submodules. Please check your network or permissions."; \
-#			exit 1; }; \
 	else \
 		echo "Skipping git submodule initialization (not a git repository)."; \
 		MODULES=$$(awk '/path *=/ {print $$3}' .gitmodules 2>/dev/null || true); \
