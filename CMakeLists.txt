@@ -233,7 +233,7 @@ if (GIT)
 		if (MISSING_SUBMODULES)
 			message(STATUS "Updating missing git submodules...")
 			execute_process(
-				COMMAND "${GIT}" submodule update --init --recommend-shallow
+				COMMAND "${GIT}" submodule update --init --depth=1
 				WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 				RESULT_VARIABLE UPDATE_RESULT
 			)
