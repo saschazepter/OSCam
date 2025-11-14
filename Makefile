@@ -75,7 +75,9 @@ ifneq (,$(findstring clang,$(CCVERSION)))
 else
 	CC_OPTS = -O2 -ggdb -pipe -ffunction-sections -fdata-sections -fomit-frame-pointer -fno-schedule-insns
 	GCC_MAJOR := $(shell printf '%s\n' "$(CCVERSION)" | $(GREP) -E -o '[0-9]+\.[0-9]+\.[0-9]+' | tail -n1 | cut -d. -f1)
-	ifeq ($(shell [ -z "$(GCC_MAJOR)" ] || [ "$(GCC_MAJOR)" -lt 11 ] 2>/dev/null && echo yes),yes)
+	ifneq (,$(or $(filter 0 1 2 3 4,$(GCC_MAJOR)),$(filter ,$(GCC_MAJOR))))
+		override CC_OPTS += -std=gnu99
+	else ifneq (,$(filter 5 6 7 8 9 10,$(GCC_MAJOR)))
 		override CC_OPTS += -std=gnu11
 	endif
 endif
