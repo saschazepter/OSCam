@@ -10104,7 +10104,7 @@ static void *http_server(void *UNUSED(d))
 	// Wait a bit so that we don't close ressources while http threads are active
 	cs_sleepms(300);
 #ifdef WITH_SSL
-	if (conn->ssl->net.fd == -1)
+	if (oscam_ssl_get_fd(conn->ssl) == -1)
 		oscam_ssl_conf_free(ctx);
 #endif
 	cs_log("HTTP Server stopped");

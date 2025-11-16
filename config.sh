@@ -347,6 +347,7 @@ update_deps() {
 	enable_opt   WITH_LIB_MD5 >/dev/null
 	enabled_any  $(get_opts readers) $(get_opts card_readers) && enable_opt WITH_CARDREADER >/dev/null
 	disabled_all $(get_opts readers) $(get_opts card_readers) && disable_opt WITH_CARDREADER >/dev/null
+	enabled      WITH_LIB_MDC2       && enable_opt WITH_LIB_DES >/dev/null
 	disabled     WEBIF               && disable_opt WEBIF_LIVELOG >/dev/null
 	disabled     WEBIF               && disable_opt WEBIF_JQUERY >/dev/null
 	disabled     WEBIF               && disable_opt WEBIF_WIKI >/dev/null
@@ -422,7 +423,7 @@ list_config() {
 	echo "CONFIG_WITH_LIB_MD5=y"
 	enabled_any MODULE_GBOX WITH_COMPRESS_WEBIF && echo "CONFIG_WITH_LIB_MINILZO=y" || echo "# CONFIG_WITH_LIB_MINILZO=n"
 	enabled_any WITH_SSL MODULE_CAMD35 MODULE_CAMD35_TCP MODULE_CCCAM MODULE_MONITOR READER_NAGRA_MERLIN READER_VIACCESS READER_VIDEOGUARD && echo "CONFIG_WITH_LIB_AES=y" || echo "# CONFIG_WITH_LIB_AES=n"
-	enabled_any MODULE_NEWCAMD READER_DRE MODULE_SCAM READER_VIACCESS READER_NAGRA READER_NAGRA_MERLIN READER_VIDEOGUARD READER_CONAX READER_TONGFANG && echo "CONFIG_WITH_LIB_DES=y" || echo "# CONFIG_WITH_LIB_DES=n"
+	enabled_any MODULE_NEWCAMD READER_DRE MODULE_SCAM READER_VIACCESS READER_NAGRA READER_NAGRA_MERLIN READER_VIDEOGUARD READER_CONAX READER_TONGFANG WITH_LIB_MDC2 && echo "CONFIG_WITH_LIB_DES=y" || echo "# CONFIG_WITH_LIB_DES=n"
 	enabled MODULE_CCCAM && echo "CONFIG_WITH_LIB_RC6=y"  || echo "# CONFIG_WITH_LIB_RC6=n"
 	enabled_any WITH_SSL MODULE_CCCAM && echo "CONFIG_WITH_LIB_SHA1=y" || echo "# CONFIG_WITH_LIB_SHA1=n"
 	enabled_any MODULE_CCCAM READER_NAGRA READER_NAGRA_MERLIN READER_SECA && echo "CONFIG_WITH_LIB_IDEA=y" || echo "# CONFIG_WITH_LIB_IDEA=n"

@@ -260,7 +260,7 @@ void cc_crypt_cmd0c(struct s_client *cl, uint8_t *buf, int32_t len)
 			int32_t i;
 			for(i = 0; i < len / 16; i++)
 			{
-				AES_decrypt((uint8_t *)buf + i * 16, (uint8_t *)out + i * 16, &cc->cmd0c_AES_key);
+				AesDecrypt(&cc->cmd0c_AES_key, (uint8_t *)buf + i * 16, (uint8_t *)out + i * 16, 16);
 			}
 			break;
 		}
@@ -330,7 +330,7 @@ void set_cmd0c_cryptkey(struct s_client *cl, uint8_t *key, uint8_t len)
 		case MODE_CMD_0x0C_AES: // AES
 		{
 			memset(&cc->cmd0c_AES_key, 0, sizeof(cc->cmd0c_AES_key));
-			AES_set_decrypt_key((uint8_t *)key_buf, 256, &cc->cmd0c_AES_key);
+			AesCtxIni(&cc->cmd0c_AES_key, NULL, (uint8_t *)key_buf, 32, 0);
 			break;
 		}
 
@@ -1197,19 +1197,19 @@ int32_t send_cmd05_answer(struct s_client *cl)
 
 				case MODE_AES: // encrypt with received aes128 key
 				{
-					AES_KEY key;
+					AesCtx key;
 					uint8_t aeskey[16];
 					uint8_t out[256];
 
 					memcpy(aeskey, cc->cmd05_aeskey, 16);
 					memset(&key, 0, sizeof(key));
 
-					AES_set_encrypt_key((uint8_t *) &aeskey, 128, &key);
+					AesCtxIni(&key, NULL, (uint8_t *)&aeskey, 16, 0);
 					int32_t i;
 
 					for(i = 0; i < 256; i += 16)
 					{
-						AES_encrypt((uint8_t *)data + i, (uint8_t *) &out + i, &key);
+						AesEncrypt(&key, (uint8_t *)data + i, (uint8_t *)&out + i, 16);
 					}
 
 					cc_cmd_send(cl, out, 256, MSG_CMD_05);
@@ -3682,7 +3682,7 @@ int32_t cc_parse_msg(struct s_client *cl, uint8_t *buf, int32_t l)
 			// by Project: Keynation
 			cs_log_dbg(D_READER, "%s MSG_CMD_0B received (payload=%d)!", getprefix(), l - 4);
 
-			AES_KEY key;
+			AesCtx key;
 			uint8_t aeskey[16];
 			uint8_t out[16];
 
@@ -3692,8 +3692,8 @@ int32_t cc_parse_msg(struct s_client *cl, uint8_t *buf, int32_t l)
 			//cs_log_dump_dbg(D_READER, aeskey, 16, "%s CMD_0B AES key:", getprefix());
 			//cs_log_dump_dbg(D_READER, data, 16, "%s CMD_0B received data:", getprefix());
 
-			AES_set_encrypt_key((uint8_t *)&aeskey, 128, &key);
-			AES_encrypt((uint8_t *)data, (uint8_t *)&out, &key);
+			AesCtxIni(&key, NULL, (uint8_t *)&aeskey, 16, 0);
+			AesEncrypt(&key, (uint8_t *)data, (uint8_t *)&out, 16);
 
 			cs_log_dbg(D_TRACE, "%s sending CMD_0B! ", getprefix());
 			//cs_log_dump_dbg(D_READER, out, 16, "%s CMD_0B out:", getprefix());
@@ -3932,7 +3932,7 @@ int32_t cc_recv_chk(struct s_client *cl, uint8_t *dcw, int32_t *rc, uint8_t *buf
 
 	if(buf[1] == MSG_CW_ECM
 #ifdef CS_CACHEEX_AIO
-		|| buf[1] == MSG_CW_ECM_LGF
+		 || buf[1] == MSG_CW_ECM_LGF
 #endif
 	)
 	{
@@ -4128,7 +4128,7 @@ int32_t cc_recv(struct s_client *cl, uint8_t *buf, int32_t l)
 		n = cc_parse_msg(cl, buf, n);
 		if(n == MSG_CW_ECM || n == MSG_EMM_ACK
 #ifdef CS_CACHEEX_AIO
-			|| n == MSG_CW_ECM_LGF
+			 || n == MSG_CW_ECM_LGF
 #endif
 		)
 		{
@@ -4754,7 +4754,7 @@ int32_t cc_cli_connect(struct s_client *cl)
 		cs_log_dbg(D_READER, "%s login succeeded", getprefix());
 	}
 
-	cs_log_dbg(D_READER, "cccam: last_s=%" PRId64 ", last_g=%" PRId64, (int64_t)rdr->last_s, (int64_t)rdr->last_g);
+	cs_log_dbg(D_READER, "cccam: last_s=%lld, last_g=%lld", (long long)rdr->last_s, (long long)rdr->last_g);
 
 	cl->pfd = cl->udp_fd;
 	cs_log_dbg(D_READER, "cccam: pfd=%d", cl->pfd);
