@@ -43,7 +43,7 @@ static void calculate_cak7_vars(struct s_reader *reader, const ATR *atr)
 	SHA256_CTX ctx_sha256;
 	SHA256_Init(&ctx_sha256);
 	SHA256_Update(&ctx_sha256, atr->hb, atr->hbn);
-	SHA256_Final(&ctx_sha256, aes_key);
+	SHA256_Final(aes_key, &ctx_sha256);
 	SHA256_Free(&ctx_sha256);
 	memcpy(reader->cak7_aes_key,aes_key,32);
 	memcpy(reader->cak7_aes_iv,aes_iv,16);
