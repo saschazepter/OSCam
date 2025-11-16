@@ -87,31 +87,25 @@ void rc6_block_decrypt(unsigned int *ct, unsigned int *pt, int block_count, RC6K
 #endif
 
 #ifdef WITH_LIB_IDEA
-/* ===== IDEA compatibility ===== */
-#define IDEA_INT uint16_t
-#define IDEA_ENCRYPT 1
-#define IDEA_DECRYPT 0
-#define IDEA_BLOCK 8
+#define IDEA_INT unsigned int
+#define IDEA_ENCRYPT    1
+#define IDEA_DECRYPT    0
+#define IDEA_BLOCK      8
 #define IDEA_KEY_LENGTH 16
 
-typedef struct idea_key_st {
+typedef struct idea_key_st
+{
 	IDEA_INT data[9][6];
 } IDEA_KEY_SCHEDULE;
 
-const char *idea_options(void);
-void idea_ecb_encrypt(const unsigned char *in, unsigned char *out, IDEA_KEY_SCHEDULE *ks);
 void idea_set_encrypt_key(const unsigned char *key, IDEA_KEY_SCHEDULE *ks);
 void idea_set_decrypt_key(IDEA_KEY_SCHEDULE *ek, IDEA_KEY_SCHEDULE *dk);
-void idea_cbc_encrypt(const unsigned char *in, unsigned char *out, long length,
-					  IDEA_KEY_SCHEDULE *ks, unsigned char *iv, int enc);
-void idea_encrypt(uint32_t *in, IDEA_KEY_SCHEDULE *ks);
-void idea_cfb64_encrypt(const unsigned char *in, unsigned char *out,
-						long length, IDEA_KEY_SCHEDULE *ks, unsigned char *iv,
-						int *num, int enc);
-
-void idea_ofb64_encrypt(const unsigned char *in, unsigned char *out,
-						long length, IDEA_KEY_SCHEDULE *ks, unsigned char *iv,
-						int *num);
+void idea_ecb_encrypt(const unsigned char *in, unsigned char *out, IDEA_KEY_SCHEDULE *ks);
+void idea_cbc_encrypt(const unsigned char *in, unsigned char *out, long length, IDEA_KEY_SCHEDULE *ks, unsigned char *iv, int enc);
+void idea_encrypt(unsigned long *in, IDEA_KEY_SCHEDULE *ks);
+void idea_cfb64_encrypt(const unsigned char *in, unsigned char *out, long length, IDEA_KEY_SCHEDULE *ks, unsigned char *iv, int *num, int enc);
+void idea_ofb64_encrypt(const unsigned char *in, unsigned char *out, long length, IDEA_KEY_SCHEDULE *ks, unsigned char *iv, int *num);
+const char *idea_options(void);
 #endif
 
 #if defined(WITH_SSL) || defined(WITH_LIB_SHA1)
