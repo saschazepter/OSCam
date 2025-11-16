@@ -1169,7 +1169,7 @@ static int32_t videoguard2_card_init(struct s_reader *reader, ATR *newatr)
 	{
 		dimeno_magic[a] = dimeno_magic[a] ^ boxID[a];
 	}
-	AES_set_decrypt_key(dimeno_magic, 128, &(csystem_data->astrokey));
+	AesCtxIni(&(csystem_data->astrokey), NULL, dimeno_magic, 16, 0);
 
 	rdr_log(reader, "type: VideoGuard2 Card, caid: %04X", reader->caid);
 	rdr_log_sensitive(reader, "serial: {%02X%02X%02X%02X}, BoxID: {%02X%02X%02X%02X}, base tiers start date: %i/%i, base tiers expiration date: %i/%i",
@@ -1381,14 +1381,14 @@ static int32_t videoguard2_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 							rdr_log_dbg(reader, D_READER, "encrypted AES buffer is: %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X", ea->cw[0], ea->cw[1], ea->cw[2], ea->cw[3], ea->cw[4], ea->cw[5], ea->cw[6], ea->cw[7], buff_56[0], buff_56[1], buff_56[2], buff_56[3], buff_56[4], buff_56[5], buff_56[6], buff_56[7]);
 							uint8_t aesbuf[0x10];
 							uint8_t keybuf[0x10];
-							AES_KEY aeskey;
+							AesCtx aeskey;
 							memcpy(aesbuf, rbuff + 5, 8);
 							memcpy(aesbuf + 8, buff_56, 8);
 							memcpy(keybuf, &(reader->k1_unique), 16);
 							if(reader->k1_unique[16] == 0x10) {
 								rdr_log_dbg(reader, D_READER, "use k1(AES) for AES buffer decryption in unique pairing mode");
-								AES_set_decrypt_key(keybuf, 128, &aeskey);
-								AES_decrypt(aesbuf, aesbuf, &aeskey);
+								AesCtxIni(&aeskey, NULL, keybuf, 16, 0);
+								AesDecrypt(&aeskey, aesbuf, aesbuf, 16);
 								if(er->ecm[0] & 1){ //log decrypted CW
 									rdr_log_dbg(reader, D_READER, "decrypted CW is: %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X", aesbuf[8], aesbuf[9], aesbuf[10], aesbuf[11], aesbuf[12], aesbuf[13], aesbuf[14], aesbuf[15], aesbuf[0], aesbuf[1], aesbuf[2], aesbuf[3], aesbuf[4], aesbuf[5], aesbuf[6], aesbuf[7]);
 								} else {
@@ -1438,14 +1438,14 @@ static int32_t videoguard2_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 							rdr_log_dbg(reader, D_READER, "encrypted AES buffer is: %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X", ea->cw[0], ea->cw[1], ea->cw[2], ea->cw[3], ea->cw[4], ea->cw[5], ea->cw[6], ea->cw[7], buff_56[0], buff_56[1], buff_56[2], buff_56[3], buff_56[4], buff_56[5], buff_56[6], buff_56[7]);
 							uint8_t aesbuf[0x10];
 							uint8_t keybuf[0x10];
-							AES_KEY aeskey;
+							AesCtx aeskey;
 							memcpy(aesbuf, rbuff + 5, 8);
 							memcpy(aesbuf + 8, buff_56, 8);
 							memcpy(keybuf, &(reader->k1_generic), 16);
 							if(reader->k1_generic[16] == 0x10) {
 								rdr_log_dbg(reader, D_READER, "use k1(AES) for AES buffer decryption in generic pairing mode");
-								AES_set_decrypt_key(keybuf, 128, &aeskey);
-								AES_decrypt(aesbuf, aesbuf, &aeskey);
+								AesCtxIni(&aeskey, NULL, keybuf, 16, 0);
+								AesDecrypt(&aeskey, aesbuf, aesbuf, 16);
 								if(er->ecm[0] & 1){ //log decrypted CW
 									rdr_log_dbg(reader, D_READER, "decrypted CW is: %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X", aesbuf[8], aesbuf[9], aesbuf[10], aesbuf[11], aesbuf[12], aesbuf[13], aesbuf[14], aesbuf[15], aesbuf[0], aesbuf[1], aesbuf[2], aesbuf[3], aesbuf[4], aesbuf[5], aesbuf[6], aesbuf[7]);
 								} else {
@@ -1510,7 +1510,7 @@ static int32_t videoguard2_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 				memcpy(aesbuf, rbuff + 5, 8);
 				memcpy(aesbuf + 8, buff_56, 8);
 				rdr_log_dbg(reader, D_READER, "use dimeno magic for AES buffer decryption");
-				AES_decrypt(aesbuf, aesbuf, &(csystem_data->astrokey));
+				AesDecrypt(&(csystem_data->astrokey), aesbuf, aesbuf, 16);
 				if(er->ecm[0] & 1){ //log decrypted CW
 					rdr_log_dbg(reader, D_READER, "decrypted CW is: %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X", aesbuf[8], aesbuf[9], aesbuf[10], aesbuf[11], aesbuf[12], aesbuf[13], aesbuf[14], aesbuf[15], aesbuf[0], aesbuf[1], aesbuf[2], aesbuf[3], aesbuf[4], aesbuf[5], aesbuf[6], aesbuf[7]);
 				} else {
