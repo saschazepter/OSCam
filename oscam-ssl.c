@@ -2,13 +2,807 @@
 
 #include "globals.h"
 #include "oscam-time.h"
+#include "oscam-string.h"
 #include "oscam-ssl.h"
+
+#ifdef WITH_SSL
+
+#define OSCAM_SSL_CERT_YEARS 2
+
+/* ============================================================
+ * BACKEND SELECTOR
+ * ============================================================ */
+#ifdef WITH_OPENSSL
+/* ========================= OPENSSL BACKEND ========================== */
+
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/rand.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/bio.h>
+#include <openssl/opensslv.h>
+
+/* Opaque structs defined here (match header typedefs) */
+struct oscam_ssl_conf_s {
+	SSL_CTX  *ctx;
+	X509     *ca_chain;
+	X509     *own_cert;
+	EVP_PKEY *own_key;
+};
+
+struct oscam_ssl_s {
+	SSL *ssl;
+	int fd;
+};
+
+struct oscam_x509_crt_s {
+	X509 *crt;
+};
+
+struct oscam_pk_context_s {
+	EVP_PKEY *pk;
+};
+
+/* --- Opaque alloc helpers --- */
+
+oscam_x509_crt *oscam_ssl_cert_new(void)
+{
+	oscam_x509_crt *crt = calloc(1, sizeof(*crt));
+	if (crt)
+		oscam_ssl_cert_init(crt);
+	return crt;
+}
+
+void oscam_ssl_cert_delete(oscam_x509_crt *crt)
+{
+	if (!crt) return;
+	oscam_ssl_cert_free(crt);
+	free(crt);
+}
+
+oscam_pk_context *oscam_ssl_pk_new(void)
+{
+	oscam_pk_context *pk = calloc(1, sizeof(*pk));
+	return pk;
+}
+
+void oscam_ssl_pk_delete(oscam_pk_context *pk)
+{
+	if (!pk) return;
+	oscam_ssl_pk_free(pk);
+	free(pk);
+}
+
+/* ============================================================
+ * OpenSSL Backend Implementation
+ * ============================================================ */
+
+int oscam_ssl_global_init(void)
+{
+	SSL_library_init();
+	SSL_load_error_strings();
+	OpenSSL_add_all_algorithms();
+	return OSCAM_SSL_OK;
+}
+
+void oscam_ssl_global_free(void)
+{
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	EVP_cleanup();
+	CRYPTO_cleanup_all_ex_data();
+	ERR_free_strings();
+#endif
+}
+
+int oscam_ssl_random(void *buf, size_t len)
+{
+	if (!buf) return OSCAM_SSL_PARAM;
+	return RAND_bytes(buf, len) == 1 ? OSCAM_SSL_OK : OSCAM_SSL_ERR;
+}
+
+/* SSL Config object */
+oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
+{
+	oscam_ssl_conf_t *conf = calloc(1, sizeof(*conf));
+	if (!conf) return NULL;
+
+	conf->ctx = SSL_CTX_new(TLS_server_method());
+	if (!conf->ctx) { free(conf); return NULL; }
+
+#ifdef SSL_CTX_set_min_proto_version
+	SSL_CTX_set_min_proto_version(conf->ctx, TLS1_2_VERSION);
+#else
+	SSL_CTX_set_options(conf->ctx,
+		SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 |
+		SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+#endif
+
+	switch (mode)
+	{
+		case OSCAM_SSL_MODE_STRICT:
+			SSL_CTX_set_cipher_list(conf->ctx,
+				"TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256:"
+				"ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256");
+			break;
+
+		case OSCAM_SSL_MODE_LEGACY:
+			SSL_CTX_set_cipher_list(conf->ctx,
+				"ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:"
+				"AES256-SHA:AES128-SHA");
+			break;
+
+		default:
+			SSL_CTX_set_cipher_list(conf->ctx,
+				"TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256:"
+				"ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:"
+				"AES256-SHA:AES128-SHA");
+	}
+
+	SSL_CTX_set_verify(conf->ctx, SSL_VERIFY_NONE, NULL);
+	return conf;
+}
+
+void oscam_ssl_conf_free(oscam_ssl_conf_t *conf)
+{
+	if (!conf) return;
+	if (conf->ctx)      SSL_CTX_free(conf->ctx);
+	if (conf->own_key)  EVP_PKEY_free(conf->own_key);
+	if (conf->own_cert) X509_free(conf->own_cert);
+	if (conf->ca_chain) X509_free(conf->ca_chain);
+	free(conf);
+}
+
+int oscam_ssl_conf_set_min_tls12(oscam_ssl_conf_t *conf)
+{
+	SSL_CTX_set_min_proto_version(conf->ctx, TLS1_2_VERSION);
+	return OSCAM_SSL_OK;
+}
+
+/* CA load and cert/key load mirror mbedTLS behavior */
+int oscam_ssl_conf_load_ca(oscam_ssl_conf_t *conf, const char *ca_pem_path)
+{
+	if (!conf) return OSCAM_SSL_PARAM;
+
+	if (!ca_pem_path) {
+		SSL_CTX_set_verify(conf->ctx, SSL_VERIFY_NONE, NULL);
+		return OSCAM_SSL_OK;
+	}
+
+	if (!SSL_CTX_load_verify_locations(conf->ctx, ca_pem_path, NULL))
+		return OSCAM_SSL_CERT_FAIL;
+
+	SSL_CTX_set_verify(conf->ctx, SSL_VERIFY_PEER, NULL);
+	return OSCAM_SSL_OK;
+}
+
+int oscam_ssl_conf_use_own_cert_pem(oscam_ssl_conf_t *conf,
+									const char *pem_path,
+									const char *key_pass)
+{
+	if (!conf || !pem_path) return OSCAM_SSL_PARAM;
+
+	if (key_pass)
+		SSL_CTX_set_default_passwd_cb_userdata(conf->ctx, (void*)key_pass);
+
+	if (!SSL_CTX_use_certificate_chain_file(conf->ctx, pem_path))
+		return OSCAM_SSL_CERT_FAIL;
+
+	if (!SSL_CTX_use_PrivateKey_file(conf->ctx, pem_path, SSL_FILETYPE_PEM))
+		return OSCAM_SSL_CERT_FAIL;
+
+	if (!SSL_CTX_check_private_key(conf->ctx))
+		return OSCAM_SSL_CERT_FAIL;
+
+	return OSCAM_SSL_OK;
+}
+
+/* SSL connection */
+oscam_ssl_t *oscam_ssl_new(oscam_ssl_conf_t *conf, int fd)
+{
+	oscam_ssl_t *ssl = calloc(1, sizeof(*ssl));
+	if (!ssl) return NULL;
+
+	ssl->ssl = SSL_new(conf->ctx);
+	ssl->fd = fd;
+	SSL_set_fd(ssl->ssl, fd);
+
+	int ret = SSL_accept(ssl->ssl);
+	if (ret <= 0) {
+		SSL_free(ssl->ssl);
+		free(ssl);
+		return NULL;
+	}
+
+	return ssl;
+}
+
+int oscam_ssl_handshake(oscam_ssl_t *ssl)
+{
+	int ret = SSL_do_handshake(ssl->ssl);
+	if (ret == 1) return OSCAM_SSL_OK;
+
+	int e = SSL_get_error(ssl->ssl, ret);
+	return (e == SSL_ERROR_WANT_READ)  ? OSCAM_SSL_WANT_READ :
+		   (e == SSL_ERROR_WANT_WRITE) ? OSCAM_SSL_WANT_WRITE :
+										OSCAM_SSL_HANDSHAKE_FAIL;
+}
+
+int oscam_ssl_handshake_blocking(oscam_ssl_t *ssl, int fd, int timeout)
+{
+	(void)fd;
+	(void)timeout;
+
+	return oscam_ssl_handshake(ssl);
+}
+
+int oscam_ssl_accept(oscam_ssl_t *ssl, int fd, int timeout)
+{
+	(void)fd;
+	(void)timeout;
+
+	return oscam_ssl_handshake(ssl);
+}
+
+/* IO */
+int oscam_ssl_read(oscam_ssl_t *ssl, void *buf, size_t len)
+{
+	int ret = SSL_read(ssl->ssl, buf, len);
+	if (ret >= 0) return ret;
+	return OSCAM_SSL_ERR;
+}
+
+int oscam_ssl_write(oscam_ssl_t *ssl, const unsigned char *buf, size_t len)
+{
+	size_t done = 0;
+	while (done < len) {
+		int r = SSL_write(ssl->ssl, buf + done, len - done);
+		if (r <= 0) return OSCAM_SSL_ERR;
+		done += r;
+	}
+	return done;
+}
+
+void oscam_ssl_close_notify(oscam_ssl_t *ssl)
+{
+	SSL_shutdown(ssl->ssl);
+}
+
+void oscam_ssl_free(oscam_ssl_t *ssl)
+{
+	if (!ssl) return;
+	SSL_free(ssl->ssl);
+	free(ssl);
+}
+
+/* Peer info */
+int oscam_ssl_get_peer_cn(oscam_ssl_t *ssl, char *out, size_t outlen)
+{
+	X509 *peer = SSL_get_peer_certificate(ssl->ssl);
+	if (!peer) return OSCAM_SSL_ERR;
+
+	X509_NAME *subj = X509_get_subject_name(peer);
+	int idx = X509_NAME_get_index_by_NID(subj, NID_commonName, -1);
+	if (idx < 0) { X509_free(peer); return OSCAM_SSL_ERR; }
+
+	X509_NAME_ENTRY *e = X509_NAME_get_entry(subj, idx);
+	ASN1_STRING     *cn = X509_NAME_ENTRY_get_data(e);
+	unsigned char *utf8 = NULL;
+
+	int len = ASN1_STRING_to_UTF8(&utf8, cn);
+	if (len <= 0 || (size_t)len >= outlen) {
+		X509_free(peer);
+		return OSCAM_SSL_ERR;
+	}
+
+	memcpy(out, utf8, len);
+	out[len] = '\0';
+	OPENSSL_free(utf8);
+	X509_free(peer);
+	return OSCAM_SSL_OK;
+}
+
+const char *oscam_ssl_version(void)
+{
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	return OpenSSL_version(OPENSSL_VERSION);
+#else
+	return SSLeay_version(SSLEAY_VERSION);
+#endif
+}
+
+/* basic error mapping */
+int oscam_ssl_get_error(oscam_ssl_t *ssl, int ret)
+{
+	(void)ssl;
+	(void)ret;
+
+	return OSCAM_SSL_ERR;
+}
+
+void oscam_ssl_strerror(int err, char *buf, size_t len)
+{
+	ERR_error_string_n(err, buf, len);
+}
+
+/* hashing */
+int oscam_ssl_sha1(const unsigned char *data, size_t len, unsigned char *out)
+{
+	unsigned int ol = 0;
+	return EVP_Digest(data, len, out, &ol, EVP_sha1(), NULL) == 1 ? 0 : -1;
+}
+
+int oscam_ssl_sha256(const unsigned char *data, size_t len, unsigned char *out)
+{
+	unsigned int ol = 0;
+	return EVP_Digest(data, len, out, &ol, EVP_sha256(), NULL) == 1 ? 0 : -1;
+}
+
+int oscam_ssl_sha256_stream(const unsigned char *data1, size_t len1,
+							const unsigned char *data2, size_t len2,
+							unsigned char *out)
+{
+	EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+	unsigned int ol = 0;
+	if (!ctx) return -1;
+	if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
+		(data1 && len1 && EVP_DigestUpdate(ctx, data1, len1) != 1) ||
+		(data2 && len2 && EVP_DigestUpdate(ctx, data2, len2) != 1) ||
+		EVP_DigestFinal_ex(ctx, out, &ol) != 1) {
+		EVP_MD_CTX_free(ctx);
+		return -1;
+	}
+	EVP_MD_CTX_free(ctx);
+	return 0;
+}
+
+/* x509 */
+int oscam_ssl_cert_parse(oscam_x509_crt *crt, const unsigned char *buf, size_t len)
+{
+	BIO *bio = BIO_new_mem_buf(buf, len);
+	if (!bio) return OSCAM_SSL_ERR;
+
+	crt->crt = PEM_read_bio_X509(bio, NULL, 0, NULL);
+	if (!crt->crt) {
+		BIO_reset(bio);
+		crt->crt = d2i_X509_bio(bio, NULL);  // try DER
+	}
+
+	BIO_free(bio);
+	return crt->crt ? OSCAM_SSL_OK : OSCAM_SSL_CERT_FAIL;
+}
+
+int oscam_ssl_cert_parse_file(oscam_x509_crt *crt, const char *path)
+{
+	FILE *f = fopen(path, "rb");
+	if (!f) return OSCAM_SSL_CERT_FAIL;
+	crt->crt = PEM_read_X509(f, NULL, NULL, NULL);
+	fclose(f);
+	return crt->crt ? OSCAM_SSL_OK : OSCAM_SSL_CERT_FAIL;
+}
+
+void oscam_ssl_cert_init(oscam_x509_crt *crt)
+{
+	crt->crt = NULL;
+}
+
+void oscam_ssl_cert_free(oscam_x509_crt *crt)
+{
+	if (crt->crt) X509_free(crt->crt);
+	crt->crt = NULL;
+}
+
+int oscam_ssl_cert_verify(oscam_x509_crt *crt, oscam_x509_crt *trust)
+{
+	X509_STORE *st = X509_STORE_new();
+	X509_STORE_add_cert(st, trust->crt);
+	X509_STORE_CTX *ctx = X509_STORE_CTX_new();
+	X509_STORE_CTX_init(ctx, st, crt->crt, NULL);
+	int ret = X509_verify_cert(ctx);
+	X509_STORE_CTX_free(ctx);
+	X509_STORE_free(st);
+	return ret == 1 ? OSCAM_SSL_OK : OSCAM_SSL_CERT_FAIL;
+}
+
+oscam_x509_crt *oscam_ssl_cert_get_next(oscam_x509_crt *crt)
+{
+	(void)crt;
+	/* OpenSSL does NOT chain X509 objects internally (unlike mbedTLS). */
+	return NULL;
+}
+
+const void *oscam_ssl_cert_get_subject(const oscam_x509_crt *crt)
+{
+	if (!crt || !crt->crt) return NULL;
+	return X509_get_subject_name(crt->crt);
+}
+
+const void *oscam_ssl_cert_get_issuer(const oscam_x509_crt *crt)
+{
+	if (!crt || !crt->crt) return NULL;
+	return (const void *)X509_get_issuer_name(crt->crt);
+}
+
+int oscam_ssl_cert_dn_gets(char *buf, size_t size, const void *dn)
+{
+	if (!buf || !dn) return OSCAM_SSL_ERR;
+	X509_NAME_oneline((X509_NAME*)dn, buf, size);
+	return OSCAM_SSL_OK;
+}
+
+void oscam_ssl_cert_serial_gets(const oscam_x509_crt *crt, char *buf, size_t len)
+{
+	if (!crt || !crt->crt || !buf || !len) return;
+	ASN1_INTEGER *serial = X509_get_serialNumber(crt->crt);
+	BIGNUM *bn = ASN1_INTEGER_to_BN(serial, NULL);
+	char *hex = BN_bn2hex(bn);
+	cs_strncpy(buf, hex, len);
+	OPENSSL_free(hex);
+	BN_free(bn);
+}
+
+
+int oscam_ssl_cert_get_version(const oscam_x509_crt *crt)
+{
+	if (!crt || !crt->crt) return -1;
+	/* X509 version is 0-based; convert to human numbering */
+	long ver = X509_get_version(crt->crt);
+	return (int)ver + 1;
+}
+
+void oscam_ssl_cert_raw(const oscam_x509_crt *crt,
+						const unsigned char **buf, size_t *len)
+{
+	if (!crt || !crt->crt) {
+		if (buf) *buf = NULL;
+		if (len) *len = 0;
+		return;
+	}
+
+	/* We need to re-encode DER (OpenSSL stores ASN.1 internally) */
+	int l = i2d_X509(crt->crt, NULL);
+	if (l <= 0) {
+		*buf = NULL;
+		*len = 0;
+		return;
+	}
+
+	unsigned char *tmp = malloc(l);
+	unsigned char *p = tmp;
+	l = i2d_X509(crt->crt, &p);
+
+	*buf = tmp;
+	*len = (size_t)l;
+}
+
+/* ----------------- VALIDITY INFO ----------------- */
+void oscam_ssl_cert_get_validity(const oscam_x509_crt *crt,
+								 oscam_cert_time_t *from,
+								 oscam_cert_time_t *to)
+{
+	if (!crt || !crt->crt) return;
+
+	ASN1_TIME *nb = X509_get_notBefore(crt->crt);
+	ASN1_TIME *na = X509_get_notAfter(crt->crt);
+
+	ASN1_TIME_to_tm(nb, (struct tm *)from);
+	ASN1_TIME_to_tm(na, (struct tm *)to);
+
+	from->year += 1900;
+	to->year   += 1900;
+}
+
+int oscam_ssl_pk_get_bits(const oscam_pk_context *pk)
+{
+	if (!pk || !pk->pk) return 0;
+	return EVP_PKEY_bits(pk->pk);
+}
+
+/* ----------------- KEY LENGTH ----------------- */
+int oscam_ssl_pk_get_bitlen(const oscam_pk_context *pk)
+{
+	if (!pk || !pk->pk) return 0;
+	return EVP_PKEY_bits(pk->pk);
+}
+
+const oscam_pk_context *oscam_ssl_cert_get_pubkey(const oscam_x509_crt *crt)
+{
+	if (!crt || !crt->crt) return NULL;
+	EVP_PKEY *pk = X509_get_pubkey(crt->crt);
+	if (!pk) return NULL;
+
+	oscam_pk_context *wrap = calloc(1, sizeof(*wrap));
+	wrap->pk = pk;
+	return wrap;
+}
+
+void oscam_ssl_pk_free(oscam_pk_context *pk)
+{
+	if (!pk) return;
+	EVP_PKEY_free(pk->pk);
+}
+
+int oscam_ssl_pk_clone(oscam_pk_context *dst, const oscam_pk_context *src)
+{
+	if (!dst || !src || !src->pk)
+		return OSCAM_SSL_PARAM;
+
+	dst->pk = EVP_PKEY_dup(src->pk);
+	return dst->pk ? OSCAM_SSL_OK : OSCAM_SSL_ERR;
+}
+
+int oscam_ssl_pk_get_type(const oscam_pk_context *pk)
+{
+	if (!pk || !pk->pk) return OSCAM_PK_NONE;
+
+	int t = EVP_PKEY_base_id(pk->pk);
+
+	switch (t)
+	{
+		case EVP_PKEY_RSA: return OSCAM_PK_RSA;
+		case EVP_PKEY_EC : return OSCAM_PK_EC;
+		default: return OSCAM_PK_NONE;
+	}
+}
+
+int oscam_ssl_pk_verify(oscam_pk_context *pk,
+						const unsigned char *hash, size_t hash_len,
+						const unsigned char *sig,  size_t sig_len)
+{
+	EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+	if (!ctx) return OSCAM_SSL_ERR;
+
+	if (EVP_DigestVerifyInit(ctx, NULL, EVP_sha256(), NULL, pk->pk) != 1 ||
+		EVP_DigestVerifyUpdate(ctx, hash, hash_len) != 1) {
+		EVP_MD_CTX_free(ctx);
+		return OSCAM_SSL_ERR;
+	}
+
+	int ret = EVP_DigestVerifyFinal(ctx, sig, sig_len);
+	EVP_MD_CTX_free(ctx);
+	return (ret == 1) ? OSCAM_SSL_OK : OSCAM_SSL_ERR;
+}
+
+int oscam_ssl_generate_selfsigned(const char *path)
+{
+	int ret = OSCAM_SSL_ERR;
+	EVP_PKEY *pkey = NULL;
+	EVP_PKEY_CTX *kctx = NULL;
+	X509 *crt = NULL;
+	FILE *f = NULL;
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
+	RSA *rsa = NULL;
+#endif
+
+	struct utsname un;
+	const char *cn;
+	char subject[256];
+	time_t now = time(NULL);
+	struct tm start_tm, end_tm;
+
+	if (!path || !*path)
+		return OSCAM_SSL_ERR;
+
+	/* ---- Create empty PKEY ---- */
+	pkey = EVP_PKEY_new();
+	if (!pkey)
+		goto cleanup;
+
+	/* ===============================================
+	 * KEY GENERATION
+	 * =============================================== */
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+
+	/* ---- OpenSSL 3.x (modern API only) ---- */
+	kctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
+	if (!kctx) goto cleanup;
+
+	if (EVP_PKEY_keygen_init(kctx) <= 0) goto cleanup;
+	if (EVP_PKEY_CTX_set_rsa_keygen_bits(kctx, 4096) <= 0) goto cleanup;
+	if (EVP_PKEY_keygen(kctx, &pkey) <= 0) goto cleanup;
+
+	EVP_PKEY_CTX_free(kctx);
+	kctx = NULL;
+
+#else
+
+	/* ---- Legacy OpenSSL (<3.0) ---- */
+	BIGNUM *e = BN_new();
+	if (!e) goto cleanup;
+
+	if (!BN_set_word(e, RSA_F4)) { BN_free(e); goto cleanup; }
+
+	rsa = RSA_new();
+	if (!rsa) { BN_free(e); goto cleanup; }
+
+	if (!RSA_generate_key_ex(rsa, 4096, e, NULL)) {
+		BN_free(e);
+		goto cleanup;
+	}
+	BN_free(e);
+
+	if (!EVP_PKEY_assign_RSA(pkey, rsa))
+		goto cleanup;
+
+	rsa = NULL; /* transferred */
+#endif
+
+	/* ===============================================
+	 * CERTIFICATE BUILD
+	 * =============================================== */
+
+	crt = X509_new();
+	if (!crt) goto cleanup;
+
+	X509_set_version(crt, 2);
+
+	/* Serial random */
+	{
+		unsigned char serial_bytes[16];
+		ASN1_INTEGER *serial = X509_get_serialNumber(crt);
+		BIGNUM *bn;
+
+		if (RAND_bytes(serial_bytes, sizeof(serial_bytes)) != 1)
+			goto cleanup;
+		bn = BN_bin2bn(serial_bytes, sizeof(serial_bytes), NULL);
+		if (!bn || !BN_to_ASN1_INTEGER(bn, serial)) {
+			BN_free(bn);
+			goto cleanup;
+		}
+		BN_free(bn);
+	}
+
+	/* Validity */
+	gmtime_r(&now, &start_tm);
+	end_tm = start_tm;
+	end_tm.tm_year += OSCAM_SSL_CERT_YEARS;
+
+	if (!X509_gmtime_adj(X509_get_notBefore(crt), 0)) goto cleanup;
+	if (!X509_gmtime_adj(X509_get_notAfter(crt),
+						 (long)3600 * 24 * 365 * OSCAM_SSL_CERT_YEARS))
+		goto cleanup;
+
+	if (!X509_set_pubkey(crt, pkey))
+		goto cleanup;
+
+	/* Subject CN */
+	if (uname(&un) == 0 && un.nodename[0])
+		cn = un.nodename;
+	else
+		cn = "localhost";
+
+	snprintf(subject, sizeof(subject),
+			 "CN=%s,O=OSCam AutoCert,OU=Private WebIf Certificate", cn);
+
+	X509_NAME *name = X509_NAME_new();
+	if (!name) goto cleanup;
+
+	X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+							   (const unsigned char*)cn, -1, -1, 0);
+	X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
+							   (unsigned char*)"OSCam AutoCert", -1, -1, 0);
+	X509_NAME_add_entry_by_txt(name, "OU", MBSTRING_ASC,
+							   (unsigned char*)"Private WebIf Certificate", -1, -1, 0);
+
+	X509_set_subject_name(crt, name);
+	X509_set_issuer_name(crt, name);
+	X509_NAME_free(name);
+
+	/* Extensions */
+	{
+		X509V3_CTX ctx;
+		X509V3_set_ctx_nodb(&ctx);
+		X509V3_set_ctx(&ctx, crt, crt, NULL, NULL, 0);
+
+		X509_EXTENSION *ext;
+
+		ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_basic_constraints, "CA:FALSE");
+		if (ext) { X509_add_ext(crt, ext, -1); X509_EXTENSION_free(ext); }
+
+		ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_key_usage,
+								  "digitalSignature,keyEncipherment");
+		if (ext) { X509_add_ext(crt, ext, -1); X509_EXTENSION_free(ext); }
+
+		ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_netscape_cert_type, "server");
+		if (ext) { X509_add_ext(crt, ext, -1); X509_EXTENSION_free(ext); }
+	}
+
+	/* SAN */
+	{
+		GENERAL_NAMES *gens = sk_GENERAL_NAME_new_null();
+		GENERAL_NAME *gn;
+		X509_EXTENSION *ext;
+
+		/* DNS: CN */
+		gn = GENERAL_NAME_new();
+		ASN1_IA5STRING *dns1 = ASN1_IA5STRING_new();
+		ASN1_STRING_set(dns1, cn, strlen(cn));
+		GENERAL_NAME_set0_value(gn, GEN_DNS, dns1);
+		sk_GENERAL_NAME_push(gens, gn);
+
+		/* DNS: CN.local */
+		char buf[256];
+		snprintf(buf, sizeof(buf), "%s.local", cn);
+		gn = GENERAL_NAME_new();
+		ASN1_IA5STRING *dns2 = ASN1_IA5STRING_new();
+		ASN1_STRING_set(dns2, buf, strlen(buf));
+		GENERAL_NAME_set0_value(gn, GEN_DNS, dns2);
+		sk_GENERAL_NAME_push(gens, gn);
+
+		/* IPv4 127.0.0.1 */
+		gn = GENERAL_NAME_new();
+		{
+			unsigned char ip4[4] = {127,0,0,1};
+			ASN1_OCTET_STRING *ip = ASN1_OCTET_STRING_new();
+			ASN1_OCTET_STRING_set(ip, ip4, 4);
+			GENERAL_NAME_set0_value(gn, GEN_IPADD, ip);
+			sk_GENERAL_NAME_push(gens, gn);
+		}
+
+#if OPENSSL_VERSION_NUMBER >= 0x10002000L
+		/* IPv6 ::1 */
+		gn = GENERAL_NAME_new();
+		{
+			unsigned char ip6[16] = {0};
+			ip6[15] = 1;
+			ASN1_OCTET_STRING *ipx = ASN1_OCTET_STRING_new();
+			ASN1_OCTET_STRING_set(ipx, ip6, 16);
+			GENERAL_NAME_set0_value(gn, GEN_IPADD, ipx);
+			sk_GENERAL_NAME_push(gens, gn);
+		}
+#else
+		cs_log("SSL: IPv6 SAN skipped (OpenSSL < 1.0.2)");
+#endif
+
+		ext = X509V3_EXT_i2d(NID_subject_alt_name, 0, gens);
+		if (ext) {
+			X509_add_ext(crt, ext, -1);
+			X509_EXTENSION_free(ext);
+		}
+		sk_GENERAL_NAME_pop_free(gens, GENERAL_NAME_free);
+	}
+
+	/* Sign cert */
+	if (!X509_sign(crt, pkey, EVP_sha256())) {
+		if (!X509_sign(crt, pkey, EVP_sha1()))
+			goto cleanup;
+	}
+
+	/* Write PEM (cert + key) */
+	f = fopen(path, "wb");
+	if (!f) goto cleanup;
+
+	if (!PEM_write_X509(f, crt)) { fclose(f); goto cleanup; }
+	if (!PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL)) {
+		fclose(f);
+		goto cleanup;
+	}
+
+	fclose(f);
+	ret = OSCAM_SSL_OK;
+
+cleanup:
+	if (f) fclose(f);
+	if (crt) X509_free(crt);
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
+	if (rsa) RSA_free(rsa);
+#endif
+	if (pkey) EVP_PKEY_free(pkey);
+	if (kctx) EVP_PKEY_CTX_free(kctx);
+
+	return ret;
+}
+
+#else /* WITH_OPENSSL -------------------------------------------------- */
+/* ========================= MBEDTLS BACKEND ========================== */
+
 #if defined(MBEDTLS_DEBUG_C)
 #include "mbedtls/debug.h"
 #endif
-#ifdef WITH_SSL
 
-/* mbedTLS */
 #include "mbedtls/entropy.h"
 #include "mbedtls/error.h"
 #include "mbedtls/oid.h"
@@ -16,8 +810,63 @@
 #include "mbedtls/ssl_cookie.h"
 #include "mbedtls/version.h"
 #include "mbedtls/asn1write.h"
+#include "mbedtls/rsa.h"
 
-#define OSCAM_SSL_CERT_YEARS 2
+/* Opaque structs defined here (match header typedefs) */
+
+struct oscam_ssl_conf_s {
+	mbedtls_ssl_config       ssl_conf;
+	mbedtls_x509_crt         ca_chain;
+	mbedtls_x509_crt         own_cert;
+	mbedtls_pk_context       own_key;
+	mbedtls_entropy_context  entropy;
+	mbedtls_ctr_drbg_context ctr_drbg;
+};
+
+struct oscam_ssl_s {
+	mbedtls_ssl_context ssl;
+	mbedtls_net_context net;
+};
+
+struct oscam_x509_crt_s {
+	mbedtls_x509_crt crt;
+};
+
+struct oscam_pk_context_s {
+	mbedtls_pk_context pk;
+};
+
+/* --- Opaque alloc helpers --- */
+
+oscam_x509_crt *oscam_ssl_cert_new(void)
+{
+	oscam_x509_crt *crt = calloc(1, sizeof(*crt));
+	if (crt)
+		oscam_ssl_cert_init(crt);
+	return crt;
+}
+
+void oscam_ssl_cert_delete(oscam_x509_crt *crt)
+{
+	if (!crt) return;
+	oscam_ssl_cert_free(crt);
+	free(crt);
+}
+
+oscam_pk_context *oscam_ssl_pk_new(void)
+{
+	oscam_pk_context *pk = calloc(1, sizeof(*pk));
+	if (pk)
+		mbedtls_pk_init(&pk->pk);
+	return pk;
+}
+
+void oscam_ssl_pk_delete(oscam_pk_context *pk)
+{
+	if (!pk) return;
+	oscam_ssl_pk_free(pk);
+	free(pk);
+}
 
 /* ---------------------------------------------------------------------
  * Global RNG state
@@ -698,14 +1547,6 @@ int oscam_ssl_write(oscam_ssl_t *ssl, const unsigned char *buf, size_t len)
 	return (int)total;
 }
 
-int oscam_ssl_pending(oscam_ssl_t *ssl) {
-	return mbedtls_ssl_get_bytes_avail(&ssl->ssl);
-}
-
-int oscam_ssl_get_fd(oscam_ssl_t *ssl) {
-	return ssl ? ssl->net.fd : -1;
-}
-
 void oscam_ssl_close_notify(oscam_ssl_t *ssl)
 {
 	if (!ssl)
@@ -781,7 +1622,6 @@ int oscam_ssl_get_error(oscam_ssl_t *ssl, int ret)
 	return OSCAM_SSL_ERR;
 }
 
-/* Create a minimal self-signed certificate */
 int oscam_ssl_generate_selfsigned(const char *path)
 {
 	int ret;
@@ -790,8 +1630,8 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	mbedtls_entropy_context entropy;
 	mbedtls_ctr_drbg_context ctr_drbg;
 	unsigned char cert_buf[4096];
-	unsigned char key_buf[2048];
-	const char *pers = "oscam_selfsign_ec";
+	unsigned char key_buf[8192];  // larger buffer for 4096-bit RSA PEM
+	const char *pers = "oscam_selfsign_rsa";
 	FILE *f = NULL;
 	char not_before[16], not_after[16];
 	time_t now = time(NULL);
@@ -805,27 +1645,30 @@ int oscam_ssl_generate_selfsigned(const char *path)
 
 	mbedtls_entropy_add_source(&entropy, mbedtls_hardware_poll, NULL, 32, MBEDTLS_ENTROPY_SOURCE_STRONG);
 
-	if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
-		(const unsigned char *)pers, strlen(pers))) != 0)
+	if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *)pers, strlen(pers))) != 0)
 		goto cleanup;
 
-	// Generate ECDSA key (P-256)
-	if ((ret = mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY))) != 0)
+	/* ---- Generate RSA 4096-bit key ---- */
+	if ((ret = mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA))) != 0)
 		goto cleanup;
 
-	if ((ret = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1,
-		mbedtls_pk_ec(key), mbedtls_ctr_drbg_random, &ctr_drbg)) != 0)
-		goto cleanup;
+	{
+		mbedtls_rsa_context *rsa = mbedtls_pk_rsa(key);
+		/* public exponent = 65537 */
+		if ((ret = mbedtls_rsa_gen_key(rsa, mbedtls_ctr_drbg_random, &ctr_drbg, 4096, 65537)) != 0)
+			goto cleanup;
+	}
 
-	// Get system nodename for CN
+	/* ---- CN = system nodename (hostname) ---- */
 	const char *cn = !uname(&buffer) ? buffer.nodename : "localhost";
 	size_t cn_len = MIN(strlen(cn), 63);
 
 	char subject_name[128];
 	snprintf(subject_name, sizeof(subject_name),
-		"CN=%.*s,O=OSCam AutoCert,OU=Private Webif Certificate", (int)cn_len, cn);
+				"CN=%.*s,O=OSCam AutoCert,OU=Private Webif Certificate",
+				(int)cn_len, cn);
 
-	// Configure certificate metadata
+	/* ---- Configure certificate metadata ---- */
 	mbedtls_x509write_crt_set_subject_key(&crt, &key);
 	mbedtls_x509write_crt_set_issuer_key(&crt, &key);
 	mbedtls_x509write_crt_set_md_alg(&crt, MBEDTLS_MD_SHA256);
@@ -833,14 +1676,14 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	mbedtls_x509write_crt_set_subject_name(&crt, subject_name);
 	mbedtls_x509write_crt_set_issuer_name(&crt, subject_name);
 
-	// X.509 V3 extensions
+	/* ---- X.509 V3: SubjectAltName with CN, CN.local, 127.0.0.1, ::1 ---- */
 	ret = write_san_ext_and_attach(&crt, cn);
 	if (ret != 0) {
 		cs_log("SSL: failed to set SAN (%d)", ret);
 		goto cleanup;
 	}
 
-	// Validity (2 years)
+	/* ---- Validity (2 years) ---- */
 	gmtime_r(&now, &start_tm);
 	end_tm = start_tm;
 	end_tm.tm_year += OSCAM_SSL_CERT_YEARS;
@@ -848,7 +1691,7 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	strftime(not_after, sizeof(not_after), "%Y%m%d%H%M%S", &end_tm);
 	mbedtls_x509write_crt_set_validity(&crt, not_before, not_after);
 
-	// Serial number
+	/* ---- Serial number (random 128-bit) ---- */
 	mbedtls_mpi serial;
 	mbedtls_mpi_init(&serial);
 	unsigned char serial_bytes[16];
@@ -857,23 +1700,26 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	mbedtls_x509write_crt_set_serial(&crt, &serial);
 	mbedtls_mpi_free(&serial);
 
-	// Basic constraints & key usage
+	/* ---- Basic constraints & key usage ---- */
 	mbedtls_x509write_crt_set_basic_constraints(&crt, 0, -1);
 	mbedtls_x509write_crt_set_key_usage(&crt,
-		MBEDTLS_X509_KU_DIGITAL_SIGNATURE | MBEDTLS_X509_KU_KEY_ENCIPHERMENT);
+		MBEDTLS_X509_KU_DIGITAL_SIGNATURE |
+		MBEDTLS_X509_KU_KEY_ENCIPHERMENT);
 	mbedtls_x509write_crt_set_ns_cert_type(&crt,
 		MBEDTLS_X509_NS_CERT_TYPE_SSL_SERVER);
 
-	// Write certificate to PEM
-	if ((ret = mbedtls_x509write_crt_pem(&crt, cert_buf, sizeof(cert_buf),
-		mbedtls_ctr_drbg_random, &ctr_drbg)) < 0)
+	/* ---- Write certificate to PEM ---- */
+	ret = mbedtls_x509write_crt_pem(&crt, cert_buf, sizeof(cert_buf),
+	                                mbedtls_ctr_drbg_random, &ctr_drbg);
+	if (ret < 0)
 		goto cleanup;
 
-	// Write private key to PEM
-	if ((ret = mbedtls_pk_write_key_pem(&key, key_buf, sizeof(key_buf))) != 0)
+	/* ---- Write private key to PEM ---- */
+	ret = mbedtls_pk_write_key_pem(&key, key_buf, sizeof(key_buf));
+	if (ret != 0)
 		goto cleanup;
 
-	// Save both into the same file
+	/* ---- Save both into the same file (single PEM) ---- */
 	f = fopen(path, "wb");
 	if (!f) {
 		ret = -1;
@@ -882,14 +1728,16 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	fwrite(cert_buf, 1, strlen((char *)cert_buf), f);
 	fwrite(key_buf, 1, strlen((char *)key_buf), f);
 	fclose(f);
+	f = NULL;
 
-	cs_log("SSL: generated new self-signed certificate for CN=%s", cn);
+	cs_log("SSL: generated new RSA-4096 self-signed certificate for CN=%s", cn);
 	ret = 0;
 
 cleanup:
 	if (ret != 0)
 		cs_log("SSL: self-signed certificate generation failed (%d)", ret);
 
+	if (f) fclose(f);
 	mbedtls_pk_free(&key);
 	mbedtls_x509write_crt_free(&crt);
 	mbedtls_ctr_drbg_free(&ctr_drbg);
@@ -936,6 +1784,49 @@ oscam_x509_crt *oscam_ssl_cert_get_next(oscam_x509_crt *crt)
 	return (oscam_x509_crt *) crt->crt.next;
 }
 
+void oscam_ssl_cert_raw(const oscam_x509_crt *crt,
+						const unsigned char **buf, size_t *len)
+{
+	if (!crt) { *buf = NULL; *len = 0; return; }
+	*buf = crt->crt.raw.p;
+	*len = crt->crt.raw.len;
+}
+
+/* ----------------- VALIDITY INFO ----------------- */
+void oscam_ssl_cert_get_validity(const oscam_x509_crt *crt,
+								 oscam_cert_time_t *from,
+								 oscam_cert_time_t *to)
+{
+	if (!crt) return;
+
+	from->year = crt->crt.valid_from.year;
+	from->mon  = crt->crt.valid_from.mon;
+	from->day  = crt->crt.valid_from.day;
+	from->hour = crt->crt.valid_from.hour;
+	from->min  = crt->crt.valid_from.min;
+	from->sec  = crt->crt.valid_from.sec;
+
+	to->year = crt->crt.valid_to.year;
+	to->mon  = crt->crt.valid_to.mon;
+	to->day  = crt->crt.valid_to.day;
+	to->hour = crt->crt.valid_to.hour;
+	to->min  = crt->crt.valid_to.min;
+	to->sec  = crt->crt.valid_to.sec;
+}
+
+int oscam_ssl_pk_get_bits(const oscam_pk_context *pk)
+{
+	if (!pk) return 0;
+	return (int) mbedtls_pk_get_bitlen(&pk->pk);
+}
+
+/* ----------------- KEY LENGTH ----------------- */
+int oscam_ssl_pk_get_bitlen(const oscam_pk_context *pk)
+{
+	if (!pk) return 0;
+	return (int)mbedtls_pk_get_bitlen(&pk->pk);
+}
+
 const oscam_pk_context *oscam_ssl_cert_get_pubkey(const oscam_x509_crt *crt)
 {
 	return (const oscam_pk_context *)&crt->crt.pk;
@@ -951,9 +1842,21 @@ void oscam_ssl_cert_serial_gets(const oscam_x509_crt *crt, char *buf, size_t len
 	mbedtls_x509_serial_gets(buf, len, &crt->crt.serial);
 }
 
+int oscam_ssl_cert_get_version(const oscam_x509_crt *crt)
+{
+	if (!crt) return -1;
+	return crt->crt.version;   /* already human-readable */
+}
+
 const void *oscam_ssl_cert_get_subject(const oscam_x509_crt *crt)
 {
 	return &crt->crt.subject;
+}
+
+const void *oscam_ssl_cert_get_issuer(const oscam_x509_crt *crt)
+{
+    if (!crt) return NULL;
+    return (const void *)&crt->crt.issuer;
 }
 
 // ---- Public Key ----
@@ -1040,7 +1943,23 @@ int oscam_ssl_pk_verify(oscam_pk_context *pk,
 
 int oscam_ssl_pk_get_type(const oscam_pk_context *pk)
 {
-	return mbedtls_pk_get_type(&pk->pk);
+	if (!pk)
+		return OSCAM_PK_NONE;
+
+	mbedtls_pk_type_t t = mbedtls_pk_get_type(&pk->pk);
+
+	switch (t)
+	{
+		case MBEDTLS_PK_RSA:
+			return OSCAM_PK_RSA;
+
+		case MBEDTLS_PK_ECKEY:
+		case MBEDTLS_PK_ECDSA:
+			return OSCAM_PK_EC;
+
+		default:
+			return OSCAM_PK_NONE;
+	}
 }
 
 // ---- Hashing ----
@@ -1058,7 +1977,7 @@ int oscam_ssl_sha256(const unsigned char *data, size_t len, unsigned char *out)
 	SHA256_CTX ctx;
 	SHA256_Init(&ctx);
 	SHA256_Update(&ctx, data, len);
-	SHA256_Final(&ctx, out);
+	SHA256_Final(out, &ctx);
 	SHA256_Free(&ctx);
 	return 0;
 }
@@ -1071,9 +1990,31 @@ int oscam_ssl_sha256_stream(const unsigned char *data1, size_t len1,
 	SHA256_Init(&ctx);
 	if (data1 && len1) SHA256_Update(&ctx, data1, len1);
 	if (data2 && len2) SHA256_Update(&ctx, data2, len2);
-	SHA256_Final(&ctx, out);
+	SHA256_Final(out, &ctx);
 	SHA256_Free(&ctx);
 	return 0;
+}
+
+#endif /* WITH_OPENSSL */
+
+int oscam_ssl_get_fd(oscam_ssl_t *ssl)
+{
+#ifdef WITH_OPENSSL
+	return ssl ? ssl->fd : -1;
+#else
+	return ssl ? ssl->net.fd : -1;
+#endif
+}
+
+int oscam_ssl_pending(oscam_ssl_t *ssl)
+{
+#ifdef WITH_OPENSSL
+	if (!ssl || !ssl->ssl) return 0;
+	return SSL_pending(ssl->ssl);
+#else
+	if (!ssl) return 0;
+	return mbedtls_ssl_get_bytes_avail(&ssl->ssl);
+#endif
 }
 
 #endif /* WITH_SSL */
