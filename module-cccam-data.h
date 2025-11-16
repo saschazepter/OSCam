@@ -190,7 +190,7 @@ struct cc_data
 	RC6KEY cmd0c_RC6_cryptkey;
 #endif
 #ifdef WITH_LIB_AES
-	AES_KEY cmd0c_AES_key;
+	AesCtx cmd0c_AES_key;
 #endif
 #ifdef WITH_LIB_IDEA
 	IDEA_KEY_SCHEDULE cmd0c_IDEA_dkey;
