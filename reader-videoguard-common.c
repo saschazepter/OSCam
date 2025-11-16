@@ -58,7 +58,7 @@ int32_t cw_is_valid(uint8_t *cw)
 void cAES_SetKey(struct s_reader *reader, const uint8_t *key)
 {
 	struct videoguard_data *csystem_data = reader->csystem_data;
-	AES_set_encrypt_key(key, 128, &(csystem_data->ekey));
+	AesCtxIni(&(csystem_data->ekey), NULL, key, 16, 0);
 }
 
 int32_t cAES_Encrypt(struct s_reader *reader, const uint8_t *data, int32_t len, uint8_t *crypted)
@@ -66,7 +66,7 @@ int32_t cAES_Encrypt(struct s_reader *reader, const uint8_t *data, int32_t len, 
 	struct videoguard_data *csystem_data = reader->csystem_data;
 	len = (len + 15) & (~15); // pad up to a multiple of 16
 	int32_t i;
-	for(i = 0; i < len; i += 16) { AES_encrypt(data + i, crypted + i, &(csystem_data->ekey)); }
+	for(i = 0; i < len; i += 16) { AesEncrypt(&(csystem_data->ekey), data + i, crypted + i, 16); }
 	return len;
 }
 
