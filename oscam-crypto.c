@@ -468,210 +468,469 @@ void rc6_block_decrypt(unsigned int *ct, unsigned int *pt, int block_count, RC6K
 #endif
 
 #ifdef WITH_LIB_IDEA
-static inline void idea_mul(IDEA_INT *r, IDEA_INT a, IDEA_INT b)
+/* ====================================================================
+ * Local IDEA (Eric Young) internals
+ * ====================================================================
+ * Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
+ * All rights reserved.
+ *
+ * This package is based on SSL implementation written
+ * by Eric Young (eay@cryptsoft.com) with some modifications.
+ *
+ * The licence and distribution terms for any publically available version or
+ * derivative of this code cannot be changed.  i.e. this code cannot simply be
+ * copied and put under another distribution licence
+ * [including the GNU Public Licence.]
+ */
+
+#ifndef __OSC_INTERNAL_IDEA
+#define __OSC_INTERNAL_IDEA
+
+/* All IDEA big-endian packing macros must remain bit-identical to
+   Eric Young’s original implementation (OpenSSL <= 1.0.x).
+   Do NOT convert them to loops or refactor them. */
+
+#define n2ln(c,l1,l2,n) do {                                           \
+		(c) += (n);                                                    \
+		(l1) = (l2) = 0;                                               \
+		switch (n) {                                                   \
+		case 8: (l2)  = (uint32_t)(*(--(c)));       /* fall through */ \
+		case 7: (l2) |= (uint32_t)(*(--(c))) <<  8; /* fall through */ \
+		case 6: (l2) |= (uint32_t)(*(--(c))) << 16; /* fall through */ \
+		case 5: (l2) |= (uint32_t)(*(--(c))) << 24; /* fall through */ \
+		case 4: (l1)  = (uint32_t)(*(--(c)));       /* fall through */ \
+		case 3: (l1) |= (uint32_t)(*(--(c))) <<  8; /* fall through */ \
+		case 2: (l1) |= (uint32_t)(*(--(c))) << 16; /* fall through */ \
+		case 1: (l1) |= (uint32_t)(*(--(c))) << 24;                    \
+		}                                                              \
+	} while (0)
+
+#define l2nn(l1,l2,c,n) do {                                               \
+		(c) += (n);                                                        \
+		switch (n) {                                                       \
+		case 8: *(--(c)) = (uint8_t)((l2)      & 0xff); /* fall through */ \
+		case 7: *(--(c)) = (uint8_t)(((l2)>> 8)& 0xff); /* fall through */ \
+		case 6: *(--(c)) = (uint8_t)(((l2)>>16)& 0xff); /* fall through */ \
+		case 5: *(--(c)) = (uint8_t)(((l2)>>24)& 0xff); /* fall through */ \
+		case 4: *(--(c)) = (uint8_t)((l1)      & 0xff); /* fall through */ \
+		case 3: *(--(c)) = (uint8_t)(((l1)>> 8)& 0xff); /* fall through */ \
+		case 2: *(--(c)) = (uint8_t)(((l1)>>16)& 0xff); /* fall through */ \
+		case 1: *(--(c)) = (uint8_t)(((l1)>>24)& 0xff);                    \
+		}                                                                  \
+	} while (0)
+
+#undef n2l
+#define n2l(c,l) (                               \
+		(l)  = ((uint32_t)(*((c)++))) << 24,     \
+		(l) |= ((uint32_t)(*((c)++))) << 16,     \
+		(l) |= ((uint32_t)(*((c)++))) <<  8,     \
+		(l) |= ((uint32_t)(*((c)++)))      )
+
+#undef l2n
+#define l2n(l,c) do {                            \
+		*((c)++) = (uint8_t)(((l)>>24) & 0xff);  \
+		*((c)++) = (uint8_t)(((l)>>16) & 0xff);  \
+		*((c)++) = (uint8_t)(((l)>> 8) & 0xff);  \
+		*((c)++) = (uint8_t)(((l)     ) & 0xff); \
+	} while (0)
+
+#undef s2n
+#define s2n(v,c) do {                            \
+		*((c)++) = (uint8_t)((v)      & 0xff);   \
+		*((c)++) = (uint8_t)(((v)>> 8) & 0xff);  \
+	} while (0)
+
+#undef n2s
+#define n2s(c,v) do {                            \
+		(v)  = (IDEA_INT)(*((c)++)) << 8;        \
+		(v) |= (IDEA_INT)(*((c)++));             \
+	} while (0)
+
+#ifndef IDEA_DEFAULT_OPTIONS
+# define IDEA_DEFAULT_OPTIONS "idea(16 bit)"
+#endif
+
+#endif /* __OSC_INTERNAL_IDEA */
+
+/* 16-bit multiplicative group multiply used by IDEA.
+ * Bit-exact to Eric Young's macro version.
+ */
+static inline IDEA_INT idea_mul16(IDEA_INT a, IDEA_INT b)
 {
-	uint32_t ul = (uint32_t)a * (uint32_t)b;
+	unsigned long ul = (unsigned long)a * b; /* 32-bit is enough, but UL is OK */
+	IDEA_INT r;
+
 	if (ul != 0) {
-		uint32_t x = (ul & 0xFFFF) - (ul >> 16);
-		x -= (x >> 16);
-		*r = (IDEA_INT)(x & 0xFFFF);
+		ul = (ul & 0xffffUL) - (ul >> 16);
+		r = (IDEA_INT)ul;
+		r -= (IDEA_INT)(r >> 16);
 	} else {
-		*r = (IDEA_INT)(1 - a - b); // 0 maps to 65536
+		/* assuming a or b is 0 and in range */
+		r = (IDEA_INT)(-(int)a - (int)b + 1);
 	}
+
+	return r;
 }
 
-static IDEA_INT idea_inv(IDEA_INT xin)
+/* Multiplicative inverse in GF(65537), bit-compatible with original */
+static inline IDEA_INT inverse(unsigned int xin)
 {
-	int32_t n1 = 0x10001, n2 = xin;
-	int32_t b1 = 0, b2 = 1, t;
-	if (xin <= 1) return xin;
-	do {
-		int32_t q = n1 / n2;
-		int32_t r = n1 % n2;
-		n1 = n2; n2 = r;
-		t = b1 - q * b2; b1 = b2; b2 = t;
-	} while (n2 != 0);
-	if (b1 < 0) b1 += 0x10001;
-	return (IDEA_INT)b1;
+	long n1, n2, q, r, b1, b2, t;
+
+	if (xin == 0) {
+		b2 = 0;
+	} else {
+		n1 = 0x10001L;
+		n2 = xin;
+		b2 = 1;
+		b1 = 0;
+
+		do {
+			r = (n1 % n2);
+			q = (n1 - r) / n2;
+			if (r == 0) {
+				if (b2 < 0)
+					b2 = 0x10001L + b2;
+			} else {
+				n1 = n2;
+				n2 = r;
+				t  = b2;
+				b2 = b1 - q * b2;
+				b1 = t;
+			}
+		} while (r != 0);
+	}
+	return (IDEA_INT)b2;
+}
+
+/* 8 full IDEA rounds, bit-identical to the macro version */
+static inline void idea_rounds(uint32_t *x1p, uint32_t *x2p, uint32_t *x3p, uint32_t *x4p, IDEA_INT **kp)
+{
+	uint32_t x1 = *x1p;
+	uint32_t x2 = *x2p;
+	uint32_t x3 = *x3p;
+	uint32_t x4 = *x4p;
+	IDEA_INT *p = *kp;
+	int round;
+
+	for (round = 0; round < 8; round++) {
+		uint32_t t0, t1;
+
+		x1 &= 0xffffU;
+		x1 = (uint32_t)idea_mul16((IDEA_INT)x1, *p++);
+		x2 = (x2 + *p++) & 0xffffU;
+		x3 = (x3 + *p++) & 0xffffU;
+		x4 &= 0xffffU;
+		x4 = (uint32_t)idea_mul16((IDEA_INT)x4, *p++);
+
+		t0 = (x1 ^ x3) & 0xffffU;
+		t0 = (uint32_t)idea_mul16((IDEA_INT)t0, *p++);
+		t1 = (t0 + ((x2 ^ x4) & 0xffffU)) & 0xffffU;
+		t1 = (uint32_t)idea_mul16((IDEA_INT)t1, *p++);
+
+		t0 = (t0 + t1) & 0xffffU;
+
+		x1 ^= t1;
+		x4 ^= t0;
+
+		{
+			uint32_t tmp = x2 ^ t0;
+			x2 = x3 ^ t1;
+			x3 = tmp;
+		}
+	}
+
+	*x1p = x1;
+	*x2p = x2;
+	*x3p = x3;
+	*x4p = x4;
+	*kp  = p;
 }
 
 void idea_set_encrypt_key(const unsigned char *key, IDEA_KEY_SCHEDULE *ks)
 {
-	IDEA_INT *kt = &ks->data[0][0];
-	for (int i = 0; i < 8; i++)
-		kt[i] = ((IDEA_INT)key[2 * i] << 8) | key[2 * i + 1];
-	for (int i = 8; i < 52; i++) {
-		int j = i - 8;
-		if ((i & 7) < 6)
-			kt[i] = ((kt[j + 1] << 9) | (kt[j + 2] >> 7)) & 0xFFFF;
-		else if ((i & 7) == 6)
-			kt[i] = ((kt[j + 1] << 9) | (kt[j - 6] >> 7)) & 0xFFFF;   // correct branch
-		else
-			kt[i] = ((kt[j - 7] << 9) | (kt[j - 6] >> 7)) & 0xFFFF;
+	int i;
+	IDEA_INT *kt, *kf, r0, r1, r2;
+
+	kt = &ks->data[0][0];
+
+	n2s(key, kt[0]);
+	n2s(key, kt[1]);
+	n2s(key, kt[2]);
+	n2s(key, kt[3]);
+	n2s(key, kt[4]);
+	n2s(key, kt[5]);
+	n2s(key, kt[6]);
+	n2s(key, kt[7]);
+
+	kf = kt;
+	kt += 8;
+
+	for (i = 0; i < 6; i++) {
+		r2 = kf[1];
+		r1 = kf[2];
+		*(kt++) = (IDEA_INT)(((r2 << 9) | (r1 >> 7)) & 0xffff);
+		r0 = kf[3];
+		*(kt++) = (IDEA_INT)(((r1 << 9) | (r0 >> 7)) & 0xffff);
+		r1 = kf[4];
+		*(kt++) = (IDEA_INT)(((r0 << 9) | (r1 >> 7)) & 0xffff);
+		r0 = kf[5];
+		*(kt++) = (IDEA_INT)(((r1 << 9) | (r0 >> 7)) & 0xffff);
+		r1 = kf[6];
+		*(kt++) = (IDEA_INT)(((r0 << 9) | (r1 >> 7)) & 0xffff);
+		r0 = kf[7];
+		*(kt++) = (IDEA_INT)(((r1 << 9) | (r0 >> 7)) & 0xffff);
+		r1 = kf[0];
+		if (i >= 5)
+			break;
+		*(kt++) = (IDEA_INT)(((r0 << 9) | (r1 >> 7)) & 0xffff);
+		*(kt++) = (IDEA_INT)(((r1 << 9) | (r2 >> 7)) & 0xffff);
+		kf += 8;
 	}
 }
 
 void idea_set_decrypt_key(IDEA_KEY_SCHEDULE *ek, IDEA_KEY_SCHEDULE *dk)
 {
-	IDEA_INT *fp = &ek->data[0][0];
-	IDEA_INT *tp = &dk->data[0][0];
+	int r;
+	IDEA_INT *fp, *tp, t;
 
-	for (int r = 0; r < 9; r++) {
-		int i = 6 * (8 - r);
-		if (r == 0) {
-			tp[0] = idea_inv(fp[i]);
-			tp[1] = (0x10000 - fp[i + 1]) & 0xFFFF;
-			tp[2] = (0x10000 - fp[i + 2]) & 0xFFFF;
-			tp[3] = idea_inv(fp[i + 3]);
-		} else {
-			tp[0] = idea_inv(fp[i]);
-			tp[1] = (0x10000 - fp[i + 2]) & 0xFFFF;
-			tp[2] = (0x10000 - fp[i + 1]) & 0xFFFF;
-			tp[3] = idea_inv(fp[i + 3]);
-		}
-		if (r < 8) {
-			tp[4] = fp[i - 2];
-			tp[5] = fp[i - 1];
-		}
-		tp += 6;
+	tp = &dk->data[0][0];
+	fp = &ek->data[8][0];
+
+	for (r = 0; r < 9; r++) {
+		*(tp++) = inverse(fp[0]);
+		*(tp++) = (IDEA_INT)((0x10000L - fp[2]) & 0xffff);
+		*(tp++) = (IDEA_INT)((0x10000L - fp[1]) & 0xffff);
+		*(tp++) = inverse(fp[3]);
+		if (r == 8)
+			break;
+		fp -= 6;
+		*(tp++) = fp[4];
+		*(tp++) = fp[5];
 	}
 
-	/* final swaps to match legacy/OpenSSL layout */
-	IDEA_INT t;
-	t = dk->data[0][1]; dk->data[0][1] = dk->data[0][2]; dk->data[0][2] = t;
-	t = dk->data[8][1]; dk->data[8][1] = dk->data[8][2]; dk->data[8][2] = t;
+	/* Swaps required by algorithm */
+	t = dk->data[0][1];
+	dk->data[0][1] = dk->data[0][2];
+	dk->data[0][2] = t;
+
+	t = dk->data[8][1];
+	dk->data[8][1] = dk->data[8][2];
+	dk->data[8][2] = t;
 }
 
-void idea_encrypt(uint32_t *d, IDEA_KEY_SCHEDULE *ks)
+void idea_encrypt(unsigned long *d, IDEA_KEY_SCHEDULE *key)
 {
-	uint32_t x1 = d[0] >> 16, x2 = d[0] & 0xFFFF;
-	uint32_t x3 = d[1] >> 16, x4 = d[1] & 0xFFFF;
-	const IDEA_INT *p = &ks->data[0][0];
+	IDEA_INT *p = &key->data[0][0];
+	uint32_t x1, x2, x3, x4;
 
-	for (int round = 0; round < 8; round++) {
-		IDEA_INT r;
-		idea_mul(&r, x1, *p++); x1 = r;
-		x2 = (x2 + *p++) & 0xFFFF;
-		x3 = (x3 + *p++) & 0xFFFF;
-		idea_mul(&r, x4, *p++); x4 = r;
+	x2 = (uint32_t)d[0];
+	x1 = x2 >> 16;
+	x2 &= 0xffffU;
 
-		uint32_t t0 = x1 ^ x3;
-		idea_mul(&r, t0, *p++); t0 = r;
-		uint32_t t1 = (t0 + (x2 ^ x4)) & 0xFFFF;
-		idea_mul(&r, t1, *p++); t1 = r;
-		t0 = (t0 + t1) & 0xFFFF;
-		x1 ^= t1; x4 ^= t0;
-		uint32_t tmp = x2; x2 = x3 ^ t1; x3 = tmp ^ t0;
+	x4 = (uint32_t)d[1];
+	x3 = x4 >> 16;
+	x4 &= 0xffffU;
+
+	idea_rounds(&x1, &x2, &x3, &x4, &p);
+
+	x1 &= 0xffffU;
+	x1 = (uint32_t)idea_mul16((IDEA_INT)x1, *p++);
+
+	{
+		uint32_t t0 = (x3 + *p++) & 0xffffU;
+		uint32_t t1 = (x2 + *p++) & 0xffffU;
+
+		x4 &= 0xffffU;
+		x4 = (uint32_t)idea_mul16((IDEA_INT)x4, *p);
+
+		d[0] = (unsigned long)((t0 & 0xffffU) | ((x1 & 0xffffU) << 16));
+		d[1] = (unsigned long)((x4 & 0xffffU) | ((t1 & 0xffffU) << 16));
 	}
-
-	IDEA_INT r;
-	idea_mul(&r, x1, *p++); x1 = r;
-	uint32_t t0 = (x3 + *p++) & 0xFFFF;   /* X2' */
-	uint32_t t1 = (x2 + *p++) & 0xFFFF;   /* X3' */
-	idea_mul(&r, x4, *p++); x4 = r;	   /* X4' */
-
-	d[0] = (x1 << 16) | t0;               /* [X1' | X2'] */
-	d[1] = (t1 << 16) | x4;               /* [X3' | X4']  <<< FIX */
 }
 
 void idea_ecb_encrypt(const unsigned char *in, unsigned char *out, IDEA_KEY_SCHEDULE *ks)
 {
-	uint32_t l0 = ((uint32_t)in[0] << 24) | ((uint32_t)in[1] << 16) | ((uint32_t)in[2] << 8) | (uint32_t)in[3];
-	uint32_t l1 = ((uint32_t)in[4] << 24) | ((uint32_t)in[5] << 16) | ((uint32_t)in[6] << 8) | (uint32_t)in[7];
-	uint32_t d[2] = { l0, l1 };
+	uint32_t d0, d1;
+	unsigned long d[2];
+
+	n2l(in, d0);
+	n2l(in, d1);
+	d[0] = d0;
+	d[1] = d1;
+
 	idea_encrypt(d, ks);
-	out[0] = (unsigned char)((d[0] >> 24) & 0xFF);
-	out[1] = (unsigned char)((d[0] >> 16) & 0xFF);
-	out[2] = (unsigned char)((d[0] >> 8)  & 0xFF);
-	out[3] = (unsigned char)( d[0]        & 0xFF);
-	out[4] = (unsigned char)((d[1] >> 24) & 0xFF);
-	out[5] = (unsigned char)((d[1] >> 16) & 0xFF);
-	out[6] = (unsigned char)((d[1] >> 8)  & 0xFF);
-	out[7] = (unsigned char)( d[1]        & 0xFF);
+
+	d0 = (uint32_t)d[0];
+	d1 = (uint32_t)d[1];
+	l2n(d0, out);
+	l2n(d1, out);
+
+	d[0] = d[1] = 0;
 }
 
-void idea_cbc_encrypt(const unsigned char *in, unsigned char *out, long length,
-					  IDEA_KEY_SCHEDULE *ks, unsigned char *iv, int enc)
+void idea_cbc_encrypt(const unsigned char *in, unsigned char *out, long length, IDEA_KEY_SCHEDULE *ks, unsigned char *iv, int encrypt)
 {
-	unsigned char tmp[IDEA_BLOCK];
-	unsigned char prev[IDEA_BLOCK];
-	memcpy(prev, iv, IDEA_BLOCK);
+	uint32_t tin0 = 0, tin1 = 0;
+	uint32_t tout0 = 0, tout1 = 0;
+	uint32_t xor0 = 0, xor1 = 0;
+	long l = length;
+	unsigned long d[2];
 
-	for (long i = 0; i < length; i += IDEA_BLOCK) {
-		if (enc == IDEA_ENCRYPT) {
-			for (int j = 0; j < IDEA_BLOCK; j++) tmp[j] = (unsigned char)(in[i + j] ^ prev[j]);
-			idea_ecb_encrypt(tmp, out + i, ks);
-			memcpy(prev, out + i, IDEA_BLOCK);
-		} else {
-			idea_ecb_encrypt(in + i, tmp, ks);	  /* ks must be decrypt schedule if you mirror legacy */
-			for (int j = 0; j < IDEA_BLOCK; j++) out[i + j] = (unsigned char)(tmp[j] ^ prev[j]);
-			memcpy(prev, in + i, IDEA_BLOCK);
+	if (encrypt) {
+		n2l(iv, tout0);
+		n2l(iv, tout1);
+		iv -= 8;
+
+		for (l -= 8; l >= 0; l -= 8) {
+			n2l(in, tin0);
+			n2l(in, tin1);
+			tin0 ^= tout0;
+			tin1 ^= tout1;
+			d[0] = tin0;
+			d[1] = tin1;
+			idea_encrypt(d, ks);
+			tout0 = (uint32_t)d[0];
+			l2n(tout0, out);
+			tout1 = (uint32_t)d[1];
+			l2n(tout1, out);
 		}
+		if (l != -8) {
+			n2ln(in, tin0, tin1, l + 8);
+			tin0 ^= tout0;
+			tin1 ^= tout1;
+			d[0] = tin0;
+			d[1] = tin1;
+			idea_encrypt(d, ks);
+			tout0 = (uint32_t)d[0];
+			l2n(tout0, out);
+			tout1 = (uint32_t)d[1];
+			l2n(tout1, out);
+		}
+		l2n(tout0, iv);
+		l2n(tout1, iv);
+	} else {
+		n2l(iv, xor0);
+		n2l(iv, xor1);
+		iv -= 8;
+
+		for (l -= 8; l >= 0; l -= 8) {
+			n2l(in, tin0);
+			n2l(in, tin1);
+			d[0] = tin0;
+			d[1] = tin1;
+			idea_encrypt(d, ks);
+			tout0 = (uint32_t)d[0] ^ xor0;
+			tout1 = (uint32_t)d[1] ^ xor1;
+			l2n(tout0, out);
+			l2n(tout1, out);
+			xor0 = tin0;
+			xor1 = tin1;
+		}
+		if (l != -8) {
+			n2l(in, tin0);
+			n2l(in, tin1);
+			d[0] = tin0;
+			d[1] = tin1;
+			idea_encrypt(d, ks);
+			tout0 = (uint32_t)d[0] ^ xor0;
+			tout1 = (uint32_t)d[1] ^ xor1;
+			l2nn(tout0, tout1, out, l + 8);
+			xor0 = tin0;
+			xor1 = tin1;
+		}
+		l2n(xor0, iv);
+		l2n(xor1, iv);
 	}
-	memcpy(iv, prev, IDEA_BLOCK);
+	d[0] = d[1] = 0;
 }
 
-void idea_cfb64_encrypt(const unsigned char *in, unsigned char *out,
-						long length, IDEA_KEY_SCHEDULE *ks, unsigned char *iv,
-						int *num, int enc)
+void idea_cfb64_encrypt(const unsigned char *in, unsigned char *out, long length, IDEA_KEY_SCHEDULE *ks, unsigned char *iv, int *num, int enc)
 {
-	unsigned char keystream[IDEA_BLOCK];
-	int n = (num && *num >= 0 && *num < IDEA_BLOCK) ? *num : 0;
+	int n = *num;
+	uint32_t d0, d1;
+	unsigned long d[2];
+	uint8_t block, c;
 
 	while (length-- > 0) {
+
 		if (n == 0) {
-			/* Generate keystream = E(IV) into keystream[] */
-			idea_ecb_encrypt(iv, keystream, ks);
+			n2l(iv, d0);
+			n2l(iv, d1);
+			d[0] = d0;
+			d[1] = d1;
+			idea_encrypt(d, ks);
+			d0 = (uint32_t)d[0];
+			d1 = (uint32_t)d[1];
+			iv -= 8;
+			l2n(d0, iv);
+			l2n(d1, iv);
+			n = 0;
 		}
 
+		block = iv[n];
+
 		if (enc) {
-			unsigned char c = (unsigned char)(*in ^ keystream[n]);
+			c = (uint8_t)(*in ^ block);
 			*out = c;
 			iv[n] = c;
 		} else {
-			unsigned char c = *in;
-			*out = (unsigned char)(c ^ keystream[n]);
+			c = (uint8_t)*in;
+			*out = (uint8_t)(c ^ block);
 			iv[n] = c;
 		}
 
-		in++; out++;
-		n = (n + 1) & 7;
-		/* when n==0, iv[] already holds last ciphertext block */
+		in++;
+		out++;
+		n = (n + 1) & 0x07;
 	}
 
-	if (num) *num = n;
+	*num = n;
 }
 
-void idea_ofb64_encrypt(const unsigned char *in, unsigned char *out,
-						long length, IDEA_KEY_SCHEDULE *ks, unsigned char *iv,
-						int *num)
+void idea_ofb64_encrypt(const unsigned char *in, unsigned char *out, long length, IDEA_KEY_SCHEDULE *ks, unsigned char *iv, int *num)
 {
-	unsigned char keystream[IDEA_BLOCK];
-	int n = (num && *num >= 0 && *num < IDEA_BLOCK) ? *num : 0;
+	int n = *num;
+	uint32_t d0, d1;
+	unsigned long d[2];
+	uint8_t block;
 
 	while (length-- > 0) {
+
 		if (n == 0) {
-			/* OFB uses keystream chaining: IV = E(IV) */
-			unsigned char tmp[IDEA_BLOCK];
-			idea_ecb_encrypt(iv, tmp, ks);
-			memcpy(iv, tmp, IDEA_BLOCK);
-			memcpy(keystream, iv, IDEA_BLOCK);
+			n2l(iv, d0);
+			n2l(iv, d1);
+			d[0] = d0;
+			d[1] = d1;
+			idea_encrypt(d, ks);
+			d0 = (uint32_t)d[0];
+			d1 = (uint32_t)d[1];
+			iv -= 8;
+			l2n(d0, iv);
+			l2n(d1, iv);
+			n = 0;
 		}
 
-		*out = (unsigned char)(*in ^ keystream[n]);
+		block = iv[n];
+		*out = (uint8_t)(*in ^ block);
 
-		in++; out++;
-		n = (n + 1) & 7;
+		in++;
+		out++;
+		n = (n + 1) & 0x07;
 	}
 
-	if (num) *num = n;
+	*num = n;
 }
 
 const char *idea_options(void)
 {
-	return "IDEA-ECB/CBC (oscam-crypto)";
+	if (sizeof(short) != sizeof(IDEA_INT))
+		return "idea(int)";
+	else
+		return "idea(short)";
 }
-#endif
+
+#endif /* WITH_LIB_IDEA */
 
 #ifdef WITH_LIB_SHA1
 int SHA1_Init(SHA_CTX *c)
