@@ -427,8 +427,32 @@ const void *oscam_ssl_cert_get_issuer(const oscam_x509_crt *crt)
 
 int oscam_ssl_cert_dn_gets(char *buf, size_t size, const void *dn)
 {
-	if (!buf || !dn) return OSCAM_SSL_ERR;
-	X509_NAME_oneline((X509_NAME*)dn, buf, size);
+	if (!buf || size == 0 || !dn)
+		return OSCAM_SSL_ERR;
+
+	buf[0] = '\0';
+
+	BIO *bio = BIO_new(BIO_s_mem());
+	if (!bio)
+		return OSCAM_SSL_ERR;
+
+	/* OpenSSL 0.9.8 – 3.x compatible print */
+	if (X509_NAME_print_ex(bio, (X509_NAME *)dn, 0, XN_FLAG_RFC2253) < 0)
+	{
+		BIO_free(bio);
+		return OSCAM_SSL_ERR;
+	}
+
+	char *ptr = NULL;
+	long len = BIO_get_mem_data(bio, &ptr);
+
+	if (len > 0) {
+		size_t copy = (len < (long)size - 1) ? (size_t)len : size - 1;
+		memcpy(buf, ptr, copy);
+		buf[copy] = '\0';
+	}
+
+	BIO_free(bio);
 	return OSCAM_SSL_OK;
 }
 
@@ -478,20 +502,36 @@ void oscam_ssl_cert_raw(const oscam_x509_crt *crt,
 }
 
 /* ----------------- VALIDITY INFO ----------------- */
-void oscam_ssl_cert_get_validity(const oscam_x509_crt *crt,
-								 oscam_cert_time_t *from,
-								 oscam_cert_time_t *to)
+void oscam_ssl_cert_get_validity(const oscam_x509_crt *crt, oscam_cert_time_t *from, oscam_cert_time_t *to)
 {
-	if (!crt || !crt->crt) return;
+	if (!crt || !crt->crt || !from || !to)
+		return;
 
-	ASN1_TIME *nb = X509_get_notBefore(crt->crt);
-	ASN1_TIME *na = X509_get_notAfter(crt->crt);
+	const ASN1_TIME *nb = X509_get_notBefore(crt->crt);
+	const ASN1_TIME *na = X509_get_notAfter(crt->crt);
 
-	ASN1_TIME_to_tm(nb, (struct tm *)from);
-	ASN1_TIME_to_tm(na, (struct tm *)to);
+	struct tm tm_from, tm_to;
+	memset(&tm_from, 0, sizeof(tm_from));
+	memset(&tm_to,   0, sizeof(tm_to));
 
-	from->year += 1900;
-	to->year   += 1900;
+	/* Convert ASN1_TIME → struct tm */
+	ASN1_TIME_to_tm(nb, &tm_from);
+	ASN1_TIME_to_tm(na, &tm_to);
+
+	/* Fill our simple struct */
+	from->year = tm_from.tm_year + 1900;
+	from->mon  = tm_from.tm_mon  + 1;
+	from->day  = tm_from.tm_mday;
+	from->hour = tm_from.tm_hour;
+	from->min  = tm_from.tm_min;
+	from->sec  = tm_from.tm_sec;
+
+	to->year = tm_to.tm_year + 1900;
+	to->mon  = tm_to.tm_mon  + 1;
+	to->day  = tm_to.tm_mday;
+	to->hour = tm_to.tm_hour;
+	to->min  = tm_to.tm_min;
+	to->sec  = tm_to.tm_sec;
 }
 
 int oscam_ssl_pk_get_bits(const oscam_pk_context *pk)
@@ -547,22 +587,58 @@ int oscam_ssl_pk_get_type(const oscam_pk_context *pk)
 	}
 }
 
-int oscam_ssl_pk_verify(oscam_pk_context *pk,
-						const unsigned char *hash, size_t hash_len,
-						const unsigned char *sig,  size_t sig_len)
+int oscam_ssl_pk_verify(oscam_pk_context *pk, const unsigned char *hash, size_t hash_len, const unsigned char *sig,  size_t sig_len)
 {
-	EVP_MD_CTX *ctx = EVP_MD_CTX_new();
-	if (!ctx) return OSCAM_SSL_ERR;
-
-	if (EVP_DigestVerifyInit(ctx, NULL, EVP_sha256(), NULL, pk->pk) != 1 ||
-		EVP_DigestVerifyUpdate(ctx, hash, hash_len) != 1) {
-		EVP_MD_CTX_free(ctx);
+	if (!pk || !pk->pk || !hash || !sig)
 		return OSCAM_SSL_ERR;
+
+	int type = EVP_PKEY_base_id(pk->pk);
+
+	/* ECDSA: use digest directly, like mbedtls_pk_verify */
+	if (type == EVP_PKEY_EC)
+	{
+		EC_KEY *eckey = EVP_PKEY_get1_EC_KEY(pk->pk);
+		if (!eckey)
+			return OSCAM_SSL_ERR;
+
+		/* ECDSA_verify() takes 'dgst' = already-hashed message */
+		int ok = ECDSA_verify(0, hash, (int)hash_len,
+							  sig, (int)sig_len, eckey);
+		EC_KEY_free(eckey);
+		return (ok == 1) ? OSCAM_SSL_OK : OSCAM_SSL_ERR;
 	}
 
-	int ret = EVP_DigestVerifyFinal(ctx, sig, sig_len);
-	EVP_MD_CTX_free(ctx);
+	/* RSA: also verify on precomputed digest */
+	if (type == EVP_PKEY_RSA)
+	{
+		RSA *rsa = EVP_PKEY_get1_RSA(pk->pk);
+		if (!rsa)
+			return OSCAM_SSL_ERR;
+
+		/* NID_sha256: the digest algorithm that produced 'hash' */
+		int ok = RSA_verify(NID_sha256,
+							hash, (unsigned int)hash_len,
+							sig,  (unsigned int)sig_len,
+							rsa);
+		RSA_free(rsa);
+		return (ok == 1) ? OSCAM_SSL_OK : OSCAM_SSL_ERR;
+	}
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	/* Fallback for other key types – still treat 'hash' as digest */
+	EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(pk->pk, NULL);
+	if (!ctx)
+		return OSCAM_SSL_ERR;
+
+	int ret = EVP_PKEY_verify_init(ctx);
+	if (ret == 1)
+		ret = EVP_PKEY_verify(ctx, sig, sig_len, hash, hash_len);
+
+	EVP_PKEY_CTX_free(ctx);
 	return (ret == 1) ? OSCAM_SSL_OK : OSCAM_SSL_ERR;
+#else
+	return OSCAM_SSL_ERR;
+#endif
 }
 
 int oscam_ssl_generate_selfsigned(const char *path)
@@ -1784,10 +1860,14 @@ oscam_x509_crt *oscam_ssl_cert_get_next(oscam_x509_crt *crt)
 	return (oscam_x509_crt *) crt->crt.next;
 }
 
-void oscam_ssl_cert_raw(const oscam_x509_crt *crt,
-						const unsigned char **buf, size_t *len)
+void oscam_ssl_cert_raw(const oscam_x509_crt *crt, const unsigned char **buf, size_t *len)
 {
-	if (!crt) { *buf = NULL; *len = 0; return; }
+	if (!crt || !buf || !len) {
+		if (buf) *buf = NULL;
+		if (len) *len = 0;
+		return;
+	}
+
 	*buf = crt->crt.raw.p;
 	*len = crt->crt.raw.len;
 }
@@ -1832,9 +1912,18 @@ const oscam_pk_context *oscam_ssl_cert_get_pubkey(const oscam_x509_crt *crt)
 	return (const oscam_pk_context *)&crt->crt.pk;
 }
 
-int oscam_ssl_cert_dn_gets(char *buf, size_t size, const void *dn)
+int oscam_ssl_cert_dn_gets(char *buf, size_t size, const void *name)
 {
-	return mbedtls_x509_dn_gets(buf, size, (const mbedtls_x509_name *)dn);
+	if (!name || !buf || size == 0)
+		return OSCAM_SSL_ERR;
+
+	buf[0] = '\0';
+
+	int ret = mbedtls_x509_dn_gets(buf, size, (const mbedtls_x509_name *)name);
+	if (ret < 0)
+		return OSCAM_SSL_ERR;
+
+	return OSCAM_SSL_OK;
 }
 
 void oscam_ssl_cert_serial_gets(const oscam_x509_crt *crt, char *buf, size_t len)
@@ -1844,19 +1933,23 @@ void oscam_ssl_cert_serial_gets(const oscam_x509_crt *crt, char *buf, size_t len
 
 int oscam_ssl_cert_get_version(const oscam_x509_crt *crt)
 {
-	if (!crt) return -1;
-	return crt->crt.version;   /* already human-readable */
+	if (!crt)
+		return -1;
+	return crt->crt.version;
 }
 
 const void *oscam_ssl_cert_get_subject(const oscam_x509_crt *crt)
 {
-	return &crt->crt.subject;
+	if (!crt)
+		return NULL;
+	return (const void *)&crt->crt.subject;
 }
 
 const void *oscam_ssl_cert_get_issuer(const oscam_x509_crt *crt)
 {
-    if (!crt) return NULL;
-    return (const void *)&crt->crt.issuer;
+	if (!crt)
+		return NULL;
+	return (const void *)&crt->crt.issuer;
 }
 
 // ---- Public Key ----
