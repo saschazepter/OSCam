@@ -103,8 +103,10 @@ static oscam_pk_context *verify_cert(void)
 
 	/* ---- Certificate information ---- */
 
+	/* version */
 	osi.cert_version = oscam_ssl_cert_get_version(crt);
 
+	/* validity */
 	oscam_cert_time_t vfrom, vto;
 	oscam_ssl_cert_get_validity(crt, &vfrom, &vto);
 
@@ -134,6 +136,7 @@ static oscam_pk_context *verify_cert(void)
 	{
 		unsigned char fp[SHA_DIGEST_LENGTH];
 		oscam_ssl_sha1(der, der_len, fp);
+
 		char fphex[2 * SHA_DIGEST_LENGTH + 1];
 		hex_encode(fp, fphex, SHA_DIGEST_LENGTH);
 		osi.cert_fingerprint = cs_strdup(strtolower(fphex));
@@ -146,6 +149,8 @@ static oscam_pk_context *verify_cert(void)
 	/* Subject / issuer */
 	osi.cert_subject = cert_dn_to_str(oscam_ssl_cert_get_subject(crt));
 	osi.cert_issuer  = cert_dn_to_str(oscam_ssl_cert_get_issuer(crt));
+
+	/* "CA" here means "issuer != subject" in your logic */
 	osi.cert_is_cacert       = strcmp(osi.cert_subject, osi.cert_issuer) != 0;
 	osi.cert_is_valid_self   = false;
 	osi.cert_is_valid_system = false;
@@ -160,16 +165,16 @@ static oscam_pk_context *verify_cert(void)
 		                                 strlen(config_cert) + 1);
 		if (rself == OSCAM_SSL_OK)
 		{
-			/* The first cert in the chain is our leaf (signing cert).
-			   Any additional certs in the same PEM block become next, next->next, etc. */
+			/* First cert in the chain is our leaf (signing cert).
+			   Remaining certs are chain->next, etc. (mbedTLS) or NULL (OpenSSL). */
 			oscam_x509_crt *crt_leaf   = chain;
 			oscam_x509_crt *trust_self = oscam_ssl_cert_get_next(crt_leaf);
 
-			if (trust_self) {
+			if (trust_self)
+			{
 				int vr = oscam_ssl_cert_verify(crt_leaf, trust_self);
-				if (vr == OSCAM_SSL_OK) {
+				if (vr == OSCAM_SSL_OK)
 					osi.cert_is_valid_self = true;
-				}
 			}
 		}
 		oscam_ssl_cert_delete(chain);
@@ -184,7 +189,8 @@ static oscam_pk_context *verify_cert(void)
 		snprintf(system_ca_file, sizeof(system_ca_file), "%s/%s",
 		         CA_SYSTEM_LOCATION, CA_FILE_NAME);
 
-		if (!file_exists(system_ca_file)) {
+		if (!file_exists(system_ca_file))
+		{
 			ca_path = getenv("SSL_CERT_DIR");
 			if (!ca_path)
 				ca_path = "/etc/ssl/certs";
@@ -193,7 +199,8 @@ static oscam_pk_context *verify_cert(void)
 			         ca_path, CA_FILE_NAME);
 		}
 
-		if (cs_malloc(&osi.system_ca_file, cs_strlen(system_ca_file) + 1)) {
+		if (cs_malloc(&osi.system_ca_file, cs_strlen(system_ca_file) + 1))
+		{
 			cs_strncpy(osi.system_ca_file, system_ca_file,
 			           cs_strlen(system_ca_file) + 1);
 		}
@@ -202,12 +209,14 @@ static oscam_pk_context *verify_cert(void)
 		if (trust_sys)
 		{
 			int rsys = oscam_ssl_cert_parse_file(trust_sys, system_ca_file);
-			if (rsys == OSCAM_SSL_OK) {
+			if (rsys == OSCAM_SSL_OK)
+			{
 				int vr = oscam_ssl_cert_verify(crt, trust_sys);
 				if (vr == OSCAM_SSL_OK)
 					osi.cert_is_valid_system = true;
 			}
-			else {
+			else
+			{
 				cs_log("Error: unable to load CA bundle from %s", system_ca_file);
 			}
 			oscam_ssl_cert_delete(trust_sys);
@@ -233,7 +242,7 @@ static oscam_pk_context *verify_cert(void)
 	snprintf(ptype, sizeof(ptype), "%d-bit %s Key", bits, ptype_name);
 	osi.pkey_type = cs_strdup(ptype);
 
-	/* Clone the public key into an independent context (unchanged logic) */
+	/* Clone the public key into an independent context */
 	oscam_pk_context *pk = oscam_ssl_pk_new();
 	if (!pk)
 	{
