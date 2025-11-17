@@ -25,6 +25,65 @@
 #include <openssl/bio.h>
 #include <openssl/opensslv.h>
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+/* --------------------------------------------------------------------
+ * OpenSSL 1.0.2 compatibility: ASN1_TIME_to_tm()
+ *
+ * OpenSSL < 1.1.0 does not provide ASN1_TIME_to_tm, so we emulate it
+ * using ASN1_TIME_print() + sscanf. Format is typically:
+ *   "MMM DD HH:MM:SS YYYY GMT"
+ * which is stable enough for our "display validity" use-case.
+ * ------------------------------------------------------------------ */
+static int ASN1_TIME_to_tm(const ASN1_TIME *t, struct tm *tm)
+{
+	if (!t || !tm)
+		return 0;
+
+	BIO *bio = BIO_new(BIO_s_mem());
+	if (!bio)
+		return 0;
+
+	if (ASN1_TIME_print(bio, t) <= 0) {
+		BIO_free(bio);
+		return 0;
+	}
+
+	char buf[64];
+	int len = BIO_read(bio, buf, sizeof(buf) - 1);
+	BIO_free(bio);
+
+	if (len <= 0)
+		return 0;
+
+	buf[len] = '\0';
+
+	/* Expected format: "MMM DD HH:MM:SS YYYY GMT" */
+	char mon_str[4] = {0};
+	int day = 0, year = 0;
+	int hour = 0, min = 0, sec = 0;
+
+	if (sscanf(buf, "%3s %d %d:%d:%d %d",
+			   mon_str, &day, &hour, &min, &sec, &year) != 6)
+		return 0;
+
+	static const char *months = "JanFebMarAprMayJunJulAugSepOctNovDec";
+	char *m = strstr(months, mon_str);
+	int mon = 0;
+	if (m)
+		mon = (int)((m - months) / 3);
+
+	memset(tm, 0, sizeof(*tm));
+	tm->tm_year = year - 1900;
+	tm->tm_mon  = mon;
+	tm->tm_mday = day;
+	tm->tm_hour = hour;
+	tm->tm_min  = min;
+	tm->tm_sec  = sec;
+
+	return 1;
+}
+#endif /* OPENSSL_VERSION_NUMBER < 0x10100000L */
+
 /* Opaque structs defined here (match header typedefs) */
 struct oscam_ssl_conf_s {
 	SSL_CTX  *ctx;
@@ -109,11 +168,19 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 	oscam_ssl_conf_t *conf = calloc(1, sizeof(*conf));
 	if (!conf) return NULL;
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	conf->ctx = SSL_CTX_new(SSLv23_server_method());
+#else
 	conf->ctx = SSL_CTX_new(TLS_server_method());
+#endif
 	if (!conf->ctx) { free(conf); return NULL; }
 
 #ifdef SSL_CTX_set_min_proto_version
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	SSL_CTX_set_options(conf->ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+#else
 	SSL_CTX_set_min_proto_version(conf->ctx, TLS1_2_VERSION);
+#endif
 #else
 	SSL_CTX_set_options(conf->ctx,
 		SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 |
@@ -157,7 +224,11 @@ void oscam_ssl_conf_free(oscam_ssl_conf_t *conf)
 
 int oscam_ssl_conf_set_min_tls12(oscam_ssl_conf_t *conf)
 {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	SSL_CTX_set_options(conf->ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+#else
 	SSL_CTX_set_min_proto_version(conf->ctx, TLS1_2_VERSION);
+#endif
 	return OSCAM_SSL_OK;
 }
 
@@ -344,17 +415,29 @@ int oscam_ssl_sha256_stream(const unsigned char *data1, size_t len1,
 							const unsigned char *data2, size_t len2,
 							unsigned char *out)
 {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	EVP_MD_CTX *ctx = EVP_MD_CTX_create();
+#else
 	EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+#endif
 	unsigned int ol = 0;
 	if (!ctx) return -1;
 	if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
 		(data1 && len1 && EVP_DigestUpdate(ctx, data1, len1) != 1) ||
 		(data2 && len2 && EVP_DigestUpdate(ctx, data2, len2) != 1) ||
 		EVP_DigestFinal_ex(ctx, out, &ol) != 1) {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+		EVP_MD_CTX_destroy(ctx);
+#else
 		EVP_MD_CTX_free(ctx);
+#endif
 		return -1;
 	}
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	EVP_MD_CTX_destroy(ctx);
+#else
 	EVP_MD_CTX_free(ctx);
+#endif
 	return 0;
 }
 
@@ -569,7 +652,12 @@ int oscam_ssl_pk_clone(oscam_pk_context *dst, const oscam_pk_context *src)
 	if (!dst || !src || !src->pk)
 		return OSCAM_SSL_PARAM;
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	CRYPTO_add(&((EVP_PKEY *)src->pk)->references, 1, CRYPTO_LOCK_EVP_PKEY);
+	dst->pk = src->pk;
+#else
 	dst->pk = EVP_PKEY_dup(src->pk);
+#endif
 	return dst->pk ? OSCAM_SSL_OK : OSCAM_SSL_ERR;
 }
 
