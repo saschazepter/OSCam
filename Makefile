@@ -364,9 +364,9 @@ ifeq ($(USE_OPENSSL),1)
 	SSL_HEADER = $(shell find $(subst -DWITH_SSL=1,,$(subst -I,,$(DEFAULT_SSL_FLAGS))) -name opensslv.h -print 2>/dev/null | tail -n 1)
 	SSL_VER    = ${shell ($(GREP) 'OpenSSL [[:digit:]][^ ]*' $(SSL_HEADER) /dev/null 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
 else
-	SSL_VER    = ${shell ($(GREP) '^\#define MBEDTLS_VERSION_STRING_FULL' $(MBEDTLS_INC)/mbedtls/build_info.h /dev/null 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
+	SSL_VER    = ${shell ($(GREP) '^\#define MBEDTLS_VERSION_STRING_FULL' $(MBEDTLS_INC)/mbedtls/build_info.h /dev/null 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 " (built-in)" }' | xargs}
 endif
-SSL_INFO   = $(shell echo ', $(SSL_VER) (built-in)')
+SSL_INFO   = $(shell echo ', $(SSL_VER)')
 
 # Add PLUS_TARGET and EXTRA_TARGET to TARGET
 ifdef NO_PLUS_TARGET
