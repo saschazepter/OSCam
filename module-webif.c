@@ -10029,10 +10029,12 @@ static void *http_server(void *UNUSED(d))
 		else { ssl_active = 1; }
 	}
 	else { ssl_active = 0; }
-	cs_log("HTTP%s Server running. ip=%s port=%d (%s)",
+	cs_log("HTTP%s Server running. ip=%s port=%d%s%s%s",
 				ssl_active ? "S" : "",
 				cs_inet_ntoa(SIN_GET_ADDR(sin)), cfg.http_port,
-				oscam_ssl_version());
+				ssl_active ? " (" : "",
+				ssl_active ? oscam_ssl_version() : "",
+				ssl_active ? ")" : "");
 #else
 	cs_log("HTTP Server running. ip=%s port=%d", cs_inet_ntoa(SIN_GET_ADDR(sin)), cfg.http_port);
 #endif
