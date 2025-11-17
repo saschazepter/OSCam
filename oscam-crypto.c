@@ -304,22 +304,22 @@ static inline const EVP_CIPHER *aes_cbc_cipher(int bits) {
 
 static inline ossl_aesctx *AES_C(AesCtx *c) { return (ossl_aesctx *)c; }
 
-static int aes_ctx_init_ecb_pair(ossl_aesctx *C, const unsigned char *key, int key_bits)
+static int aes_ctx_init_pair(ossl_aesctx *C, const unsigned char *key, int key_bits, int mode)
 {
-	const EVP_CIPHER *ecb = aes_ecb_cipher(key_bits);
-	if (!ecb) return -1;
+	const EVP_CIPHER *cipher =
+		(mode == CBC) ? aes_cbc_cipher(key_bits) : aes_ecb_cipher(key_bits);
+	if (!cipher) return -1;
 
 	C->enc = EVP_CIPHER_CTX_new();
 	C->dec = EVP_CIPHER_CTX_new();
 	if (!C->enc || !C->dec) return -1;
 
-	if (!EVP_EncryptInit_ex(C->enc, ecb, NULL, key, NULL)) return -1;
-	if (!EVP_DecryptInit_ex(C->dec, ecb, NULL, key, NULL)) return -1;
+	// iv is NULL here; we set it separately below for CBC
+	if (!EVP_EncryptInit_ex(C->enc, cipher, NULL, key, NULL)) return -1;
+	if (!EVP_DecryptInit_ex(C->dec, cipher, NULL, key, NULL)) return -1;
 
-	/* exactly 16-byte blocks everywhere in OSCam AES paths */
 	EVP_CIPHER_CTX_set_padding(C->enc, 0);
 	EVP_CIPHER_CTX_set_padding(C->dec, 0);
-
 	C->key_bits = key_bits;
 	return 0;
 }
@@ -335,9 +335,15 @@ int AesCtxIni(AesCtx *c, const unsigned char *iv, const unsigned char *key, int 
 	if (!key_bits) return -1;
 
 	ossl_aesctx *C = AES_C(c);
-	if (aes_ctx_init_ecb_pair(C, key, key_bits) != 0) return -1;
-
-	if (iv) memcpy(C->iv, iv, 16);
+	if (aes_ctx_init_pair(C, key, key_bits, mode) != 0) return -1;
+	if (iv) {
+		memcpy(C->iv, iv, 16);
+		if (mode == CBC) {
+			/* set IV in the OpenSSL context once */
+			EVP_CipherInit_ex(C->enc, NULL, NULL, NULL, C->iv, 1);
+			EVP_CipherInit_ex(C->dec, NULL, NULL, NULL, C->iv, 0);
+		}
+	}
 	C->mode = (unsigned char)mode;
 	C->nr   = (keylen == 16 ? 10 : keylen == 24 ? 12 : 14);
 	return 0;
@@ -346,22 +352,15 @@ int AesCtxIni(AesCtx *c, const unsigned char *iv, const unsigned char *key, int 
 int AesEncrypt(AesCtx *c, const unsigned char *in, unsigned char *out, int len)
 {
 	ossl_aesctx *C = AES_C(c);
+	int outl;
 
 	if (C->mode == CBC) {
-		/* Use CBC cipher with provided IV; no padding, full buffer */
-		const EVP_CIPHER *cbc = aes_cbc_cipher(C->key_bits);
-		if (!cbc) return -1;
-
-		/* Re-init enc ctx with CBC + IV for this call */
-		if (!EVP_CipherInit_ex(C->enc, cbc, NULL, NULL, C->iv, 1)) return -1;
-		EVP_CIPHER_CTX_set_padding(C->enc, 0);
-
-		int outl = 0;
-		if (!EVP_CipherUpdate(C->enc, out, &outl, in, len)) return -1;
-		return outl; /* equals len (padding off) */
+		if (!EVP_EncryptUpdate(C->enc, out, &outl, in, len)) return -1;
+		// Optionally mirror IV update into C->iv using last block of out
+		if (len >= AES_BLOCK_SIZE)
+			memcpy(C->iv, out + len - AES_BLOCK_SIZE, AES_BLOCK_SIZE);
+		return outl;
 	} else {
-		/* ECB: 16-byte blocks loop */
-		int outl;
 		for (int i = 0; i < len; i += AES_BLOCK_SIZE) {
 			if (!EVP_EncryptUpdate(C->enc, out + i, &outl, in + i, AES_BLOCK_SIZE))
 				return -1;
@@ -373,16 +372,12 @@ int AesEncrypt(AesCtx *c, const unsigned char *in, unsigned char *out, int len)
 int AesDecrypt(AesCtx *c, const unsigned char *in, unsigned char *out, int len)
 {
 	ossl_aesctx *C = AES_C(c);
+	int outl;
 
 	if (C->mode == CBC) {
-		const EVP_CIPHER *cbc = aes_cbc_cipher(C->key_bits);
-		if (!cbc) return -1;
-
-		if (!EVP_CipherInit_ex(C->dec, cbc, NULL, NULL, C->iv, 0)) return -1;
-		EVP_CIPHER_CTX_set_padding(C->dec, 0);
-
-		int outl = 0;
-		if (!EVP_CipherUpdate(C->dec, out, &outl, in, len)) return -1;
+		if (!EVP_DecryptUpdate(C->dec, out, &outl, in, len)) return -1;
+		if (len >= AES_BLOCK_SIZE)
+			memcpy(C->iv, in + len - AES_BLOCK_SIZE, AES_BLOCK_SIZE);
 		return outl;
 	} else {
 		int outl;
