@@ -175,6 +175,15 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 #endif
 	if (!conf->ctx) { free(conf); return NULL; }
 
+/* Enable ECDHE key exchange support */
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	/* OpenSSL 1.0.2 and older */
+	SSL_CTX_set_ecdh_auto(conf->ctx, 1);
+#else
+	/* OpenSSL 1.1.0+ and 3.x */
+	SSL_CTX_set1_groups_list(conf->ctx, "P-256:P-384");
+#endif
+
 #ifdef SSL_CTX_set_min_proto_version
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 	SSL_CTX_set_options(conf->ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
@@ -190,22 +199,40 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 	switch (mode)
 	{
 		case OSCAM_SSL_MODE_STRICT:
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
 			SSL_CTX_set_cipher_list(conf->ctx,
 				"TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256:"
 				"ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256");
+#else
+			SSL_CTX_set_cipher_list(conf->ctx,
+				"ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:"
+				"DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA");
+#endif
 			break;
 
 		case OSCAM_SSL_MODE_LEGACY:
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
 			SSL_CTX_set_cipher_list(conf->ctx,
 				"ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:"
 				"AES256-SHA:AES128-SHA");
+#else
+			SSL_CTX_set_cipher_list(conf->ctx,
+				"ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:"
+				"AES256-SHA:AES128-SHA:DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA");
+#endif
 			break;
 
 		default:
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
 			SSL_CTX_set_cipher_list(conf->ctx,
 				"TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256:"
 				"ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:"
 				"AES256-SHA:AES128-SHA");
+#else
+			SSL_CTX_set_cipher_list(conf->ctx,
+				"ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:"
+				"AES256-SHA:AES128-SHA:DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA");
+#endif
 	}
 
 	SSL_CTX_set_verify(conf->ctx, SSL_VERIFY_NONE, NULL);
