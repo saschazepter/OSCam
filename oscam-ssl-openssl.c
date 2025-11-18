@@ -423,49 +423,6 @@ void oscam_ssl_strerror(int err, char *buf, size_t len)
 	ERR_error_string_n(err, buf, len);
 }
 
-/* hashing */
-int oscam_ssl_sha1(const unsigned char *data, size_t len, unsigned char *out)
-{
-	unsigned int ol = 0;
-	return EVP_Digest(data, len, out, &ol, EVP_sha1(), NULL) == 1 ? 0 : -1;
-}
-
-int oscam_ssl_sha256(const unsigned char *data, size_t len, unsigned char *out)
-{
-	unsigned int ol = 0;
-	return EVP_Digest(data, len, out, &ol, EVP_sha256(), NULL) == 1 ? 0 : -1;
-}
-
-int oscam_ssl_sha256_stream(const unsigned char *data1, size_t len1,
-							const unsigned char *data2, size_t len2,
-							unsigned char *out)
-{
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-	EVP_MD_CTX *ctx = EVP_MD_CTX_create();
-#else
-	EVP_MD_CTX *ctx = EVP_MD_CTX_new();
-#endif
-	unsigned int ol = 0;
-	if (!ctx) return -1;
-	if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
-		(data1 && len1 && EVP_DigestUpdate(ctx, data1, len1) != 1) ||
-		(data2 && len2 && EVP_DigestUpdate(ctx, data2, len2) != 1) ||
-		EVP_DigestFinal_ex(ctx, out, &ol) != 1) {
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-		EVP_MD_CTX_destroy(ctx);
-#else
-		EVP_MD_CTX_free(ctx);
-#endif
-		return -1;
-	}
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-	EVP_MD_CTX_destroy(ctx);
-#else
-	EVP_MD_CTX_free(ctx);
-#endif
-	return 0;
-}
-
 /* x509 */
 int oscam_ssl_cert_parse(oscam_x509_crt *crt, const unsigned char *buf, size_t len)
 {
@@ -710,50 +667,39 @@ int oscam_ssl_pk_verify(oscam_pk_context *pk,
 	EVP_PKEY *pkey = pk->pk;
 
 	/* ================================================================
-	 * Modern EVP path (OpenSSL >= 1.0.2, excluding LibreSSL)
+	 * Modern EVP_PKEY path (OpenSSL >= 1.0.2)
 	 *   - used on 1.0.2, 1.1.x and 3.x+
-	 *   - avoids deprecated EC/RSA low-level APIs on 3.x
+	 *   - treats `hash` as already-digested SHA-256
 	 * ================================================================ */
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L && !defined(LIBRESSL_VERSION_NUMBER)
+#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 
 	const EVP_MD *md = EVP_sha256();
-	int ret;
-
-# if OPENSSL_VERSION_NUMBER >= 0x10100000L
-	/* OpenSSL 1.1.0+ / 3.x : use EVP_MD_CTX_new / free */
-	EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+	EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(pkey, NULL);
 	if (!ctx)
 		return -1;
 
-	if (EVP_DigestVerifyInit(ctx, NULL, md, NULL, pkey) <= 0) {
-		EVP_MD_CTX_free(ctx);
-		return -1;
-	}
+	int ok  = 1;
+	int ret = -1;
 
-	ret = EVP_DigestVerify(ctx, sig, sig_len, hash, hash_len);
-	EVP_MD_CTX_free(ctx);
-# else
-	/* 1.0.2: use stack ctx + init/cleanup */
-	EVP_MD_CTX ctx;
-	EVP_MD_CTX_init(&ctx);
+	/* Initialize verification context */
+	if (ok) ok = (EVP_PKEY_verify_init(ctx) > 0);
 
-	if (EVP_DigestVerifyInit(&ctx, NULL, md, NULL, pkey) <= 0) {
-		EVP_MD_CTX_cleanup(&ctx);
-		return -1;
-	}
+	/* Configure signature to use SHA256 digest (but DO NOT hash `hash` again) */
+	if (ok && md) ok = (EVP_PKEY_CTX_set_signature_md(ctx, md) > 0);
 
-	ret = EVP_DigestVerify(&ctx, sig, sig_len, hash, hash_len);
-	EVP_MD_CTX_cleanup(&ctx);
-# endif
+	/* EVP_PKEY_verify() takes the precomputed digest directly */
+	if (ok)
+		ret = EVP_PKEY_verify(ctx, sig, sig_len, hash, hash_len);
 
+	EVP_PKEY_CTX_free(ctx);
 	return (ret == 1) ? 0 : -1;
 
-#else /* OPENSSL_VERSION_NUMBER < 0x10002000L or LibreSSL */
+#else /* OPENSSL_VERSION_NUMBER < 0x10002000L */
 
 	/* ================================================================
-	 * Legacy path: OpenSSL 0.9.8 – 1.0.1 and LibreSSL
-	 *   - RSA_verify / ECDSA_verify are NOT deprecated there
-	 *   - This code is NOT compiled on OpenSSL 3.x
+	 * Legacy path: OpenSSL 0.9.8 – 1.0.1
+	 *   - RSA_verify / ECDSA_verify expect precomputed digest
+	 *   - same semantics as mbedTLS backend
 	 * ================================================================ */
 
 	int type = EVP_PKEY_id(pkey);
