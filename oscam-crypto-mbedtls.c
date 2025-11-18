@@ -29,6 +29,48 @@
 #endif
 
 /* ----------------------------------------------------------------------
+ * Unified hash helper
+ * ---------------------------------------------------------------------- */
+int oscam_hash(oscam_hash_alg alg, const unsigned char *d1, size_t l1, const unsigned char *d2, size_t l2, unsigned char *out)
+{
+	if (!out)
+		return -1;
+
+	switch (alg) {
+	case OSCAM_HASH_SHA1:
+#ifdef WITH_LIB_SHA1
+	{
+		SHA_CTX ctx;
+		if (SHA1_Init(&ctx) != 0) return -1;
+		if (d1 && l1) if (SHA1_Update(&ctx, d1, l1) != 0) return -1;
+		if (d2 && l2) if (SHA1_Update(&ctx, d2, l2) != 0) return -1;
+		if (SHA1_Final(out, &ctx) != 0) return -1;
+		return 0;
+	}
+#else
+		return -1;
+#endif
+
+	case OSCAM_HASH_SHA256:
+#ifdef WITH_LIB_SHA256
+	{
+		SHA256_CTX ctx;
+		if (SHA256_Init(&ctx) != 0) return -1;
+		if (d1 && l1) if (SHA256_Update(&ctx, d1, l1) != 0) return -1;
+		if (d2 && l2) if (SHA256_Update(&ctx, d2, l2) != 0) return -1;
+		if (SHA256_Final(out, &ctx) != 0) return -1;
+		return 0;
+	}
+#else
+		return -1;
+#endif
+
+	default:
+		return -1;
+	}
+}
+
+/* ----------------------------------------------------------------------
  * MD5
  * ---------------------------------------------------------------------- */
 #ifdef WITH_LIB_MD5
