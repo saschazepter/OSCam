@@ -1193,39 +1193,6 @@ int oscam_ssl_pk_get_type(const oscam_pk_context *pk)
 	}
 }
 
-// ---- Hashing ----
-int oscam_ssl_sha1(const unsigned char *data, size_t len, unsigned char *out)
-{
-	SHA_CTX ctx;
-	SHA1_Init(&ctx);
-	SHA1_Update(&ctx, data, len);
-	SHA1_Final(out, &ctx);
-	return 0;
-}
-
-int oscam_ssl_sha256(const unsigned char *data, size_t len, unsigned char *out)
-{
-	SHA256_CTX ctx;
-	SHA256_Init(&ctx);
-	SHA256_Update(&ctx, data, len);
-	SHA256_Final(out, &ctx);
-	SHA256_Free(&ctx);
-	return 0;
-}
-
-int oscam_ssl_sha256_stream(const unsigned char *data1, size_t len1,
-							const unsigned char *data2, size_t len2,
-							unsigned char *out)
-{
-	SHA256_CTX ctx;
-	SHA256_Init(&ctx);
-	if (data1 && len1) SHA256_Update(&ctx, data1, len1);
-	if (data2 && len2) SHA256_Update(&ctx, data2, len2);
-	SHA256_Final(out, &ctx);
-	SHA256_Free(&ctx);
-	return 0;
-}
-
 int oscam_ssl_get_fd(oscam_ssl_t *ssl)
 {
 	return ssl ? ssl->net.fd : -1;
