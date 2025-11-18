@@ -119,6 +119,19 @@ static inline int OSCAM_SHA256_Final(unsigned char *md, SHA256_CTX *c) {
 #endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
 
 #if defined(WITH_SSL) || defined(WITH_LIB_MDC2) || defined(WITH_LIB_DES)
+/*
+ * OpenSSL 3.x marks low-level DES APIs as deprecated via OSSL_DEPRECATEDIN_3_0.
+ * We still need them for legacy MDC2/DES helpers, so locally neutralize that
+ * macro instead of using compiler-specific pragmas.
+ */
+#if defined(OPENSSL_VERSION_NUMBER) && (OPENSSL_VERSION_NUMBER >= 0x30000000L)
+#ifdef OSSL_DEPRECATEDIN_3_0
+#undef OSSL_DEPRECATEDIN_3_0
+#endif
+/* make OSSL_DEPRECATEDIN_3_0 expand to nothing in this TU */
+#define OSSL_DEPRECATEDIN_3_0
+#endif
+
 #include <openssl/des.h>
 typedef DES_key_schedule des_key_schedule;
 #endif
