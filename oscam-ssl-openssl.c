@@ -1002,13 +1002,11 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	f = fopen(path, "wb");
 	if (!f) goto cleanup;
 
-	if (!PEM_write_X509(f, crt)) { fclose(f); goto cleanup; }
-	if (!PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL)) {
-		fclose(f);
+	if (!PEM_write_X509(f, crt))
 		goto cleanup;
-	}
+	if (!PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL))
+		goto cleanup;
 
-	fclose(f);
 	ret = OSCAM_SSL_OK;
 
 cleanup:
