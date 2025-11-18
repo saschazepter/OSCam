@@ -41,6 +41,56 @@ void oscam_EVP_CIPHER_CTX_free(EVP_CIPHER_CTX *ctx)
 #endif
 
 /* ----------------------------------------------------------------------
+ * Unified hash helper
+ * ---------------------------------------------------------------------- */
+int oscam_hash(oscam_hash_alg alg, const unsigned char *d1, size_t l1, const unsigned char *d2, size_t l2, unsigned char *out)
+{
+	if (!out)
+		return -1;
+
+	const EVP_MD *md = NULL;
+
+	switch (alg) {
+	case OSCAM_HASH_SHA1:
+#ifdef WITH_LIB_SHA1
+		md = EVP_sha1();
+		break;
+#else
+		return -1;
+#endif
+
+	case OSCAM_HASH_SHA256:
+#ifdef WITH_LIB_SHA256
+		md = EVP_sha256();
+		break;
+#else
+		return -1;
+#endif
+
+	default:
+		return -1;
+	}
+
+	if (!md)
+		return -1;
+
+	EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+	if (!ctx)
+		return -1;
+
+	int ok = 1;
+	if (ok) ok = (EVP_DigestInit_ex(ctx, md, NULL) == 1);
+	if (ok && d1 && l1) ok = (EVP_DigestUpdate(ctx, d1, l1) == 1);
+	if (ok && d2 && l2) ok = (EVP_DigestUpdate(ctx, d2, l2) == 1);
+
+	unsigned int outlen = 0;
+	if (ok) ok = (EVP_DigestFinal_ex(ctx, out, &outlen) == 1);
+
+	EVP_MD_CTX_free(ctx);
+	return ok ? 0 : -1;
+}
+
+/* ----------------------------------------------------------------------
  * MD5
  * ---------------------------------------------------------------------- */
 #ifdef WITH_LIB_MD5
