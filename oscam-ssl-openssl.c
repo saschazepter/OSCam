@@ -23,6 +23,15 @@
 #include <openssl/bio.h>
 #include <openssl/opensslv.h>
 
+/* Some very old OpenSSL releases (0.9.8 / 1.0.0) don't define these.
+ * Define them as 0 so SSL_CTX_set_options() still compiles. */
+#ifndef SSL_OP_NO_TLSv1_1
+#define SSL_OP_NO_TLSv1_1 0
+#endif
+#ifndef SSL_OP_NO_TLSv1_2
+#define SSL_OP_NO_TLSv1_2 0
+#endif
+
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 /* --------------------------------------------------------------------
  * OpenSSL 1.0.2 compatibility: ASN1_TIME_to_tm()
@@ -174,12 +183,15 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 	if (!conf->ctx) { free(conf); return NULL; }
 
 /* Enable ECDHE key exchange support */
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-	/* OpenSSL 1.0.2 and older */
+#if OPENSSL_VERSION_NUMBER >= 0x10002000L && OPENSSL_VERSION_NUMBER < 0x10100000L
+	/* OpenSSL 1.0.2: has SSL_CTX_set_ecdh_auto() */
 	SSL_CTX_set_ecdh_auto(conf->ctx, 1);
-#else
-	/* OpenSSL 1.1.0+ and 3.x */
+#elif OPENSSL_VERSION_NUMBER >= 0x10100000L
+	/* OpenSSL 1.1.0+ and 3.x: use explicit groups */
 	SSL_CTX_set1_groups_list(conf->ctx, "P-256:P-384");
+#else
+	/* OpenSSL 0.9.8 – 1.0.1: either no ECDHE or configured elsewhere */
+	/* nothing */
 #endif
 
 #ifdef SSL_CTX_set_min_proto_version
@@ -645,16 +657,35 @@ int oscam_ssl_pk_clone(oscam_pk_context *dst, const oscam_pk_context *src)
 
 int oscam_ssl_pk_get_type(const oscam_pk_context *pk)
 {
-	if (!pk || !pk->pk) return OSCAM_PK_NONE;
+	if (!pk || !pk->pk)
+		return OSCAM_PK_NONE;
 
+#if OPENSSL_VERSION_NUMBER >= 0x10000000L
+	/* OpenSSL 1.0.0+ has EVP_PKEY_base_id() */
 	int t = EVP_PKEY_base_id(pk->pk);
 
 	switch (t)
 	{
 		case EVP_PKEY_RSA: return OSCAM_PK_RSA;
 		case EVP_PKEY_EC : return OSCAM_PK_EC;
-		default: return OSCAM_PK_NONE;
+		default:           return OSCAM_PK_NONE;
 	}
+#else
+	/* OpenSSL 0.9.8: no EVP_PKEY_base_id(), probe the type */
+	RSA *rsa = EVP_PKEY_get1_RSA(pk->pk);
+	if (rsa) {
+		RSA_free(rsa);
+		return OSCAM_PK_RSA;
+	}
+# ifdef EVP_PKEY_EC
+	EC_KEY *ec = EVP_PKEY_get1_EC_KEY(pk->pk);
+	if (ec) {
+		EC_KEY_free(ec);
+		return OSCAM_PK_EC;
+	}
+# endif
+	return OSCAM_PK_NONE;
+#endif
 }
 
 int oscam_ssl_pk_verify(oscam_pk_context *pk,
@@ -696,19 +727,14 @@ int oscam_ssl_pk_verify(oscam_pk_context *pk,
 
 #else /* OPENSSL_VERSION_NUMBER < 0x10002000L */
 
-	/* ================================================================
-	 * Legacy path: OpenSSL 0.9.8 – 1.0.1
-	 *   - RSA_verify / ECDSA_verify expect precomputed digest
-	 *   - same semantics as mbedTLS backend
-	 * ================================================================ */
+/* ================================================================
+ * Legacy path: OpenSSL 0.9.8 – 1.0.1
+ *   - RSA_verify / ECDSA_verify expect precomputed digest
+ * ================================================================ */
 
-	int type = EVP_PKEY_id(pkey);
-
-	if (type == EVP_PKEY_RSA) {
-		RSA *rsa = EVP_PKEY_get1_RSA(pkey);
-		if (!rsa)
-			return -1;
-
+	/* Try RSA first */
+	RSA *rsa = EVP_PKEY_get1_RSA(pkey);
+	if (rsa) {
 		int ok = RSA_verify(NID_sha256,
 							hash, (unsigned int)hash_len,
 							sig,  (unsigned int)sig_len,
@@ -718,12 +744,9 @@ int oscam_ssl_pk_verify(oscam_pk_context *pk,
 	}
 
 # ifdef EVP_PKEY_EC
-	if (type == EVP_PKEY_EC) {
-		EC_KEY *eckey = EVP_PKEY_get1_EC_KEY(pkey);
-		if (!eckey)
-			return -1;
-
-		/* type argument is ignored by OpenSSL, so 0 is fine */
+	/* Then EC */
+	EC_KEY *eckey = EVP_PKEY_get1_EC_KEY(pkey);
+	if (eckey) {
 		int ok = ECDSA_verify(0,
 							  hash, (int)hash_len,
 							  sig,  (int)sig_len,
@@ -742,10 +765,11 @@ int oscam_ssl_generate_selfsigned(const char *path)
 {
 	int ret = OSCAM_SSL_ERR;
 	EVP_PKEY *pkey = NULL;
-	EVP_PKEY_CTX *kctx = NULL;
 	X509 *crt = NULL;
 	FILE *f = NULL;
-#if OPENSSL_VERSION_NUMBER < 0x30000000L
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+	EVP_PKEY_CTX *kctx = NULL;
+#else
 	RSA *rsa = NULL;
 #endif
 
@@ -956,14 +980,16 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	ret = OSCAM_SSL_OK;
 
 cleanup:
-	if (f) fclose(f);
 	if (crt) X509_free(crt);
-#if OPENSSL_VERSION_NUMBER < 0x30000000L
+	if (pkey) EVP_PKEY_free(pkey);
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+	if (kctx) EVP_PKEY_CTX_free(kctx);
+#else
 	if (rsa) RSA_free(rsa);
 #endif
-	if (pkey) EVP_PKEY_free(pkey);
-	if (kctx) EVP_PKEY_CTX_free(kctx);
 
+	if (f) fclose(f);
 	return ret;
 }
 
