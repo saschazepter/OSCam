@@ -3,17 +3,9 @@
 
 #ifdef WITH_SSL
 
-#ifdef WITH_OPENSSL
-
-#include <openssl/ssl.h>
-#include <openssl/x509.h>
-#include <openssl/evp.h>
-
-#else /* default mbedtls backend */
-
-#include "mbedtls/platform.h"
+#ifdef WITH_MBEDTLS
 #include "mbedtls/ssl.h"
-#include <mbedtls/ssl_ticket.h>
+#include "mbedtls/ssl_ticket.h"
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/x509_crt.h"
 #include "mbedtls/x509_csr.h"
@@ -22,7 +14,12 @@
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/error.h"
+#endif /* WITH_MBEDTLS */
 
+#ifdef WITH_OPENSSL
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#include <openssl/evp.h>
 #endif /* WITH_OPENSSL */
 
 /* ---------------------------------------------------------------------
@@ -37,6 +34,8 @@ enum {
 	OSCAM_SSL_HANDSHAKE_FAIL = -5,
 	OSCAM_SSL_CERT_FAIL = -6
 };
+
+#define OSCAM_SSL_CERT_YEARS 2
 
 #define OSCAM_PK_RSA   0
 #define OSCAM_PK_EC    1
@@ -96,8 +95,6 @@ const char *oscam_ssl_version(void);
 int oscam_ssl_get_peer_cn(oscam_ssl_t *ssl, char *out, size_t outlen);
 int oscam_ssl_random(void *buf, size_t len);
 int oscam_ssl_get_error(oscam_ssl_t *ssl, int ret);
-void oscam_ssl_conf_strict_ciphers(oscam_ssl_conf_t *conf);
-void oscam_ssl_conf_enable_legacy_compat(oscam_ssl_conf_t *conf);
 int oscam_ssl_generate_selfsigned(const char *path);
 void oscam_ssl_strerror(int err, char *buf, size_t len);
 

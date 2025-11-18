@@ -74,6 +74,7 @@ STAT = $(shell which gnustat 2>/dev/null || which stat 2>/dev/null)
 SPLIT = $(shell which gsplit 2>/dev/null || which split 2>/dev/null)
 GREP = $(shell which ggrep 2>/dev/null || which grep 2>/dev/null)
 GIT = $(shell which git 2>/dev/null || true)
+LOWER = $(shell printf "%s" $(1) | tr A-Z a-z)
 
 # Compiler warnings
 CC_WARN = -W -Wall -Wshadow -Wredundant-decls -Wstrict-prototypes -Wold-style-definition
@@ -343,6 +344,7 @@ $(eval $(call prepare_use_flags,SU980,su980))
 $(eval $(call prepare_use_flags,AZBOX,azbox))
 $(eval $(call prepare_use_flags,AMSMC,amsmc))
 $(eval $(call prepare_use_flags,MCA,mca))
+$(eval $(call prepare_use_flags,MBEDTLS,))
 $(eval $(call prepare_use_flags,OPENSSL,))
 $(eval $(call prepare_use_flags,SSL,ssl))
 $(eval $(call prepare_use_flags,LIBCRYPTO,))
@@ -350,7 +352,6 @@ $(eval $(call prepare_use_flags,LIBUSB,libusb))
 $(eval $(call prepare_use_flags,PCSC,pcsc))
 $(eval $(call prepare_use_flags,LIBDVBCSA,libdvbcsa))
 $(eval $(call prepare_use_flags,COMPRESS,upx))
-
 
 ifeq ($(USE_OPENSSL),1)
 	SSL_HEADER = $(shell find $(subst -DWITH_SSL=1,,$(subst -I,,$(DEFAULT_SSL_FLAGS))) -name opensslv.h -print 2>/dev/null | tail -n 1)
@@ -513,6 +514,7 @@ SRC-y += oscam-config-global.c
 SRC-y += oscam-config-reader.c
 SRC-y += oscam-config.c
 SRC-y += oscam-crypto.c
+SRC-y += oscam-crypto-$(call LOWER,$(SECURITY_BACKEND)).c
 SRC-y += oscam-ecm.c
 SRC-y += oscam-emm.c
 SRC-y += oscam-emm-cache.c
@@ -526,7 +528,7 @@ SRC-y += oscam-net.c
 SRC-y += oscam-llist.c
 SRC-y += oscam-reader.c
 SRC-y += oscam-simples.c
-SRC-$(if $(filter 1,$(USE_SSL)),y) += oscam-ssl.c
+SRC-$(if $(filter 1,$(USE_SSL)),y) += oscam-ssl-$(call LOWER,$(SECURITY_BACKEND)).c
 SRC-y += oscam-string.c
 SRC-y += oscam-time.c
 SRC-y += oscam-work.c
