@@ -1,14 +1,6 @@
 #ifndef OSCAM_CRYPTO_H
 #define OSCAM_CRYPTO_H
 
-/* =====================================================================
- *  OSCam unified crypto API header
- *  ---------------------------------------------------------------
- *  - Independent of backend (OpenSSL / MbedTLS)
- *  - No heavy library includes
- *  - All real includes live in oscam-crypto.c
- * ===================================================================== */
-
 #include "config.h"
 
 #ifdef WITH_OPENSSL
@@ -207,7 +199,7 @@ struct oscam_des_key_schedule {
 
 /* When using OpenSSL, des_* are legacy macros in <openssl/des.h>.
    Undef them so our aliases are clean and consistent on 0.9.8/1.0.x/3.x. */
-#if defined(WITH_OPENSSL)
+#ifdef WITH_OPENSSL
 # undef des_set_key
 # undef des_ecb_encrypt
 # undef des_ecb_decrypt
