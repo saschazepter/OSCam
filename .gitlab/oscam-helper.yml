@@ -162,6 +162,11 @@
             echo "Enabling SSL...";
             BIN_EXT+="-ssl";
         fi
+        echo "Using secutity backend $SECURITY_BACKEND...";
+        if [ "$SECURITY_BACKEND" == "openssl" ]; then
+            MAKE_OPT+=" USE_OPENSSL=1";
+            CMAKE_OPT+=" -DUSE_OPENSSL=1";
+        fi;
         if [ -z "$(find "/usr/lib" -name "arm_neon.h" -type f -print -quit)" ]; then
             DISABLE_OPT+=" WITH_ARM_NEON";
             CMAKE_OPT="-DWITH_ARM_NEON=0";
@@ -208,6 +213,11 @@
             MAKE_OPT+=" USE_SSL=1";
             CMAKE_OPT+=" -DUSE_SSL=1";
             BIN_EXT+="-ssl";
+        fi;
+        echo "Using secutity backend $SECURITY_BACKEND...";
+        if [ "$SECURITY_BACKEND" == "openssl" ]; then
+            MAKE_OPT+=" USE_OPENSSL=1";
+            CMAKE_OPT+=" -DUSE_OPENSSL=1";
         fi;
         if [ -z "$(find -L "$HOME/toolchains/${ARCH}_generic" -name "arm_neon.h" -type f -print -quit)" ] || [ "$ARCH" == "ancient" ]; then
             DISABLE_OPT+=" WITH_ARM_NEON";
