@@ -5,7 +5,7 @@
 #include "oscam-string.h"
 
 /* ----------------------------------------------------------------------
- * MDC2 (internal implementation, not provided by mbedtls nor openssl)
+ * MDC2 (oscam custom implementation, not provided by mbedtls nor openssl)
  * ---------------------------------------------------------------------- */
 #ifdef WITH_LIB_MDC2
 typedef struct {
@@ -147,7 +147,7 @@ int MDC2_Final(unsigned char *md, MDC2_CTX *c)
 #endif /* WITH_LIB_MDC2 */
 
 /* ----------------------------------------------------------------------
- * IDEA (internal implementation, not provided by mbedtls nor openssl)
+ * IDEA (oscam custom implementation, not provided by mbedtls nor openssl)
  * ---------------------------------------------------------------------- */
 #ifdef WITH_LIB_IDEA
 /* ====================================================================
@@ -615,7 +615,7 @@ const char *oscam_idea_options(void)
 #endif /* WITH_LIB_IDEA */
 
 /* ----------------------------------------------------------------------
- * RC6 (internal implementation, not provided by mbedtls nor openssl)
+ * RC6 (oscam custom implementation, not provided by mbedtls nor openssl)
  * ---------------------------------------------------------------------- */
 #ifdef WITH_LIB_RC6
 #define ROTL32(x,y) (((x) << ((y) & (RC6_W - 1))) | ((x) >> (RC6_W - ((y) & (RC6_W - 1)))))
