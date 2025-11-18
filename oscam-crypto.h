@@ -159,6 +159,14 @@ typedef struct SHA256_CTX         SHA256_CTX;
 typedef struct AES_KEY            AES_KEY;
 #endif
 
+/* ---- Unified hashing API (SHA1 / SHA256) ---- */
+typedef enum {
+	OSCAM_HASH_SHA1   = 1,
+	OSCAM_HASH_SHA256 = 2
+} oscam_hash_alg;
+
+int oscam_hash(oscam_hash_alg alg, const unsigned char *data1, size_t len1, const unsigned char *data2, size_t len2, unsigned char *out);
+
 /* --- Basic digest / block size constants (defined if missing) --- */
 #ifndef MD5_DIGEST_LENGTH
 #define MD5_DIGEST_LENGTH 16
@@ -262,6 +270,12 @@ int SHA1_Update(SHA_CTX *c, const void *data, size_t len);
 int SHA1_Final(unsigned char *md, SHA_CTX *c);
 unsigned char *SHA1(const unsigned char *d, size_t n, unsigned char *md);
 #endif /* WITH_OPENSSL */
+
+static inline int oscam_sha1(const unsigned char *data, size_t len, unsigned char *out)
+{
+	return oscam_hash(OSCAM_HASH_SHA1, data, len, NULL, 0, out);
+}
+
 #endif /* WITH_LIB_SHA1 */
 
 /* ----------------------------------------------------------------------
@@ -281,7 +295,19 @@ int SHA256_Init(SHA256_CTX *c);
 int SHA256_Update(SHA256_CTX *c, const void *data, size_t len);
 int SHA256_Final(unsigned char *md, SHA256_CTX *c);
 #endif /* WITH_OPENSSL */
+
 void SHA256_Free(SHA256_CTX *c);
+
+static inline int oscam_sha256(const unsigned char *data, size_t len, unsigned char *out)
+{
+	return oscam_hash(OSCAM_HASH_SHA256, data, len, NULL, 0, out);
+}
+
+static inline int oscam_sha256_stream(const unsigned char *d1,size_t l1, const unsigned char *d2,size_t l2, unsigned char *out)
+{
+	return oscam_hash(OSCAM_HASH_SHA256, d1, l1, d2, l2, out);
+}
+
 #endif /* WITH_LIB_SHA256 */
 
 /* ----------------------------------------------------------------------
