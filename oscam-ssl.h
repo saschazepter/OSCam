@@ -123,10 +123,5 @@ void oscam_ssl_pk_free(oscam_pk_context *pk);
 int oscam_ssl_pk_verify(oscam_pk_context *pk, const unsigned char *hash, size_t hash_len, const unsigned char *sig, size_t sig_len);
 int oscam_ssl_pk_get_type(const oscam_pk_context *pk);
 
-/* ------------------- hashing ---------------------------------------- */
-int oscam_ssl_sha1(const unsigned char *data, size_t len, unsigned char *out);
-int oscam_ssl_sha256(const unsigned char *data, size_t len, unsigned char *out);
-int oscam_ssl_sha256_stream(const unsigned char *data1, size_t len1, const unsigned char *data2, size_t len2, unsigned char *out);
-
 #endif /* WITH_SSL */
 #endif /* OSCAM_SSL_H */

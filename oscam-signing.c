@@ -135,7 +135,7 @@ static oscam_pk_context *verify_cert(void)
 	if (der && der_len > 0)
 	{
 		unsigned char fp[SHA_DIGEST_LENGTH];
-		oscam_ssl_sha1(der, der_len, fp);
+		oscam_sha1(der, der_len, fp);
 
 		char fphex[2 * SHA_DIGEST_LENGTH + 1];
 		hex_encode(fp, fphex, SHA_DIGEST_LENGTH);
@@ -334,7 +334,7 @@ static DIGEST hashBinary(const char *binfile, DIGEST *sign)
 					// SHA256 hash binary (excluding signature)
 					arRetval.data = malloc(SHA256_DIGEST_LENGTH);
 					if (arRetval.data) {
-						oscam_ssl_sha256_stream(
+						oscam_sha256_stream(
 							data, offset,                       // first part of file
 							signature_end, file_size - end,     // second part of file
 							arRetval.data
@@ -375,7 +375,7 @@ static bool verifyBin(const char *binfile, oscam_pk_context *pubkey)
 		{
 			/* behavior: final_digest = SHA256( lowercase_hex(sha256(file_wo_sig)) ) */
 			unsigned char final_digest[32];
-			oscam_ssl_sha256((const unsigned char *)osi.hash_sha256,
+			oscam_sha256((const unsigned char *)osi.hash_sha256,
 							 strlen(osi.hash_sha256),
 							 final_digest);
 
