@@ -38,6 +38,10 @@ void oscam_EVP_CIPHER_CTX_free(EVP_CIPHER_CTX *ctx)
 	EVP_CIPHER_CTX_cleanup(ctx);
 	OPENSSL_free(ctx);
 }
+
+/* Provided by oscam-ssl-openssl.c */
+EVP_MD_CTX *EVP_MD_CTX_new(void);
+void        EVP_MD_CTX_free(EVP_MD_CTX *ctx);
 #endif
 
 /* ----------------------------------------------------------------------
