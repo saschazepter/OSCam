@@ -23,6 +23,15 @@
 #include <openssl/bio.h>
 #include <openssl/opensslv.h>
 
+/* Some very old OpenSSL releases (0.9.8 / 1.0.0) don't define these.
+ * Define them as 0 so SSL_CTX_set_options() still compiles. */
+#ifndef SSL_OP_NO_TLSv1_1
+#define SSL_OP_NO_TLSv1_1 0
+#endif
+#ifndef SSL_OP_NO_TLSv1_2
+#define SSL_OP_NO_TLSv1_2 0
+#endif
+
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 /* --------------------------------------------------------------------
  * OpenSSL 1.0.2 compatibility: ASN1_TIME_to_tm()
@@ -41,7 +50,7 @@ static int ASN1_TIME_to_tm(const ASN1_TIME *t, struct tm *tm)
 	if (!bio)
 		return 0;
 
-	if (ASN1_TIME_print(bio, t) <= 0) {
+	if (ASN1_TIME_print(bio, (ASN1_TIME *)t) <= 0) {
 		BIO_free(bio);
 		return 0;
 	}
@@ -79,6 +88,23 @@ static int ASN1_TIME_to_tm(const ASN1_TIME *t, struct tm *tm)
 	tm->tm_sec  = sec;
 
 	return 1;
+}
+
+EVP_MD_CTX *EVP_MD_CTX_new(void)
+{
+	EVP_MD_CTX *ctx = OPENSSL_malloc(sizeof(EVP_MD_CTX));
+	if (!ctx)
+		return NULL;
+	EVP_MD_CTX_init(ctx);
+	return ctx;
+}
+
+void EVP_MD_CTX_free(EVP_MD_CTX *ctx)
+{
+	if (!ctx)
+		return;
+	EVP_MD_CTX_cleanup(ctx);
+	OPENSSL_free(ctx);
 }
 #endif /* OPENSSL_VERSION_NUMBER < 0x10100000L */
 
@@ -174,24 +200,46 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 	if (!conf->ctx) { free(conf); return NULL; }
 
 /* Enable ECDHE key exchange support */
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-	/* OpenSSL 1.0.2 and older */
+#if OPENSSL_VERSION_NUMBER >= 0x10002000L && OPENSSL_VERSION_NUMBER < 0x10100000L
+	/* OpenSSL 1.0.2: has SSL_CTX_set_ecdh_auto() */
+#ifdef SSL_CTX_set_ecdh_auto
 	SSL_CTX_set_ecdh_auto(conf->ctx, 1);
-#else
-	/* OpenSSL 1.1.0+ and 3.x */
+#endif
+#elif OPENSSL_VERSION_NUMBER >= 0x10100000L
+	/* OpenSSL 1.1.0+ and 3.x: use explicit groups */
 	SSL_CTX_set1_groups_list(conf->ctx, "P-256:P-384");
+#else
+	/* OpenSSL 0.9.8 – 1.0.1: either no ECDHE or configured elsewhere */
+	/* nothing */
 #endif
 
 #ifdef SSL_CTX_set_min_proto_version
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-	SSL_CTX_set_options(conf->ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
-#else
+	/* We have SSL_CTX_set_min_proto_version (OpenSSL >= 1.1.0 or compatible) */
+# if OPENSSL_VERSION_NUMBER < 0x10100000L
+	/* Weird combo: headers define SSL_CTX_set_min_proto_version but OpenSSL is < 1.1.0
+	   -> fall back to masking out old protocols, but guard TLSv1.1 symbol. */
+	long opts = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3;
+#  ifdef SSL_OP_NO_TLSv1
+	opts |= SSL_OP_NO_TLSv1;
+#  endif
+#  ifdef SSL_OP_NO_TLSv1_1
+	opts |= SSL_OP_NO_TLSv1_1;
+#  endif
+	SSL_CTX_set_options(conf->ctx, opts);
+# else
+	/* Normal modern case: just require TLS 1.2+ */
 	SSL_CTX_set_min_proto_version(conf->ctx, TLS1_2_VERSION);
-#endif
-#else
-	SSL_CTX_set_options(conf->ctx,
-		SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 |
-		SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+# endif
+#else  /* !SSL_CTX_set_min_proto_version */
+	/* Old OpenSSL (<= 1.0.x) – only options mask available */
+	long opts = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3;
+# ifdef SSL_OP_NO_TLSv1
+	opts |= SSL_OP_NO_TLSv1;
+# endif
+# ifdef SSL_OP_NO_TLSv1_1
+	opts |= SSL_OP_NO_TLSv1_1;
+# endif
+	SSL_CTX_set_options(conf->ctx, opts);
 #endif
 
 	switch (mode)
@@ -426,7 +474,7 @@ void oscam_ssl_strerror(int err, char *buf, size_t len)
 /* x509 */
 int oscam_ssl_cert_parse(oscam_x509_crt *crt, const unsigned char *buf, size_t len)
 {
-	BIO *bio = BIO_new_mem_buf(buf, len);
+	BIO *bio = BIO_new_mem_buf((void *)buf, len);
 	if (!bio) return OSCAM_SSL_ERR;
 
 	crt->crt = PEM_read_bio_X509(bio, NULL, 0, NULL);
@@ -645,16 +693,67 @@ int oscam_ssl_pk_clone(oscam_pk_context *dst, const oscam_pk_context *src)
 
 int oscam_ssl_pk_get_type(const oscam_pk_context *pk)
 {
-	if (!pk || !pk->pk) return OSCAM_PK_NONE;
+	if (!pk || !pk->pk)
+		return OSCAM_PK_NONE;
 
-	int t = EVP_PKEY_base_id(pk->pk);
-
-	switch (t)
-	{
+	/* ================================================================
+	 * OpenSSL 3.0+ — no deprecated APIs, rely only on base ID
+	 * ================================================================ */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+	int id = EVP_PKEY_base_id(pk->pk);
+	switch (id) {
 		case EVP_PKEY_RSA: return OSCAM_PK_RSA;
-		case EVP_PKEY_EC : return OSCAM_PK_EC;
-		default: return OSCAM_PK_NONE;
+		case EVP_PKEY_EC:  return OSCAM_PK_EC;
+		default:           return OSCAM_PK_NONE;
 	}
+
+	/* ================================================================
+	 * OpenSSL 1.1.0 – 1.1.1 — EVP_PKEY_base_id available
+	 * ================================================================ */
+#elif OPENSSL_VERSION_NUMBER >= 0x10100000L
+
+	int id = EVP_PKEY_base_id(pk->pk);
+	switch (id) {
+		case EVP_PKEY_RSA: return OSCAM_PK_RSA;
+		case EVP_PKEY_EC:  return OSCAM_PK_EC;
+		default: break;
+	}
+
+	return OSCAM_PK_NONE;
+
+	/* ================================================================
+	 * OpenSSL 0.9.8 – 1.0.2 — no base_id, must rely on EVP_PKEY_type
+	 * + safe probing with RSA_get/EC_get
+	 * ================================================================ */
+#else
+
+	int id = EVP_PKEY_type(pk->pk->type);
+	if (id == EVP_PKEY_RSA)
+		return OSCAM_PK_RSA;
+
+# ifdef EVP_PKEY_EC
+	if (id == EVP_PKEY_EC)
+		return OSCAM_PK_EC;
+# endif
+
+	/* --- Fallback probing ONLY on old OpenSSL --- */
+	RSA *rsa = EVP_PKEY_get1_RSA(pk->pk);
+	if (rsa) {
+		RSA_free(rsa);
+		return OSCAM_PK_RSA;
+	}
+
+# ifdef EVP_PKEY_EC
+	EC_KEY *ec = EVP_PKEY_get1_EC_KEY(pk->pk);
+	if (ec) {
+		EC_KEY_free(ec);
+		return OSCAM_PK_EC;
+	}
+# endif
+
+	return OSCAM_PK_NONE;
+
+#endif
 }
 
 int oscam_ssl_pk_verify(oscam_pk_context *pk,
@@ -696,34 +795,26 @@ int oscam_ssl_pk_verify(oscam_pk_context *pk,
 
 #else /* OPENSSL_VERSION_NUMBER < 0x10002000L */
 
-	/* ================================================================
-	 * Legacy path: OpenSSL 0.9.8 – 1.0.1
-	 *   - RSA_verify / ECDSA_verify expect precomputed digest
-	 *   - same semantics as mbedTLS backend
-	 * ================================================================ */
+/* ================================================================
+ * Legacy path: OpenSSL 0.9.8 – 1.0.1
+ *   - RSA_verify / ECDSA_verify expect precomputed digest
+ * ================================================================ */
 
-	int type = EVP_PKEY_id(pkey);
-
-	if (type == EVP_PKEY_RSA) {
-		RSA *rsa = EVP_PKEY_get1_RSA(pkey);
-		if (!rsa)
-			return -1;
-
+	/* Try RSA first */
+	RSA *rsa = EVP_PKEY_get1_RSA(pkey);
+	if (rsa) {
 		int ok = RSA_verify(NID_sha256,
 							hash, (unsigned int)hash_len,
-							sig,  (unsigned int)sig_len,
+							(unsigned char *)sig, (unsigned int)sig_len,
 							rsa);
 		RSA_free(rsa);
 		return ok == 1 ? 0 : -1;
 	}
 
 # ifdef EVP_PKEY_EC
-	if (type == EVP_PKEY_EC) {
-		EC_KEY *eckey = EVP_PKEY_get1_EC_KEY(pkey);
-		if (!eckey)
-			return -1;
-
-		/* type argument is ignored by OpenSSL, so 0 is fine */
+	/* Then EC */
+	EC_KEY *eckey = EVP_PKEY_get1_EC_KEY(pkey);
+	if (eckey) {
 		int ok = ECDSA_verify(0,
 							  hash, (int)hash_len,
 							  sig,  (int)sig_len,
@@ -742,10 +833,11 @@ int oscam_ssl_generate_selfsigned(const char *path)
 {
 	int ret = OSCAM_SSL_ERR;
 	EVP_PKEY *pkey = NULL;
-	EVP_PKEY_CTX *kctx = NULL;
 	X509 *crt = NULL;
 	FILE *f = NULL;
-#if OPENSSL_VERSION_NUMBER < 0x30000000L
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+	EVP_PKEY_CTX *kctx = NULL;
+#else
 	RSA *rsa = NULL;
 #endif
 
@@ -771,25 +863,38 @@ int oscam_ssl_generate_selfsigned(const char *path)
 
 	/* ---- OpenSSL 3.x (modern API only) ---- */
 	kctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
-	if (!kctx) goto cleanup;
+	if (!kctx)
+		goto cleanup;
 
-	if (EVP_PKEY_keygen_init(kctx) <= 0) goto cleanup;
-	if (EVP_PKEY_CTX_set_rsa_keygen_bits(kctx, 4096) <= 0) goto cleanup;
-	if (EVP_PKEY_keygen(kctx, &pkey) <= 0) goto cleanup;
+	if (EVP_PKEY_keygen_init(kctx) <= 0)
+		goto cleanup;
+	if (EVP_PKEY_CTX_set_rsa_keygen_bits(kctx, 4096) <= 0)
+		goto cleanup;
+	if (EVP_PKEY_keygen(kctx, &pkey) <= 0)
+		goto cleanup;
 
 	EVP_PKEY_CTX_free(kctx);
 	kctx = NULL;
 
-#else
+#else /* OPENSSL_VERSION_NUMBER < 0x30000000L */
 
-	/* ---- Legacy OpenSSL (<3.0) ---- */
+	/* ---- Legacy OpenSSL (<3.0) ----
+	 * Works on 0.9.8 .. 1.0.x .. 1.1.x
+	 */
 	BIGNUM *e = BN_new();
-	if (!e) goto cleanup;
+	if (!e)
+		goto cleanup;
 
-	if (!BN_set_word(e, RSA_F4)) { BN_free(e); goto cleanup; }
+	if (!BN_set_word(e, RSA_F4)) {
+		BN_free(e);
+		goto cleanup;
+	}
 
 	rsa = RSA_new();
-	if (!rsa) { BN_free(e); goto cleanup; }
+	if (!rsa) {
+		BN_free(e);
+		goto cleanup;
+	}
 
 	if (!RSA_generate_key_ex(rsa, 4096, e, NULL)) {
 		BN_free(e);
@@ -797,11 +902,24 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	}
 	BN_free(e);
 
-	if (!EVP_PKEY_assign_RSA(pkey, rsa))
-		goto cleanup;
+	if (!pkey) {
+		pkey = EVP_PKEY_new();
+		if (!pkey) {
+			RSA_free(rsa);
+			rsa = NULL;
+			goto cleanup;
+		}
+	}
 
-	rsa = NULL; /* transferred */
-#endif
+	if (!EVP_PKEY_assign_RSA(pkey, rsa)) {
+		RSA_free(rsa);
+		rsa = NULL;
+		goto cleanup;
+	}
+
+	rsa = NULL; /* ownership transferred to pkey */
+
+#endif /* OPENSSL_VERSION_NUMBER */
 
 	/* ===============================================
 	 * CERTIFICATE BUILD
@@ -893,7 +1011,14 @@ int oscam_ssl_generate_selfsigned(const char *path)
 		gn = GENERAL_NAME_new();
 		ASN1_IA5STRING *dns1 = ASN1_IA5STRING_new();
 		ASN1_STRING_set(dns1, cn, strlen(cn));
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 		GENERAL_NAME_set0_value(gn, GEN_DNS, dns1);
+#else
+		/* OpenSSL 1.0.2 and below: only manual setting */
+		gn->type = GEN_DNS;
+		gn->d.ia5 = ASN1_IA5STRING_new();
+		ASN1_STRING_set(gn->d.ia5, cn, strlen(cn));
+#endif
 		sk_GENERAL_NAME_push(gens, gn);
 
 		/* DNS: CN.local */
@@ -902,7 +1027,14 @@ int oscam_ssl_generate_selfsigned(const char *path)
 		gn = GENERAL_NAME_new();
 		ASN1_IA5STRING *dns2 = ASN1_IA5STRING_new();
 		ASN1_STRING_set(dns2, buf, strlen(buf));
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 		GENERAL_NAME_set0_value(gn, GEN_DNS, dns2);
+#else
+		/* OpenSSL 1.0.2 and below: only manual setting */
+		gn->type = GEN_DNS;
+		gn->d.ia5 = ASN1_IA5STRING_new();
+		ASN1_STRING_set(gn->d.ia5, buf, strlen(buf));
+#endif
 		sk_GENERAL_NAME_push(gens, gn);
 
 		/* IPv4 127.0.0.1 */
@@ -911,7 +1043,14 @@ int oscam_ssl_generate_selfsigned(const char *path)
 			unsigned char ip4[4] = {127,0,0,1};
 			ASN1_OCTET_STRING *ip = ASN1_OCTET_STRING_new();
 			ASN1_OCTET_STRING_set(ip, ip4, 4);
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 			GENERAL_NAME_set0_value(gn, GEN_IPADD, ip);
+#else
+			/* OpenSSL 1.0.2 and below: manual GEN_IPADD with OCTET_STRING */
+			gn->type   = GEN_IPADD;
+			gn->d.ip   = ip;    /* note: union field is 'ip' in older OpenSSL */
+			/* do NOT free 'ip' separately; GENERAL_NAME_free() will own it */
+#endif
 			sk_GENERAL_NAME_push(gens, gn);
 		}
 
@@ -923,7 +1062,12 @@ int oscam_ssl_generate_selfsigned(const char *path)
 			ip6[15] = 1;
 			ASN1_OCTET_STRING *ipx = ASN1_OCTET_STRING_new();
 			ASN1_OCTET_STRING_set(ipx, ip6, 16);
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 			GENERAL_NAME_set0_value(gn, GEN_IPADD, ipx);
+#else
+			gn->type = GEN_IPADD;
+			gn->d.ip = ipx;
+#endif
 			sk_GENERAL_NAME_push(gens, gn);
 		}
 #else
@@ -956,14 +1100,16 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	ret = OSCAM_SSL_OK;
 
 cleanup:
-	if (f) fclose(f);
 	if (crt) X509_free(crt);
-#if OPENSSL_VERSION_NUMBER < 0x30000000L
+	if (pkey) EVP_PKEY_free(pkey);
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+	if (kctx) EVP_PKEY_CTX_free(kctx);
+#else
 	if (rsa) RSA_free(rsa);
 #endif
-	if (pkey) EVP_PKEY_free(pkey);
-	if (kctx) EVP_PKEY_CTX_free(kctx);
 
+	if (f) fclose(f);
 	return ret;
 }
 
