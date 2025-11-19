@@ -47,48 +47,101 @@ oscam-build:
   parallel:
     matrix:
       - ARCH: [native,ancient,latest,aarch64,armv7,mips32el,powerpc,sh4,android12]
+        BACKEND: [mbedtls,openssl]
   rules:
-    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
-    - if: $CI_PIPELINE_SOURCE == 'schedule'
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event' || $CI_PIPELINE_SOURCE == 'schedule'
   script:
-    - if [[ ! $BUILD_ARCHS =~ $ARCH ]]; then
-        echo -e "\e[33mSkipped by configuration, check BUILD_ARCHS variable.\e[0m";
+    - |
+      if [[ ! $BUILD_ARCHS =~ $ARCH ]] || [[ ! $BUILD_BACKENDS =~ $BACKEND ]]; then
+        echo -e "\e[33mSkipped by configuration: ARCH=${ARCH}, BACKEND=${BACKEND}. Check BUILD_ARCHS/BUILD_BACKENDS.\e[0m";
         exit 0;
       fi
     - !reference [.helper, custom-checkout]
     - !reference [.helper, oscam-build]
   artifacts:
     when: always
+    expire_in: 1 hour
+    public: false
     paths:
-      - build/${ARCH}/oscam-make-${ARCH}*
-      - build/${ARCH}/oscam-cmake-${ARCH}*
-    expire_in: 1 week
+      - build/${ARCH}/oscam-make-${ARCH}-${BACKEND}*
+      - build/${ARCH}/oscam-cmake-${ARCH}-${BACKEND}*
   allow_failure: true
+
+.needs_native_matrix:
+  matrix:
+    - ARCH: [native]
+      BACKEND: [mbedtls, openssl]
 
 oscam-test:
   stage: test
   tags:
     - test
-  needs: [oscam-build]
+  needs:
+    - job: oscam-build
+      artifacts: true
+      parallel: !reference [.needs_native_matrix] 
   variables:
     GIT_STRATEGY: none
   parallel:
     matrix:
       - ARCH: [native]
+        BACKEND: [mbedtls,openssl]
         OSCAM_BUILD: [make,cmake]
   rules:
     - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
     - if: $CI_PIPELINE_SOURCE == 'schedule'
   script:
-    - if [[ ! $BUILD_ARCHS =~ $ARCH ]]; then
-        echo -e "\e[33mSkipped by configuration, check BUILD_ARCHS variable.\e[0m";
+    - |
+      if [[ ! $BUILD_ARCHS =~ $ARCH ]] || [[ ! $BUILD_BACKENDS =~ $BACKEND ]]; then
+        echo -e "\e[33mSkipped by configuration: ARCH=${ARCH}, BACKEND=${BACKEND}. Check BUILD_ARCHS/BUILD_BACKENDS.\e[0m";
         exit 0;
       fi
     - !reference [.helper, oscam-startup-test]
   artifacts:
     when: always
+    expire_in: 1 hour
+    public: false
     paths:
-      - build/${ARCH}/oscam-${OSCAM_BUILD}-${ARCH}*-test.log
+      - build/${ARCH}/oscam-${OSCAM_BUILD}-${ARCH}-${BACKEND}*-test.log
+  allow_failure: true
+
+merge-artifacts:
+  stage: sync
+  tags:
+    - build
+  needs:
+    - job: oscam-build
+      artifacts: true
+    - job: oscam-test
+      artifacts: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_PIPELINE_SOURCE == 'schedule'
+  script:
+    - echo "Collecting build results into merged/ ..."
+    - mkdir -p merged
+
+    # Collect artifacts keeping directory structure
+    - |
+      rsync -av build/ merged/ \
+        --include="*/" \
+        --include="oscam-*" \
+        --include="*.log" \
+        --exclude="*"
+
+    # Create bundle archive
+    - tar -czf oscam-bundle-${CI_COMMIT_REF_NAME}-${CI_PIPELINE_ID}.tar.gz merged
+
+    # Generate size report raw data
+    - find merged -type f ! -name "*.log" -exec du -h {} \; | sort -k2 | column -t > build-size-report.txt
+
+    - echo "Artifacts merged and size report generated."
+  artifacts:
+    when: always
+    paths:
+      - oscam-bundle-${CI_COMMIT_REF_NAME}-${CI_PIPELINE_ID}.tar.gz
+      - build-size-report.txt
+      - merged/
     expire_in: 1 week
   allow_failure: true
 
