@@ -33,7 +33,6 @@ ifeq ($(USE_OPENSSL),1)
 endif
 SECURITY_BACKEND ?= MBEDTLS
 override USE_$(SECURITY_BACKEND) = 1
-override USE_FLAGS += USE_$(SECURITY_BACKEND)
 
 ifeq ($(USE_OPENSSL),1)
 	override USE_LIBCRYPTO=1
