@@ -163,16 +163,16 @@
             BIN_EXT+="-ssl";
         fi
         echo "Using secutity backend $SECURITY_BACKEND...";
-        if [ "$SECURITY_BACKEND" == "openssl" ]; then
+        if [ "$SECURITY_BACKEND" == "OPENSSL" ]; then
             MAKE_OPT+=" USE_OPENSSL=1";
             CMAKE_OPT+=" -DUSE_OPENSSL=1";
         fi;
         if [ -z "$(find "/usr/lib" -name "arm_neon.h" -type f -print -quit)" ]; then
             DISABLE_OPT+=" WITH_ARM_NEON";
-            CMAKE_OPT="-DWITH_ARM_NEON=0";
+            CMAKE_OPT+="-DWITH_ARM_NEON=0";
         else
             echo "Enabling ARM_NEON...";
-            CMAKE_OPT="-DWITH_ARM_NEON=1";
+            CMAKE_OPT+="-DWITH_ARM_NEON=1";
             BIN_EXT+="-neon";
         fi;
         if ! ls -la /usr/lib/libdvbcsa.* 2>/dev/null; then
@@ -215,16 +215,16 @@
             BIN_EXT+="-ssl";
         fi;
         echo "Using secutity backend $SECURITY_BACKEND...";
-        if [ "$SECURITY_BACKEND" == "openssl" ]; then
+        if [ "$SECURITY_BACKEND" == "OPENSSL" ]; then
             MAKE_OPT+=" USE_OPENSSL=1";
             CMAKE_OPT+=" -DUSE_OPENSSL=1";
         fi;
         if [ -z "$(find -L "$HOME/toolchains/${ARCH}_generic" -name "arm_neon.h" -type f -print -quit)" ] || [ "$ARCH" == "ancient" ]; then
             DISABLE_OPT+=" WITH_ARM_NEON";
-            CMAKE_OPT="-DWITH_ARM_NEON=0";
+            CMAKE_OPT+="-DWITH_ARM_NEON=0";
         else
             echo "Enabling ARM_NEON...";
-            CMAKE_OPT="-DWITH_ARM_NEON=1";
+            CMAKE_OPT+="-DWITH_ARM_NEON=1";
             BIN_EXT+="-neon";
         fi;
         if [ -z "$(find -L "$HOME/toolchains/${ARCH}_generic" -name "dvbcsa.h" -type f -print -quit)" ]; then
