@@ -123,6 +123,7 @@ struct oscam_ssl_s {
 
 struct oscam_x509_crt_s {
 	X509 *crt;
+	struct oscam_x509_crt_s *next;
 };
 
 struct oscam_pk_context_s {
@@ -472,39 +473,150 @@ void oscam_ssl_strerror(int err, char *buf, size_t len)
 }
 
 /* x509 */
-int oscam_ssl_cert_parse(oscam_x509_crt *crt, const unsigned char *buf, size_t len)
+int oscam_ssl_cert_parse(oscam_x509_crt *crt,
+                         const unsigned char *buf, size_t len)
 {
-	BIO *bio = BIO_new_mem_buf((void *)buf, len);
-	if (!bio) return OSCAM_SSL_ERR;
+	if (!crt || !buf || len == 0)
+		return OSCAM_SSL_PARAM;
 
-	crt->crt = PEM_read_bio_X509(bio, NULL, 0, NULL);
-	if (!crt->crt) {
-		BIO_reset(bio);
-		crt->crt = d2i_X509_bio(bio, NULL);  // try DER
+	/* Clear any previous chain on this head */
+	oscam_ssl_cert_free(crt);
+
+	/* Try PEM chain first */
+	BIO *bio = BIO_new_mem_buf((void *)buf, (int)len);
+	if (!bio)
+		return OSCAM_SSL_ERR;
+
+	int count = 0;
+	oscam_x509_crt *head = crt;
+	oscam_x509_crt *tail = head;
+
+	for (;;) {
+		X509 *x = PEM_read_bio_X509(bio, NULL, 0, NULL);
+		if (!x)
+			break; /* no more PEM certs */
+
+		if (count == 0) {
+			/* First cert goes into the head node */
+			head->crt  = x;
+			head->next = NULL;
+			tail       = head;
+		} else {
+			/* Additional certs get their own wrapper nodes */
+			oscam_x509_crt *node = calloc(1, sizeof(*node));
+			if (!node) {
+				X509_free(x);
+				break; /* out of memory; keep what we already have */
+			}
+			node->crt  = x;
+			node->next = NULL;
+			tail->next = node;
+			tail       = node;
+		}
+		count++;
 	}
 
 	BIO_free(bio);
-	return crt->crt ? OSCAM_SSL_OK : OSCAM_SSL_CERT_FAIL;
+
+	/* If we parsed at least one PEM cert, we’re done. */
+	if (count > 0)
+		return OSCAM_SSL_OK;
+
+	/* No PEM? Try a single DER cert. */
+	bio = BIO_new_mem_buf((void *)buf, (int)len);
+	if (!bio)
+		return OSCAM_SSL_ERR;
+
+	X509 *x = d2i_X509_bio(bio, NULL);
+	BIO_free(bio);
+
+	if (!x)
+		return OSCAM_SSL_CERT_FAIL;
+
+	head->crt  = x;
+	head->next = NULL;
+	return OSCAM_SSL_OK;
 }
 
 int oscam_ssl_cert_parse_file(oscam_x509_crt *crt, const char *path)
 {
-	FILE *f = fopen(path, "rb");
-	if (!f) return OSCAM_SSL_CERT_FAIL;
-	crt->crt = PEM_read_X509(f, NULL, NULL, NULL);
-	fclose(f);
-	return crt->crt ? OSCAM_SSL_OK : OSCAM_SSL_CERT_FAIL;
+	if (!crt || !path)
+		return OSCAM_SSL_PARAM;
+
+	oscam_ssl_cert_free(crt);
+
+	BIO *bio = BIO_new_file(path, "rb");
+	if (!bio)
+		return OSCAM_SSL_CERT_FAIL;
+
+	int count = 0;
+	oscam_x509_crt *head = crt;
+	oscam_x509_crt *tail = head;
+
+	for (;;) {
+		X509 *x = PEM_read_bio_X509(bio, NULL, 0, NULL);
+		if (!x)
+			break;
+
+		if (count == 0) {
+			head->crt  = x;
+			head->next = NULL;
+			tail       = head;
+		} else {
+			oscam_x509_crt *node = calloc(1, sizeof(*node));
+			if (!node) {
+				X509_free(x);
+				break;
+			}
+			node->crt  = x;
+			node->next = NULL;
+			tail->next = node;
+			tail       = node;
+		}
+		count++;
+	}
+
+	BIO_free(bio);
+
+	/* CA bundles are expected to be PEM; if none parsed, fail. */
+	return (count > 0) ? OSCAM_SSL_OK : OSCAM_SSL_CERT_FAIL;
 }
 
 void oscam_ssl_cert_init(oscam_x509_crt *crt)
 {
-	crt->crt = NULL;
+	if (!crt)
+		return;
+
+	crt->crt  = NULL;
+	crt->next = NULL;
 }
 
+/*
+ * Free the whole chain hanging off 'crt', but do NOT free 'crt' itself.
+ * That’s handled by oscam_ssl_cert_delete() or by the caller (stack use).
+ */
 void oscam_ssl_cert_free(oscam_x509_crt *crt)
 {
-	if (crt->crt) X509_free(crt->crt);
-	crt->crt = NULL;
+	if (!crt)
+		return;
+
+	/* Free X509 in the head node */
+	if (crt->crt) {
+		X509_free(crt->crt);
+		crt->crt = NULL;
+	}
+
+	/* Walk and free any dynamically allocated tail nodes */
+	oscam_x509_crt *cur = crt->next;
+	crt->next = NULL;
+
+	while (cur) {
+		oscam_x509_crt *next = cur->next;
+		if (cur->crt)
+			X509_free(cur->crt);
+		free(cur);
+		cur = next;
+	}
 }
 
 int oscam_ssl_cert_verify(oscam_x509_crt *crt, oscam_x509_crt *trust)
@@ -521,9 +633,9 @@ int oscam_ssl_cert_verify(oscam_x509_crt *crt, oscam_x509_crt *trust)
 
 oscam_x509_crt *oscam_ssl_cert_get_next(oscam_x509_crt *crt)
 {
-	(void)crt;
-	/* OpenSSL does NOT chain X509 objects internally (unlike mbedTLS). */
-	return NULL;
+	if (!crt)
+		return NULL;
+	return crt->next;
 }
 
 const void *oscam_ssl_cert_get_subject(const oscam_x509_crt *crt)
