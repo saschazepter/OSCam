@@ -89,23 +89,6 @@ static int ASN1_TIME_to_tm(const ASN1_TIME *t, struct tm *tm)
 
 	return 1;
 }
-
-EVP_MD_CTX *EVP_MD_CTX_new(void)
-{
-	EVP_MD_CTX *ctx = OPENSSL_malloc(sizeof(EVP_MD_CTX));
-	if (!ctx)
-		return NULL;
-	EVP_MD_CTX_init(ctx);
-	return ctx;
-}
-
-void EVP_MD_CTX_free(EVP_MD_CTX *ctx)
-{
-	if (!ctx)
-		return;
-	EVP_MD_CTX_cleanup(ctx);
-	OPENSSL_free(ctx);
-}
 #endif /* OPENSSL_VERSION_NUMBER < 0x10100000L */
 
 /* Opaque structs defined here (match header typedefs) */
