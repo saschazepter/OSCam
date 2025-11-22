@@ -36,6 +36,7 @@ override USE_$(SECURITY_BACKEND) = 1
 
 ifeq ($(USE_OPENSSL),1)
 	override USE_LIBCRYPTO=1
+	override CFLAGS += -DWITH_OPENSSL_DLOPEN=1
 endif
 
 ifeq "$(shell ./config.sh --enabled WITH_SSL)" "Y"
@@ -205,10 +206,10 @@ DEFAULT_SU980_LIB = -lentropic -lrt
 DEFAULT_AZBOX_LIB = -Lextapi/openxcas -lOpenXCASAPI
 DEFAULT_LIBCRYPTO_LIB = \
 	$(if $(USE_MBEDTLS),, \
-	$(if $(USE_OPENSSL),-lcrypto,))
+	$(if $(USE_OPENSSL),,))
 DEFAULT_SSL_LIB = \
 	$(if $(USE_MBEDTLS),, \
-	$(if $(USE_OPENSSL),-lssl,))
+	$(if $(USE_OPENSSL),,))
 DEFAULT_LIBDVBCSA_LIB = -ldvbcsa
 ifeq ($(uname_S),Linux)
 	DEFAULT_LIBUSB_LIB = -lusb-1.0 -lrt
@@ -230,10 +231,10 @@ else ifeq ($(uname_S),Darwin)
 		$(if $(USE_OPENSSL),-I/usr/local/opt/openssl/include,))
 	DEFAULT_LIBCRYPTO_LIB = \
 		$(if $(USE_MBEDTLS),, \
-		$(if $(USE_OPENSSL),-L/usr/local/opt/openssl/lib -lcrypto,))
+		$(if $(USE_OPENSSL),,))
 	DEFAULT_SSL_LIB = \
 		$(if $(USE_MBEDTLS),, \
-		$(if $(USE_OPENSSL),-L/usr/local/opt/openssl/lib -lssl,))
+		$(if $(USE_OPENSSL),,))
 	DEFAULT_LIBDVBCSA_FLAGS = -I/usr/local/opt/libdvbcsa/include
 	DEFAULT_LIBDVBCSA_LIB = -L/usr/local/opt/libdvbcsa/lib -ldvbcsa
 	DEFAULT_LIBUSB_FLAGS = -I/usr/local/opt/libusb/include

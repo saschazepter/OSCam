@@ -1667,15 +1667,15 @@ static int32_t nagra3_do_ecm(struct s_reader *reader, const ECM_REQUEST *er, str
 					rdr_log(reader, "ERROR: CWPK%d is not set, can not decrypt CW", cta_res[144]);
 					return ERROR;
 				}
-				des_ecb3_decrypt(_cwe0, reader->cwekey[cta_res144]);
-				des_ecb3_decrypt(_cwe1, reader->cwekey[cta_res144]);
+				oscam_des_ecb3_decrypt(_cwe0, reader->cwekey[cta_res144]);
+				oscam_des_ecb3_decrypt(_cwe1, reader->cwekey[cta_res144]);
 				rdr_log_dbg(reader, D_READER, "CW Decrypt ok");
 			}
 		}
 		else if(cta_res[27] == 0x58)
 		{
-			des_ecb3_decrypt(_cwe0, reader->key3des);
-			des_ecb3_decrypt(_cwe1, reader->key3des);
+			oscam_des_ecb3_decrypt(_cwe0, reader->key3des);
+			oscam_des_ecb3_decrypt(_cwe1, reader->key3des);
 			rdr_log_dbg(reader, D_READER, "CW Decrypt ok");
 		}
 

@@ -1,4 +1,4 @@
-#define MODULE_LOG_PREFIX "crypto-mbedtls"
+#define MODULE_LOG_PREFIX "crypto"
 
 #include "globals.h"
 #include "oscam-crypto.h"
@@ -261,7 +261,7 @@ void oscam_des_ecb_encrypt(uint8_t *data, const uint8_t *key, int32_t len)
 	mbedtls_des_free(&ctx);
 }
 
-void des_ecb_decrypt(uint8_t *data, const uint8_t *key, int32_t len)
+void oscam_des_ecb_decrypt(uint8_t *data, const uint8_t *key, int32_t len)
 {
 	mbedtls_des_context ctx;
 	mbedtls_des_init(&ctx);
@@ -285,7 +285,7 @@ void oscam_des_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key,
 	mbedtls_des_free(&ctx);
 }
 
-void des_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len)
+void oscam_des_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len)
 {
 	mbedtls_des_context ctx;
 	unsigned char iv_copy[8];
@@ -316,7 +316,7 @@ void oscam_des_ede2_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t 
 	mbedtls_des3_free(&ctx);
 }
 
-void des_ede2_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1, const uint8_t *key2, int32_t len)
+void oscam_des_ede2_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1, const uint8_t *key2, int32_t len)
 {
 	mbedtls_des3_context ctx;
 	unsigned char iv_copy[8];
@@ -335,7 +335,7 @@ void des_ede2_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1,
 }
 
 // --- 3DES ECB ---
-void des_ecb3_decrypt(uint8_t *data, const uint8_t *key)
+void oscam_des_ecb3_decrypt(uint8_t *data, const uint8_t *key)
 {
 	mbedtls_des3_context ctx;
 	mbedtls_des3_init(&ctx);

@@ -1,4 +1,4 @@
-#define MODULE_LOG_PREFIX "ssl-mbedtls"
+#define MODULE_LOG_PREFIX "ssl"
 
 #include "globals.h"
 #include "oscam-time.h"

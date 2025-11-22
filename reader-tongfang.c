@@ -189,7 +189,7 @@ static int32_t tongfang_card_init(struct s_reader *reader, ATR *newatr)
 			memcpy(deskey, reader->tongfang3_deskey, sizeof(reader->tongfang3_deskey));
 		}
 		memcpy(data, zero, sizeof(zero));
-		des_ecb_encrypt(data, deskey, 8);
+		oscam_des_ecb_encrypt(data, deskey, 8);
 		memcpy(get_commkey_cmd + 5, data, 8);
 		if(reader->tongfang3_calibsn > 0)
 		{
@@ -218,7 +218,7 @@ static int32_t tongfang_card_init(struct s_reader *reader, ATR *newatr)
 		}
 		//rdr_log(reader, "card seed got.");
 		memcpy(reader->tongfang3_commkey, data, 8);
-		des_ecb_encrypt(reader->tongfang3_commkey, deskey, 8);
+		oscam_des_ecb_encrypt(reader->tongfang3_commkey, deskey, 8);
 
 		rdr_log_dbg(reader, D_READER, "card commkey got(%llX)",(unsigned long long)b2ll(8,reader->tongfang3_commkey));
 
@@ -245,14 +245,14 @@ static int32_t tongfang_card_init(struct s_reader *reader, ATR *newatr)
 
 		//confirm commkey and pairing
 		memcpy(data, reader->stbid, sizeof(reader->stbid));
-		des_ecb_encrypt(data, reader->tongfang3_commkey, 8);
+		oscam_des_ecb_encrypt(data, reader->tongfang3_commkey, 8);
 
 		if(reader->tongfang_boxid > 0)
 		{
 			memcpy(zero + 2, boxID, 4);
 		}
 		memcpy(data + 8, zero, 8);
-		des_ecb_encrypt(data + 8, reader->tongfang3_commkey, 8);
+		oscam_des_ecb_encrypt(data + 8, reader->tongfang3_commkey, 8);
 
 		memcpy(confirm_commkey_cmd + 5, data, 16);
 		write_cmd(confirm_commkey_cmd, confirm_commkey_cmd + 5);
@@ -445,8 +445,8 @@ static int32_t tongfang_do_ecm(struct s_reader *reader, const ECM_REQUEST *er, s
 
 	if(cas_version == 3)
 	{
-		des_ecb_encrypt(ea->cw, reader->tongfang3_commkey, 8);
-		des_ecb_encrypt(ea->cw + 8, reader->tongfang3_commkey, 8);
+		oscam_des_ecb_encrypt(ea->cw, reader->tongfang3_commkey, 8);
+		oscam_des_ecb_encrypt(ea->cw + 8, reader->tongfang3_commkey, 8);
 	}
 
 	return OK;
