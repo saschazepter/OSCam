@@ -614,10 +614,10 @@ static void DREover(struct s_reader *reader, const uint8_t *ECMdata, uint8_t *DW
 
 	if(ECMdata[2] >= (43 + 4) && ECMdata[40] == 0x3A && ECMdata[41] == 0x4B)
 	{
-		des_set_key(&reader->des_key[(ECMdata[42] & 0x0F) * 8], &schedule);
+		oscam_des_set_key(&reader->des_key[(ECMdata[42] & 0x0F) * 8], &schedule);
 
-		des(DW, &schedule, 0);      // even DW post-process
-		des(DW + 8, &schedule, 0);  // odd DW post-process
+		oscam_des(DW, &schedule, 0);      // even DW post-process
+		oscam_des(DW + 8, &schedule, 0);  // odd DW post-process
 	};
 };
 

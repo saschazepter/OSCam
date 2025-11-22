@@ -46,18 +46,59 @@
 
 static void ssl_init(void)
 {
+#if defined(WITH_OPENSSL) || defined(WITH_OPENSSL_DLOPEN)
+	/* Eagerly load both libcrypto + libssl for the SSL backend */
+	int state = oscam_ossl_load(1);
+
+	if (state < 2) {
+		cs_log("FATAL: OpenSSL backend not able to load libcrypto or libssl library (dlopen state=%d)!", state);
+		cs_exit_oscam();
+	}
+	else {
+		const char *cso = oscam_ossl_crypto_soname();
+		const char *sso = oscam_ossl_ssl_soname();
+		cs_log("OpenSSL runtime libraries loaded. crypto=%s ssl=%s",
+				cso ? cso : "unknown", sso ? sso : "unknown");
+	}
+#endif
 	oscam_ssl_global_init();
 }
 
 static void ssl_done(void)
 {
 	oscam_ssl_global_free();
+#if defined(WITH_OPENSSL) || defined(WITH_OPENSSL_DLOPEN)
+	oscam_ossl_unload();
+#endif
 }
 
-#else
-static void ssl_init(void) { }
-static void ssl_done(void) { }
+#else  /* !WITH_SSL */
+
+static void ssl_init(void)
+{
+#if defined(WITH_OPENSSL) || defined(WITH_OPENSSL_DLOPEN)
+	/* Eagerly load libcrypto for the SSL backend */
+	int state = oscam_ossl_load(0);
+
+	if (state == 0) {
+		cs_log("FATAL: OpenSSL backend not able to load libcrypto library (dlopen state=%d)!", state);
+		cs_exit_oscam();
+	} else {
+		const char *cso = oscam_ossl_crypto_soname();
+		cs_log("OpenSSL runtime libraries loaded. crypto=%s",
+				cso ? cso : "unknown");
+	}
 #endif
+}
+
+static void ssl_done(void)
+{
+#if defined(WITH_OPENSSL) || defined(WITH_OPENSSL_DLOPEN)
+	oscam_ossl_unload();
+#endif
+}
+
+#endif /* WITH_SSL */
 
 #ifdef WITH_SIGNING
 #include "oscam-signing.h"

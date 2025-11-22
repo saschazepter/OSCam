@@ -1,4 +1,4 @@
-#define MODULE_LOG_PREFIX "crypto-openssl"
+#define MODULE_LOG_PREFIX "crypto"
 
 #include "globals.h"
 #include "oscam-crypto.h"
@@ -11,6 +11,423 @@
 #include <openssl/rand.h>
 #include <openssl/err.h>
 
+#ifdef WITH_OPENSSL_DLOPEN
+
+#include <dlfcn.h>
+
+/* ----------------------------------------------------------------------
+ * Global dlopen state
+ * ---------------------------------------------------------------------- */
+static void       *g_oscam_libcrypto    = NULL;
+static void       *g_oscam_libssl       = NULL;
+static int         g_oscam_crypto_tried = 0;
+static int         g_oscam_ssl_tried    = 0;
+static const char *g_oscam_crypto_used  = NULL;
+static const char *g_oscam_ssl_used     = NULL;
+
+/* Reasonably common SONAMEs, tried in order when caller passes NULL */
+static const char *g_oscam_crypto_sonames[] = {
+	"libcrypto.so.3",
+	"libcrypto.so.1.1",
+	"libcrypto.so.1.0.2",
+	"libcrypto.so.1.0.0",
+	"libcrypto.so.0.9.8",
+	"libcrypto.so",
+	NULL
+};
+
+static const char *g_oscam_ssl_sonames[] = {
+	"libssl.so.3",
+	"libssl.so.1.1",
+	"libssl.so.1.0.2",
+	"libssl.so.1.0.0",
+	"libssl.so.0.9.8",
+	"libssl.so",
+	NULL
+};
+
+/* ----------------------------------------------------------------------
+ * Function pointer storage (matches externs in oscam-crypto.h)
+ * ---------------------------------------------------------------------- */
+
+/* ===== EVP digest function pointers ===== */
+DECLARE_OSSL_PTR(EVP_md5,                    oscam_EVP_md5_f);
+DECLARE_OSSL_PTR(EVP_sha1,                   oscam_EVP_sha1_f);
+DECLARE_OSSL_PTR(EVP_sha256,                 oscam_EVP_sha256_f);
+
+DECLARE_OSSL_PTR(EVP_MD_CTX_new,             oscam_EVP_MD_CTX_new_f);
+DECLARE_OSSL_PTR(EVP_MD_CTX_free,            oscam_EVP_MD_CTX_free_f);
+DECLARE_OSSL_PTR(EVP_DigestInit_ex,          oscam_EVP_DigestInit_ex_f);
+DECLARE_OSSL_PTR(EVP_DigestUpdate,           oscam_EVP_DigestUpdate_f);
+DECLARE_OSSL_PTR(EVP_DigestFinal_ex,         oscam_EVP_DigestFinal_ex_f);
+DECLARE_OSSL_PTR(EVP_Digest,                 oscam_EVP_Digest_f);
+
+/* ===== EVP cipher getters ===== */
+DECLARE_OSSL_PTR(EVP_aes_128_ecb,            oscam_EVP_aes_128_ecb_f);
+DECLARE_OSSL_PTR(EVP_aes_192_ecb,            oscam_EVP_aes_192_ecb_f);
+DECLARE_OSSL_PTR(EVP_aes_256_ecb,            oscam_EVP_aes_256_ecb_f);
+DECLARE_OSSL_PTR(EVP_aes_128_cbc,            oscam_EVP_aes_128_cbc_f);
+DECLARE_OSSL_PTR(EVP_aes_192_cbc,            oscam_EVP_aes_192_cbc_f);
+DECLARE_OSSL_PTR(EVP_aes_256_cbc,            oscam_EVP_aes_256_cbc_f);
+
+/* ===== EVP cipher context & operations ===== */
+DECLARE_OSSL_PTR(EVP_CIPHER_CTX_new,         oscam_EVP_CIPHER_CTX_new_f);
+DECLARE_OSSL_PTR(EVP_CIPHER_CTX_free,        oscam_EVP_CIPHER_CTX_free_f);
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+DECLARE_OSSL_PTR(EVP_CIPHER_CTX_cleanup,     oscam_EVP_CIPHER_CTX_cleanup_f);
+DECLARE_OSSL_PTR(EVP_CIPHER_CTX_init,        oscam_EVP_CIPHER_CTX_init_f);
+#endif
+DECLARE_OSSL_PTR(EVP_CIPHER_CTX_set_padding, oscam_EVP_CIPHER_CTX_set_padding_f);
+
+DECLARE_OSSL_PTR(EVP_CipherInit_ex,          oscam_EVP_CipherInit_ex_f);
+DECLARE_OSSL_PTR(EVP_CipherUpdate,           oscam_EVP_CipherUpdate_f);
+
+DECLARE_OSSL_PTR(EVP_EncryptInit_ex,         oscam_EVP_EncryptInit_ex_f);
+DECLARE_OSSL_PTR(EVP_EncryptUpdate,          oscam_EVP_EncryptUpdate_f);
+DECLARE_OSSL_PTR(EVP_DecryptInit_ex,         oscam_EVP_DecryptInit_ex_f);
+DECLARE_OSSL_PTR(EVP_DecryptUpdate,          oscam_EVP_DecryptUpdate_f);
+
+/* ===== DES (only when enabled) ===== */
+#if defined(WITH_SSL) || defined(WITH_LIB_MDC2) || defined(WITH_LIB_DES)
+DECLARE_OSSL_PTR(DES_set_key_unchecked,      oscam_DES_set_key_unchecked_f);
+DECLARE_OSSL_PTR(DES_ecb_encrypt,            oscam_DES_ecb_encrypt_f);
+DECLARE_OSSL_PTR(DES_ecb3_encrypt,           oscam_DES_ecb3_encrypt_f);
+#endif
+
+/* ===== BIGNUM (only when enabled) ===== */
+#if defined(WITH_LIB_BIGNUM)
+DECLARE_OSSL_PTR(BN_CTX_new,                 oscam_BN_CTX_new_f);
+DECLARE_OSSL_PTR(BN_CTX_free,                oscam_BN_CTX_free_f);
+DECLARE_OSSL_PTR(BN_CTX_start,               oscam_BN_CTX_start_f);
+DECLARE_OSSL_PTR(BN_CTX_end,                 oscam_BN_CTX_end_f);
+DECLARE_OSSL_PTR(BN_CTX_get,                 oscam_BN_CTX_get_f);
+
+DECLARE_OSSL_PTR(BN_new,                     oscam_BN_new_f);
+DECLARE_OSSL_PTR(BN_free,                    oscam_BN_free_f);
+
+DECLARE_OSSL_PTR(BN_bin2bn,                  oscam_BN_bin2bn_f);
+DECLARE_OSSL_PTR(BN_bn2bin,                  oscam_BN_bn2bin_f);
+
+DECLARE_OSSL_PTR(BN_mod_exp,                 oscam_BN_mod_exp_f);
+DECLARE_OSSL_PTR(BN_num_bits,                oscam_BN_num_bits_f);
+DECLARE_OSSL_PTR(BN_mul,                     oscam_BN_mul_f);
+DECLARE_OSSL_PTR(BN_add_word,                oscam_BN_add_word_f);
+DECLARE_OSSL_PTR(BN_sub_word,                oscam_BN_sub_word_f);
+DECLARE_OSSL_PTR(BN_mod_inverse,             oscam_BN_mod_inverse_f);
+#endif
+
+/* ----------------------------------------------------------------------
+ * Helper: dlopen with fallback list
+ * ---------------------------------------------------------------------- */
+static void *oscam_ossl_try_open(const char *explicit_name, const char *const *fallbacks)
+{
+	void *h = NULL;
+
+	if (explicit_name)
+	{
+		cs_log_dbg(D_TRACE, "OpenSSL: trying %s", explicit_name);
+		h = dlopen(explicit_name, RTLD_NOW | RTLD_LOCAL);
+		if (!h)
+			cs_log("OpenSSL: dlopen(\"%s\") failed: %s", explicit_name, dlerror());
+		else
+			cs_log_dbg(D_TRACE, "OpenSSL: using %s", explicit_name);
+		return h;
+	}
+
+	for (const char *const *p = fallbacks; *p; ++p)
+	{
+		cs_log_dbg(D_TRACE, "OpenSSL: trying %s", *p);
+		h = dlopen(*p, RTLD_NOW | RTLD_LOCAL);
+		if (h)
+		{
+			cs_log_dbg(D_TRACE, "OpenSSL: using %s", *p);
+			if (fallbacks == g_oscam_crypto_sonames)
+				g_oscam_crypto_used = *p;
+			else if (fallbacks == g_oscam_ssl_sonames)
+				g_oscam_ssl_used = *p;
+
+			return h;
+		}
+	}
+
+	cs_log("OpenSSL: No usable shared object found!");
+	return NULL;
+}
+
+/* ----------------------------------------------------------------------
+ * Resolve individual symbols
+ * ---------------------------------------------------------------------- */
+static void oscam_ossl_resolve_crypto_symbols(void)
+{
+#define RESOLVE_OSSL_CRYPTO_FN(type, var, sym) do {                     \
+	if (g_oscam_libcrypto) {                                     \
+		var = (type) dlsym(g_oscam_libcrypto, (sym));            \
+		if (!(var))                                              \
+			cs_debug_mask(D_TRACE,                               \
+				"OpenSSL: dlsym(\"%s\") failed: %s",             \
+				(sym), dlerror());                               \
+	}                                                            \
+} while (0)
+
+	if (!g_oscam_libcrypto)
+		return;
+
+	/* --- EVP digests --- */
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_md5_f,                    oscam_EVP_md5,                    "EVP_md5");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_sha1_f,                   oscam_EVP_sha1,                   "EVP_sha1");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_sha256_f,                 oscam_EVP_sha256,                 "EVP_sha256");
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_MD_CTX_new_f,             oscam_EVP_MD_CTX_new,             "EVP_MD_CTX_new");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_MD_CTX_free_f,            oscam_EVP_MD_CTX_free,            "EVP_MD_CTX_free");
+#else
+	/* OpenSSL < 1.1.0 uses EVP_MD_CTX_create/destroy */
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_MD_CTX_new_f,             oscam_EVP_MD_CTX_new,             "EVP_MD_CTX_create");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_MD_CTX_free_f,            oscam_EVP_MD_CTX_free,            "EVP_MD_CTX_destroy");
+#endif
+
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_DigestInit_ex_f,          oscam_EVP_DigestInit_ex,          "EVP_DigestInit_ex");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_DigestUpdate_f,           oscam_EVP_DigestUpdate,           "EVP_DigestUpdate");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_DigestFinal_ex_f,         oscam_EVP_DigestFinal_ex,         "EVP_DigestFinal_ex");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_Digest_f,                 oscam_EVP_Digest,                 "EVP_Digest");
+
+	/* --- EVP ciphers --- */
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_aes_128_ecb_f,            oscam_EVP_aes_128_ecb,            "EVP_aes_128_ecb");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_aes_192_ecb_f,            oscam_EVP_aes_192_ecb,            "EVP_aes_192_ecb");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_aes_256_ecb_f,            oscam_EVP_aes_256_ecb,            "EVP_aes_256_ecb");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_aes_128_cbc_f,            oscam_EVP_aes_128_cbc,            "EVP_aes_128_cbc");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_aes_192_cbc_f,            oscam_EVP_aes_192_cbc,            "EVP_aes_192_cbc");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_aes_256_cbc_f,            oscam_EVP_aes_256_cbc,            "EVP_aes_256_cbc");
+
+	/* --- EVP cipher ctx / operations --- */
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_CIPHER_CTX_new_f,         oscam_EVP_CIPHER_CTX_new,         "EVP_CIPHER_CTX_new");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_CIPHER_CTX_free_f,        oscam_EVP_CIPHER_CTX_free,        "EVP_CIPHER_CTX_free");
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_CIPHER_CTX_cleanup_f,     oscam_EVP_CIPHER_CTX_cleanup,     "EVP_CIPHER_CTX_cleanup");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_CIPHER_CTX_init_f,        oscam_EVP_CIPHER_CTX_init,        "EVP_CIPHER_CTX_init");
+#endif
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_CIPHER_CTX_set_padding_f, oscam_EVP_CIPHER_CTX_set_padding, "EVP_CIPHER_CTX_set_padding");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_CipherInit_ex_f,          oscam_EVP_CipherInit_ex,          "EVP_CipherInit_ex");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_CipherUpdate_f,           oscam_EVP_CipherUpdate,           "EVP_CipherUpdate");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_EncryptInit_ex_f,         oscam_EVP_EncryptInit_ex,         "EVP_EncryptInit_ex");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_EncryptUpdate_f,          oscam_EVP_EncryptUpdate,          "EVP_EncryptUpdate");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_DecryptInit_ex_f,         oscam_EVP_DecryptInit_ex,         "EVP_DecryptInit_ex");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_DecryptUpdate_f,          oscam_EVP_DecryptUpdate,          "EVP_DecryptUpdate");
+
+#if defined(WITH_SSL) || defined(WITH_LIB_MDC2) || defined(WITH_LIB_DES)
+	/* --- DES --- */
+	RESOLVE_OSSL_CRYPTO_FN(oscam_DES_set_key_unchecked_f,         oscam_DES_set_key_unchecked,      "DES_set_key_unchecked");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_DES_ecb_encrypt_f,               oscam_DES_ecb_encrypt,            "DES_ecb_encrypt");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_DES_ecb3_encrypt_f,              oscam_DES_ecb3_encrypt,           "DES_ecb3_encrypt");
+#endif
+
+#if defined(WITH_LIB_BIGNUM) && defined(WITH_OPENSSL)
+	/* --- BIGNUM --- */
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_CTX_new_f,                     oscam_BN_CTX_new,                  "BN_CTX_new");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_CTX_free_f,                    oscam_BN_CTX_free,                 "BN_CTX_free");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_CTX_start_f,                   oscam_BN_CTX_start,                "BN_CTX_start");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_CTX_end_f,                     oscam_BN_CTX_end,                  "BN_CTX_end");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_CTX_get_f,                     oscam_BN_CTX_get,                  "BN_CTX_get");
+
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_new_f,                         oscam_BN_new,                      "BN_new");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_free_f,                        oscam_BN_free,                     "BN_free");
+
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_bin2bn_f,                      oscam_BN_bin2bn,                   "BN_bin2bn");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_bn2bin_f,                      oscam_BN_bn2bin,                   "BN_bn2bin");
+
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_mod_exp_f,                     oscam_BN_mod_exp,                  "BN_mod_exp");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_num_bits_f,                    oscam_BN_num_bits,                 "BN_num_bits");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_mul_f,                         oscam_BN_mul,                      "BN_mul");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_add_word_f,                    oscam_BN_add_word,                 "BN_add_word");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_sub_word_f,                    oscam_BN_sub_word,                 "BN_sub_word");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_mod_inverse_f,                 oscam_BN_mod_inverse,              "BN_mod_inverse");
+#endif
+}
+
+/* ----------------------------------------------------------------------
+ * Public loader API
+ * ---------------------------------------------------------------------- */
+
+/*
+ * Try to load libcrypto (always) and optionally libssl.
+ *  need_ssl = 0 -> only libcrypto is required
+ *  need_ssl = 1 -> both libcrypto and libssl must succeed
+ *
+ * Returns:
+ *   0 on complete failure,
+ *   1 if only libcrypto is available,
+ *   2 if both libcrypto and libssl are available.
+ */
+int oscam_ossl_load(int need_ssl)
+{
+	if (g_oscam_libcrypto || g_oscam_libssl) {
+		/* already loaded; report current state */
+		return (g_oscam_libcrypto ? 1 : 0) + (g_oscam_libssl ? 1 : 0);
+	}
+
+	if (!g_oscam_crypto_tried) {
+		g_oscam_crypto_tried = 1;
+		g_oscam_libcrypto = oscam_ossl_try_open(NULL, g_oscam_crypto_sonames);
+		if (g_oscam_libcrypto)
+			oscam_ossl_resolve_crypto_symbols();
+	}
+
+	if (!g_oscam_libcrypto)
+		return 0;
+
+	if (need_ssl && !g_oscam_ssl_tried) {
+		g_oscam_ssl_tried = 1;
+		g_oscam_libssl = oscam_ossl_try_open(NULL, g_oscam_ssl_sonames);
+	}
+
+	if (need_ssl && !g_oscam_libssl)
+		return 1; /* crypto ok, ssl missing */
+
+	return (g_oscam_libcrypto ? 1 : 0) + (g_oscam_libssl ? 1 : 0);
+}
+
+void oscam_ossl_unload(void)
+{
+	if (g_oscam_libssl)
+	{
+		dlclose(g_oscam_libssl);
+		g_oscam_libssl = NULL;
+	}
+
+	if (g_oscam_libcrypto)
+	{
+		dlclose(g_oscam_libcrypto);
+		g_oscam_libcrypto = NULL;
+	}
+
+	g_oscam_crypto_used = NULL;
+	g_oscam_ssl_used    = NULL;
+
+	/* ===== EVP digest ===== */
+	RESET_OSSL_PTR(EVP_md5);
+	RESET_OSSL_PTR(EVP_sha1);
+	RESET_OSSL_PTR(EVP_sha256);
+
+	RESET_OSSL_PTR(EVP_MD_CTX_new);
+	RESET_OSSL_PTR(EVP_MD_CTX_free);
+	RESET_OSSL_PTR(EVP_DigestInit_ex);
+	RESET_OSSL_PTR(EVP_DigestUpdate);
+	RESET_OSSL_PTR(EVP_DigestFinal_ex);
+	RESET_OSSL_PTR(EVP_Digest);
+
+	/* ===== EVP cipher getters ===== */
+	RESET_OSSL_PTR(EVP_aes_128_ecb);
+	RESET_OSSL_PTR(EVP_aes_192_ecb);
+	RESET_OSSL_PTR(EVP_aes_256_ecb);
+	RESET_OSSL_PTR(EVP_aes_128_cbc);
+	RESET_OSSL_PTR(EVP_aes_192_cbc);
+	RESET_OSSL_PTR(EVP_aes_256_cbc);
+
+	/* ===== EVP cipher ctx + ops ===== */
+	RESET_OSSL_PTR(EVP_CIPHER_CTX_new);
+	RESET_OSSL_PTR(EVP_CIPHER_CTX_free);
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	RESET_OSSL_PTR(EVP_CIPHER_CTX_cleanup);
+	RESET_OSSL_PTR(EVP_CIPHER_CTX_init);
+#endif
+	RESET_OSSL_PTR(EVP_CIPHER_CTX_set_padding);
+
+	RESET_OSSL_PTR(EVP_CipherInit_ex);
+	RESET_OSSL_PTR(EVP_CipherUpdate);
+	RESET_OSSL_PTR(EVP_EncryptInit_ex);
+	RESET_OSSL_PTR(EVP_EncryptUpdate);
+	RESET_OSSL_PTR(EVP_DecryptInit_ex);
+	RESET_OSSL_PTR(EVP_DecryptUpdate);
+
+#if defined(WITH_SSL) || defined(WITH_LIB_DES)
+	RESET_OSSL_PTR(DES_set_key_unchecked);
+	RESET_OSSL_PTR(DES_ecb_encrypt);
+	RESET_OSSL_PTR(DES_ecb3_encrypt);
+#endif
+
+#if defined(WITH_LIB_BIGNUM)
+	RESET_OSSL_PTR(BN_CTX_new);
+	RESET_OSSL_PTR(BN_CTX_free);
+	RESET_OSSL_PTR(BN_CTX_start);
+	RESET_OSSL_PTR(BN_CTX_end);
+	RESET_OSSL_PTR(BN_CTX_get);
+
+	RESET_OSSL_PTR(BN_new);
+	RESET_OSSL_PTR(BN_free);
+
+	RESET_OSSL_PTR(BN_bin2bn);
+	RESET_OSSL_PTR(BN_bn2bin);
+
+	RESET_OSSL_PTR(BN_mod_exp);
+	RESET_OSSL_PTR(BN_num_bits);
+	RESET_OSSL_PTR(BN_mul);
+	RESET_OSSL_PTR(BN_add_word);
+	RESET_OSSL_PTR(BN_sub_word);
+	RESET_OSSL_PTR(BN_mod_inverse);
+#endif
+}
+
+/* Small helpers for callers */
+int oscam_ossl_have_crypto(void)           { return g_oscam_libcrypto != NULL; }
+int oscam_ossl_have_ssl(void)              { return g_oscam_libssl    != NULL; }
+const char *oscam_ossl_crypto_soname(void) { return g_oscam_crypto_used; }
+const char *oscam_ossl_ssl_soname(void)    { return g_oscam_ssl_used; }
+
+/*
+ * Generic symbol resolver.
+ *  from_ssl = 0 -> search libcrypto
+ *  from_ssl = 1 -> search libssl first, then libcrypto as fallback
+ *
+ * This is kept for completeness, but the main API uses typed function
+ * pointers (oscam_EVP_*, oscam_BN_*, etc.).
+ */
+void *oscam_ossl_sym(int from_ssl, const char *name)
+{
+	if (!name)
+		return NULL;
+
+	void *h = NULL;
+	if (from_ssl && g_oscam_libssl)
+	{
+		h = dlsym(g_oscam_libssl, name);
+		if (h)
+			return h;
+	}
+
+	if (g_oscam_libcrypto)
+	{
+		h = dlsym(g_oscam_libcrypto, name);
+		if (!h)
+			cs_debug_mask(D_TRACE, "OpenSSL: dlsym(\"%s\") failed: %s", name, dlerror());
+	}
+	return h;
+}
+
+/*
+ * Public: "is OpenSSL crypto usable?"
+ *  - triggers lazy load on first call
+ *  - used by all shim wrappers in the header
+ */
+int oscam_ossl_crypto_available(void)
+{
+	if (!g_oscam_libcrypto) {
+		oscam_ossl_load(0);  /* crypto-only */
+	}
+	return (g_oscam_libcrypto != NULL);
+}
+
+void oscam_crypto_init_dlopen(void)
+{
+	if (!g_oscam_crypto_tried) {
+		g_oscam_crypto_tried = 1;
+		g_oscam_libcrypto = oscam_ossl_try_open(NULL, g_oscam_crypto_sonames);
+		if (g_oscam_libcrypto)
+			oscam_ossl_resolve_crypto_symbols();
+	}
+}
+
+#endif /* WITH_OPENSSL_DLOPEN */
+
 /* EVP_MD_CTX_create/free were renamed in 1.1.0 */
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 #ifndef EVP_MD_CTX_create
@@ -21,10 +438,15 @@
 #endif
 #endif
 
+/*
+ * For OpenSSL < 1.1.0 the library does not provide EVP_CIPHER_CTX_new/free.
+ * We provide our own simple wrappers. These are used regardless of dlopen
+ * or not, but they do *not* call OPENSSL_malloc/free (no ABI dependency).
+ */
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 EVP_CIPHER_CTX *oscam_EVP_CIPHER_CTX_new(void)
 {
-	EVP_CIPHER_CTX *ctx = OPENSSL_malloc(sizeof(EVP_CIPHER_CTX));
+	EVP_CIPHER_CTX *ctx = (EVP_CIPHER_CTX *)malloc(sizeof(EVP_CIPHER_CTX));
 	if (!ctx)
 		return NULL;
 	EVP_CIPHER_CTX_init(ctx);
@@ -36,31 +458,22 @@ void oscam_EVP_CIPHER_CTX_free(EVP_CIPHER_CTX *ctx)
 	if (!ctx)
 		return;
 	EVP_CIPHER_CTX_cleanup(ctx);
-	OPENSSL_free(ctx);
+	free(ctx);
 }
 
-EVP_MD_CTX *EVP_MD_CTX_new(void)
-{
-	EVP_MD_CTX *ctx = OPENSSL_malloc(sizeof(EVP_MD_CTX));
-	if (!ctx)
-		return NULL;
-	EVP_MD_CTX_init(ctx);
-	return ctx;
-}
-
-void EVP_MD_CTX_free(EVP_MD_CTX *ctx)
-{
-	if (!ctx)
-		return;
-	EVP_MD_CTX_cleanup(ctx);
-	OPENSSL_free(ctx);
-}
-#endif
+/* Older OpenSSL headers may not define EVP_MD_CTX_new/free, but OSCam's
+ * dlopen shim resolves them (to create/destroy), so we do not need extra
+ * compatibility here.
+ */
+#endif /* < 1.1.0 */
 
 /* ----------------------------------------------------------------------
  * Unified hash helper
  * ---------------------------------------------------------------------- */
-int oscam_hash(oscam_hash_alg alg, const unsigned char *d1, size_t l1, const unsigned char *d2, size_t l2, unsigned char *out)
+int oscam_hash(oscam_hash_alg alg,
+               const unsigned char *d1, size_t l1,
+               const unsigned char *d2, size_t l2,
+               unsigned char *out)
 {
 	if (!out)
 		return -1;
@@ -115,7 +528,7 @@ static const char *__md5__magic = "$1$";
 
 /* Internal 64-character mapping for crypt's base64 variant */
 static const char itoa64[] =
-		"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+	"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 /* Converts 24 bits from 'v' into 4 base64-like chars */
 static void __md5_to64(char *s, unsigned long v, int n)
@@ -249,8 +662,10 @@ void oscam_des(uint8_t *data, des_key_schedule *schedule, int enc)
 	memcpy(data, b, 8);
 }
 
-void oscam_des_ecb_encrypt(uint8_t *data, const uint8_t *key, int32_t len) {
-	DES_key_schedule ks; DES_set_key_unchecked((const_DES_cblock*)key, &ks);
+void oscam_des_ecb_encrypt(uint8_t *data, const uint8_t *key, int32_t len)
+{
+	DES_key_schedule ks;
+	DES_set_key_unchecked((const_DES_cblock *)key, &ks);
 	DES_cblock b;
 	for (int32_t i = 0; i + 8 <= (len & ~7); i += 8) {
 		memcpy(b, data + i, 8);
@@ -259,8 +674,10 @@ void oscam_des_ecb_encrypt(uint8_t *data, const uint8_t *key, int32_t len) {
 	}
 }
 
-void des_ecb_decrypt(uint8_t *data, const uint8_t *key, int32_t len) {
-	DES_key_schedule ks; DES_set_key_unchecked((const_DES_cblock*)key, &ks);
+void oscam_des_ecb_decrypt(uint8_t *data, const uint8_t *key, int32_t len)
+{
+	DES_key_schedule ks;
+	DES_set_key_unchecked((const_DES_cblock *)key, &ks);
 	DES_cblock b;
 	for (int32_t i = 0; i + 8 <= (len & ~7); i += 8) {
 		memcpy(b, data + i, 8);
@@ -269,58 +686,71 @@ void des_ecb_decrypt(uint8_t *data, const uint8_t *key, int32_t len) {
 	}
 }
 
-void oscam_des_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len) {
-	DES_key_schedule ks; DES_set_key_unchecked((const_DES_cblock*)key, &ks);
-	DES_cblock ivc; memcpy(ivc, iv, 8);
+void oscam_des_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len)
+{
+	DES_key_schedule ks;
+	DES_set_key_unchecked((const_DES_cblock *)key, &ks);
+	DES_cblock ivc;
+	memcpy(ivc, iv, 8);
 	DES_ncbc_encrypt(data, data, len & ~7, &ks, &ivc, DES_ENCRYPT);
 }
 
-void des_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len) {
-	DES_key_schedule ks; DES_set_key_unchecked((const_DES_cblock*)key, &ks);
-	DES_cblock ivc; memcpy(ivc, iv, 8);
+void oscam_des_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len)
+{
+	DES_key_schedule ks;
+	DES_set_key_unchecked((const_DES_cblock *)key, &ks);
+	DES_cblock ivc;
+	memcpy(ivc, iv, 8);
 	DES_ncbc_encrypt(data, data, len & ~7, &ks, &ivc, DES_DECRYPT);
 }
 
 void oscam_des_ede2_cbc_encrypt(uint8_t *data, const uint8_t *iv,
-						  const uint8_t *k1, const uint8_t *k2, int32_t len) {
+                                const uint8_t *k1, const uint8_t *k2, int32_t len)
+{
 	DES_key_schedule ks1, ks2;
-	DES_set_key_unchecked((const_DES_cblock*)k1, &ks1);
-	DES_set_key_unchecked((const_DES_cblock*)k2, &ks2);
+	DES_set_key_unchecked((const_DES_cblock *)k1, &ks1);
+	DES_set_key_unchecked((const_DES_cblock *)k2, &ks2);
 	DES_key_schedule ks3 = ks1; /* EDE2 */
-	DES_cblock ivc; memcpy(ivc, iv, 8);
+	DES_cblock ivc;
+	memcpy(ivc, iv, 8);
 	DES_ede3_cbc_encrypt(data, data, len & ~7, &ks1, &ks2, &ks3, &ivc, DES_ENCRYPT);
 }
 
-void des_ede2_cbc_decrypt(uint8_t *data, const uint8_t *iv,
-						  const uint8_t *k1, const uint8_t *k2, int32_t len) {
+void oscam_des_ede2_cbc_decrypt(uint8_t *data, const uint8_t *iv,
+                                const uint8_t *k1, const uint8_t *k2, int32_t len)
+{
 	DES_key_schedule ks1, ks2;
-	DES_set_key_unchecked((const_DES_cblock*)k1, &ks1);
-	DES_set_key_unchecked((const_DES_cblock*)k2, &ks2);
+	DES_set_key_unchecked((const_DES_cblock *)k1, &ks1);
+	DES_set_key_unchecked((const_DES_cblock *)k2, &ks2);
 	DES_key_schedule ks3 = ks1; /* EDE2 */
-	DES_cblock ivc; memcpy(ivc, iv, 8);
+	DES_cblock ivc;
+	memcpy(ivc, iv, 8);
 	DES_ede3_cbc_encrypt(data, data, len & ~7, &ks1, &ks2, &ks3, &ivc, DES_DECRYPT);
 }
 
 void oscam_des_ecb3_encrypt(uint8_t *data, const uint8_t *key16)
 {
-	DES_cblock in, out; memcpy(in, data, 8);
+	DES_cblock in, out;
+	memcpy(in, data, 8);
 	DES_key_schedule k1, k2, k3;
 	/* EDE2 mode: 2-key Triple-DES, K3 == K1 (total 16-byte key)
 	For true 3-key EDE3 (24 bytes): load k3 from key+16. */
-	DES_set_key_unchecked((const_DES_cblock*)(key16+0),  &k1);
-	DES_set_key_unchecked((const_DES_cblock*)(key16+8),  &k2);
+	DES_set_key_unchecked((const_DES_cblock *)(key16 + 0),  &k1);
+	DES_set_key_unchecked((const_DES_cblock *)(key16 + 8),  &k2);
 	k3 = k1;
 	DES_ecb3_encrypt(&in, &out, &k1, &k2, &k3, DES_ENCRYPT);
 	memcpy(data, out, 8);
 }
 
-void des_ecb3_decrypt(uint8_t *data, const uint8_t *key16) {
-	DES_cblock in, out; memcpy(in, data, 8);
+void oscam_des_ecb3_decrypt(uint8_t *data, const uint8_t *key16)
+{
+	DES_cblock in, out;
+	memcpy(in, data, 8);
 	DES_key_schedule k1, k2, k3;
 	/* EDE2 mode: 2-key Triple-DES, K3 == K1 (total 16-byte key)
 	For true 3-key EDE3 (24 bytes): load k3 from key+16. */
-	DES_set_key_unchecked((const_DES_cblock*)(key16+0),  &k1);
-	DES_set_key_unchecked((const_DES_cblock*)(key16+8),  &k2);
+	DES_set_key_unchecked((const_DES_cblock *)(key16 + 0),  &k1);
+	DES_set_key_unchecked((const_DES_cblock *)(key16 + 8),  &k2);
 	k3 = k1;
 	DES_ecb3_encrypt(&in, &out, &k1, &k2, &k3, DES_DECRYPT);
 	memcpy(data, out, 8);
@@ -329,29 +759,30 @@ void des_ecb3_decrypt(uint8_t *data, const uint8_t *key16) {
 #if defined(__GNUC__) && (__GNUC__ * 100 + __GNUC_MINOR__ >= 406)
 #pragma GCC diagnostic pop
 #endif
-#endif/* WITH_LIB_DES */
+#endif /* WITH_LIB_DES */
 
 /* ----------------------------------------------------------------------
  * SHA256
  * ---------------------------------------------------------------------- */
 #ifdef WITH_LIB_SHA256
 void SHA256_Free(SHA256_CTX *c) { (void)c; }
-#endif/* WITH_LIB_SHA256 */
+#endif /* WITH_LIB_SHA256 */
 
 /* ----------------------------------------------------------------------
  * AES
  * ---------------------------------------------------------------------- */
 #ifdef WITH_LIB_AES
 typedef struct {
-	EVP_CIPHER_CTX *enc;	  /* ECB encrypt context (no padding) */
-    EVP_CIPHER_CTX *dec;	  /* ECB decrypt context (no padding) */
-    unsigned char   iv[16];
-    unsigned char   mode;	 /* CBC or ECB (0) */
-    unsigned char   nr;	   /* kept for symmetry */
-    int             key_bits; /* 128 / 192 / 256 */
+	EVP_CIPHER_CTX *enc;      /* ECB/CBC encrypt context (no padding) */
+	EVP_CIPHER_CTX *dec;      /* ECB/CBC decrypt context (no padding) */
+	unsigned char   iv[16];
+	unsigned char   mode;     /* CBC or ECB (0) */
+	unsigned char   nr;       /* kept for symmetry */
+	int             key_bits; /* 128 / 192 / 256 */
 } ossl_aesctx;
 
-static inline const EVP_CIPHER *aes_ecb_cipher(int bits) {
+static inline const EVP_CIPHER *aes_ecb_cipher(int bits)
+{
 	switch (bits) {
 		case 128: return EVP_aes_128_ecb();
 		case 192: return EVP_aes_192_ecb();
@@ -360,7 +791,8 @@ static inline const EVP_CIPHER *aes_ecb_cipher(int bits) {
 	}
 }
 
-static inline const EVP_CIPHER *aes_cbc_cipher(int bits) {
+static inline const EVP_CIPHER *aes_cbc_cipher(int bits)
+{
 	switch (bits) {
 		case 128: return EVP_aes_128_cbc();
 		case 192: return EVP_aes_192_cbc();
@@ -375,13 +807,15 @@ static int aes_ctx_init_pair(ossl_aesctx *C, const unsigned char *key, int key_b
 {
 	const EVP_CIPHER *cipher =
 		(mode == CBC) ? aes_cbc_cipher(key_bits) : aes_ecb_cipher(key_bits);
-	if (!cipher) return -1;
+	if (!cipher)
+		return -1;
 
 	C->enc = EVP_CIPHER_CTX_new();
 	C->dec = EVP_CIPHER_CTX_new();
-	if (!C->enc || !C->dec) return -1;
+	if (!C->enc || !C->dec)
+		return -1;
 
-	// iv is NULL here; we set it separately below for CBC
+	/* iv is NULL here; we set it separately below for CBC */
 	if (!EVP_EncryptInit_ex(C->enc, cipher, NULL, key, NULL)) return -1;
 	if (!EVP_DecryptInit_ex(C->dec, cipher, NULL, key, NULL)) return -1;
 
@@ -399,10 +833,12 @@ int AesCtxIni(AesCtx *c, const unsigned char *iv, const unsigned char *key, int 
 		(keylen == 24) ? 192 :
 		(keylen == 32) ? 256 : 0;
 
-	if (!key_bits) return -1;
+	if (!key_bits)
+		return -1;
 
 	ossl_aesctx *C = AES_C(c);
-	if (aes_ctx_init_pair(C, key, key_bits, mode) != 0) return -1;
+	if (aes_ctx_init_pair(C, key, key_bits, mode) != 0)
+		return -1;
 	if (iv) {
 		memcpy(C->iv, iv, 16);
 		if (mode == CBC) {
@@ -423,7 +859,7 @@ int AesEncrypt(AesCtx *c, const unsigned char *in, unsigned char *out, int len)
 
 	if (C->mode == CBC) {
 		if (!EVP_EncryptUpdate(C->enc, out, &outl, in, len)) return -1;
-		// Optionally mirror IV update into C->iv using last block of out
+		/* Optionally mirror IV update into C->iv using last block of out */
 		if (len >= AES_BLOCK_SIZE)
 			memcpy(C->iv, out + len - AES_BLOCK_SIZE, AES_BLOCK_SIZE);
 		return outl;
@@ -543,7 +979,10 @@ void add_aes_entry(AES_ENTRY **list, uint16_t caid, uint32_t ident, int32_t keyi
 	if (!cs_malloc(&e, sizeof(*e))) return;
 
 	memcpy(e->plainkey, aesKey, 16);
-	e->caid = caid; e->ident = ident; e->keyid = keyid; e->next = NULL;
+	e->caid = caid;
+	e->ident = ident;
+	e->keyid = keyid;
+	e->next = NULL;
 
 	if (memcmp(aesKey, "\xFF\xFF", 2) != 0) {
 		ossl_pair *p;
@@ -554,7 +993,10 @@ void add_aes_entry(AES_ENTRY **list, uint16_t caid, uint32_t ident, int32_t keyi
 		e->key = NULL; /* dummy -> card decrypts */
 	}
 
-	if (!*list) { *list = e; return; }
+	if (!*list) {
+		*list = e;
+		return;
+	}
 	AES_ENTRY *cur = *list;
 	while (cur->next) cur = cur->next;
 	cur->next = e;
@@ -652,12 +1094,12 @@ static AES_ENTRY *aes_list_find(AES_ENTRY *list, uint16_t caid, uint32_t provid,
 			return cur;
 	}
 	cs_log("AES Decrypt key %d not found for %04X@%06X (aka V %06X E%X ...)",
-		   keyid, caid, provid, provid, keyid);
+			keyid, caid, provid, provid, keyid);
 	return NULL;
 }
 
 int32_t aes_decrypt_from_list(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t keyid,
-							  uint8_t *buf, int32_t n)
+								uint8_t *buf, int32_t n)
 {
 	AES_ENTRY *cur = aes_list_find(list, caid, provid, keyid);
 	if (!cur) return 0;

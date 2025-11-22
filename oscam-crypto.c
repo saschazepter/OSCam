@@ -62,11 +62,11 @@ static void mdc2_body(MDC2_CTX *c, const unsigned char *in, size_t len)
 		/* Encrypt block with both DES keys */
 		oscam_des_set_key(hkey, &k);
 		memcpy(tmp, block, 8);
-		des(tmp, &k, 1);
+		oscam_des(tmp, &k, 1);
 
 		oscam_des_set_key(hhkey, &k);
 		memcpy(tmp2, block, 8);
-		des(tmp2, &k, 1);
+		oscam_des(tmp2, &k, 1);
 
 		ttin0 = tin0 ^ ((uint32_t)tmp2[0] | ((uint32_t)tmp2[1] << 8) |
 						((uint32_t)tmp2[2] << 16) | ((uint32_t)tmp2[3] << 24));

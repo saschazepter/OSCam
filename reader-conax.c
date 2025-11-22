@@ -29,8 +29,8 @@ CWp2[5] = msg[27];
 CWp2[6] = msg[28];
 CWp2[7] = msg[29];
 
-des_ecb3_decrypt(CWp1,reader->cwpk_mod);
-des_ecb3_decrypt(CWp2,reader->cwpk_mod);
+oscam_des_ecb3_decrypt(CWp1,reader->cwpk_mod);
+oscam_des_ecb3_decrypt(CWp2,reader->cwpk_mod);
 CWs1[0] = CWp1[4];
 CWs1[1] = CWp1[5];
 CWs1[2] = CWp1[6];

@@ -1411,12 +1411,12 @@ static int32_t videoguard2_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 							{
 								if(reader->k1_unique[16] == 0x08){
 									rdr_log_dbg(reader, D_READER, "use k1(DES) for CW decryption in unique pairing mode");
-									des_ecb_decrypt(ea->cw, reader->k1_unique, 0x08);
+									oscam_des_ecb_decrypt(ea->cw, reader->k1_unique, 0x08);
 								}
 								else
 								{
 									rdr_log_dbg(reader, D_READER, "use k1(3DES) for CW decryption in unique pairing mode");
-									des_ecb3_decrypt(ea->cw, reader->k1_unique);
+									oscam_des_ecb3_decrypt(ea->cw, reader->k1_unique);
 								}
 								if(er->ecm[0] & 1){ //log decrypted CW
 									rdr_log_dbg(reader, D_READER, "decrypted CW is: 0000000000000000%02X%02X%02X%02X%02X%02X%02X%02X", ea->cw[0], ea->cw[1], ea->cw[2], ea->cw[3], ea->cw[4], ea->cw[5], ea->cw[6], ea->cw[7]);
@@ -1468,12 +1468,12 @@ static int32_t videoguard2_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 							{
 								if(reader->k1_generic[16] == 0x08){
 									rdr_log_dbg(reader, D_READER, "use k1(DES) for CW decryption in generic pairing mode");
-									des_ecb_decrypt(ea->cw, reader->k1_generic, 0x08);
+									oscam_des_ecb_decrypt(ea->cw, reader->k1_generic, 0x08);
 								}
 								else
 								{
 									rdr_log_dbg(reader, D_READER, "use k1(3DES) for CW decryption in generic pairing mode");
-									des_ecb3_decrypt(ea->cw, reader->k1_generic);
+									oscam_des_ecb3_decrypt(ea->cw, reader->k1_generic);
 								}
 								if(er->ecm[0] & 1){ //log decrypted CW
 									rdr_log_dbg(reader, D_READER, "decrypted CW is: 0000000000000000%02X%02X%02X%02X%02X%02X%02X%02X", ea->cw[0], ea->cw[1], ea->cw[2], ea->cw[3], ea->cw[4], ea->cw[5], ea->cw[6], ea->cw[7]);

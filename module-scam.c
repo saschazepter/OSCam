@@ -98,8 +98,8 @@ static void scam_generate_deskey(char *keyString, uint8_t *desKey)
 
 	for(i = 0; i < alignedPassLen; i += 8)
 	{
-		des_set_key(&tmpKey[i], &key_schedule);
-		des(&tmpKey[i], &key_schedule, 1);
+		oscam_des_set_key(&tmpKey[i], &key_schedule);
+		oscam_des(&tmpKey[i], &key_schedule, 1);
 		xxor(desKey, 8, desKey, &tmpKey[i]);
 	}
 
@@ -112,7 +112,7 @@ static void scam_encrypt_packet(uint8_t *packet, uint32_t packetLength, uint8_t 
 	uint32_t i;
 	memset(iv, 0, 8);
 
-	des_cbc_encrypt(packet + dataOffset, iv, key, dataLength);
+	oscam_des_cbc_encrypt(packet + dataOffset, iv, key, dataLength);
 
 	for(i = 0; i < packetLength; i++)
 	{
@@ -134,7 +134,7 @@ static void scam_decrypt_packet(uint8_t *packet, uint32_t packetLength, uint8_t 
 		*xorOffset = (*xorOffset + 1) & 7;
 	}
 
-	des_cbc_decrypt(packet + dataOffset, iv, key, dataLength);
+	oscam_des_cbc_decrypt(packet + dataOffset, iv, key, dataLength);
 	memcpy(key, tmpKey, 8);
 }
 

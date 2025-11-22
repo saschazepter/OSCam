@@ -8,6 +8,349 @@
 #include <openssl/opensslv.h>
 #include <openssl/evp.h>
 
+/* ----------------------------------------------------------------------
+ * Optional runtime loader API for OpenSSL
+ * ---------------------------------------------------------------------- */
+
+#ifdef WITH_OPENSSL_DLOPEN
+/*
+ * libcrypto dlopen shim:
+ *  - oscam-crypto-openssl.c provides:
+ *      int oscam_ossl_crypto_available(void);
+ *      void *oscam_libcrypto; and all function pointers below.
+ *  - This header exposes function pointer types, externs and
+ *    inline wrappers that remap the OpenSSL API names.
+ */
+
+/* ------------------------------------------------------------------
+ * Shared OpenSSL dlopen helper macros (crypto + ssl backends)
+ * ------------------------------------------------------------------ */
+/* Declare a global function-pointer named oscam_<name> of given type */
+#define DECLARE_OSSL_PTR(name, type) type oscam_##name = NULL
+/* Reset an OpenSSL function-pointer */
+#define RESET_OSSL_PTR(name) do { oscam_##name = NULL; } while (0)
+
+/* Loader state (implemented in oscam-crypto-openssl.c) */
+int         oscam_ossl_crypto_available(void);
+int         oscam_ossl_load(int need_ssl);
+void        oscam_ossl_unload(void);
+void       *oscam_ossl_sym(int from_ssl, const char *name);
+int         oscam_ossl_have_crypto(void);
+int         oscam_ossl_have_ssl(void);
+void        oscam_crypto_init_dlopen(void);
+const char *oscam_ossl_crypto_soname(void);
+const char *oscam_ossl_ssl_soname(void);
+
+/* ===== EVP digest / cipher function pointer typedefs ===== */
+typedef const EVP_MD *(*oscam_EVP_md5_f)(void);
+typedef const EVP_MD *(*oscam_EVP_sha1_f)(void);
+typedef const EVP_MD *(*oscam_EVP_sha256_f)(void);
+
+typedef EVP_MD_CTX *(*oscam_EVP_MD_CTX_new_f)(void);
+typedef void        (*oscam_EVP_MD_CTX_free_f)(EVP_MD_CTX *);
+
+typedef int (*oscam_EVP_DigestInit_ex_f)(EVP_MD_CTX *, const EVP_MD *, ENGINE *);
+typedef int (*oscam_EVP_DigestUpdate_f)(EVP_MD_CTX *, const void *, size_t);
+typedef int (*oscam_EVP_DigestFinal_ex_f)(EVP_MD_CTX *, unsigned char *, unsigned int *);
+
+typedef int (*oscam_EVP_Digest_f)(const void *, size_t, unsigned char *, unsigned int *,
+								  const EVP_MD *, ENGINE *);
+
+/* Ciphers */
+typedef const EVP_CIPHER *(*oscam_EVP_aes_128_ecb_f)(void);
+typedef const EVP_CIPHER *(*oscam_EVP_aes_192_ecb_f)(void);
+typedef const EVP_CIPHER *(*oscam_EVP_aes_256_ecb_f)(void);
+typedef const EVP_CIPHER *(*oscam_EVP_aes_128_cbc_f)(void);
+typedef const EVP_CIPHER *(*oscam_EVP_aes_192_cbc_f)(void);
+typedef const EVP_CIPHER *(*oscam_EVP_aes_256_cbc_f)(void);
+
+typedef EVP_CIPHER_CTX *(*oscam_EVP_CIPHER_CTX_new_f)(void);
+typedef void            (*oscam_EVP_CIPHER_CTX_free_f)(EVP_CIPHER_CTX *);
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+typedef int  (*oscam_EVP_CIPHER_CTX_cleanup_f)(EVP_CIPHER_CTX *);
+typedef void (*oscam_EVP_CIPHER_CTX_init_f)(EVP_CIPHER_CTX *);
+#endif
+
+typedef int (*oscam_EVP_CIPHER_CTX_set_padding_f)(EVP_CIPHER_CTX *, int);
+
+typedef int (*oscam_EVP_CipherInit_ex_f)(EVP_CIPHER_CTX *, const EVP_CIPHER *,
+										 ENGINE *, const unsigned char *,
+										 const unsigned char *, int);
+typedef int (*oscam_EVP_CipherUpdate_f)(EVP_CIPHER_CTX *, unsigned char *,
+										int *, const unsigned char *, int);
+
+typedef int (*oscam_EVP_EncryptInit_ex_f)(EVP_CIPHER_CTX *, const EVP_CIPHER *,
+										  ENGINE *, const unsigned char *,
+										  const unsigned char *);
+typedef int (*oscam_EVP_EncryptUpdate_f)(EVP_CIPHER_CTX *, unsigned char *,
+										 int *, const unsigned char *, int);
+typedef int (*oscam_EVP_DecryptInit_ex_f)(EVP_CIPHER_CTX *, const EVP_CIPHER *,
+										  ENGINE *, const unsigned char *,
+										  const unsigned char *);
+typedef int (*oscam_EVP_DecryptUpdate_f)(EVP_CIPHER_CTX *, unsigned char *,
+										 int *, const unsigned char *, int);
+
+/* ===== extern function pointer storage (defined in oscam-crypto-openssl.c) ===== */
+
+extern oscam_EVP_md5_f                    oscam_EVP_md5;
+extern oscam_EVP_sha1_f                   oscam_EVP_sha1;
+extern oscam_EVP_sha256_f                 oscam_EVP_sha256;
+extern oscam_EVP_MD_CTX_new_f             oscam_EVP_MD_CTX_new;
+extern oscam_EVP_MD_CTX_free_f            oscam_EVP_MD_CTX_free;
+extern oscam_EVP_DigestInit_ex_f          oscam_EVP_DigestInit_ex;
+extern oscam_EVP_DigestUpdate_f           oscam_EVP_DigestUpdate;
+extern oscam_EVP_DigestFinal_ex_f         oscam_EVP_DigestFinal_ex;
+extern oscam_EVP_Digest_f                 oscam_EVP_Digest;
+
+/* Cipher getters */
+extern oscam_EVP_aes_128_ecb_f            oscam_EVP_aes_128_ecb;
+extern oscam_EVP_aes_192_ecb_f            oscam_EVP_aes_192_ecb;
+extern oscam_EVP_aes_256_ecb_f            oscam_EVP_aes_256_ecb;
+extern oscam_EVP_aes_128_cbc_f            oscam_EVP_aes_128_cbc;
+extern oscam_EVP_aes_192_cbc_f            oscam_EVP_aes_192_cbc;
+extern oscam_EVP_aes_256_cbc_f            oscam_EVP_aes_256_cbc;
+
+/* Cipher ctx / cipher operations */
+extern oscam_EVP_CIPHER_CTX_new_f         oscam_EVP_CIPHER_CTX_new;
+extern oscam_EVP_CIPHER_CTX_free_f        oscam_EVP_CIPHER_CTX_free;
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+extern oscam_EVP_CIPHER_CTX_cleanup_f     oscam_EVP_CIPHER_CTX_cleanup;
+extern oscam_EVP_CIPHER_CTX_init_f        oscam_EVP_CIPHER_CTX_init;
+#endif
+extern oscam_EVP_CIPHER_CTX_set_padding_f oscam_EVP_CIPHER_CTX_set_padding;
+
+extern oscam_EVP_CipherInit_ex_f          oscam_EVP_CipherInit_ex;
+extern oscam_EVP_CipherUpdate_f           oscam_EVP_CipherUpdate;
+
+extern oscam_EVP_EncryptInit_ex_f         oscam_EVP_EncryptInit_ex;
+extern oscam_EVP_EncryptUpdate_f          oscam_EVP_EncryptUpdate;
+extern oscam_EVP_DecryptInit_ex_f         oscam_EVP_DecryptInit_ex;
+extern oscam_EVP_DecryptUpdate_f          oscam_EVP_DecryptUpdate;
+
+/* ===== inline wrappers for EVP digests ===== */
+static inline const EVP_MD *EVP_md5_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_EVP_md5 ? oscam_EVP_md5() : NULL;
+}
+
+static inline const EVP_MD *EVP_sha1_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_EVP_sha1 ? oscam_EVP_sha1() : NULL;
+}
+
+static inline const EVP_MD *EVP_sha256_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_EVP_sha256 ? oscam_EVP_sha256() : NULL;
+}
+
+static inline EVP_MD_CTX *EVP_MD_CTX_new_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_EVP_MD_CTX_new ? oscam_EVP_MD_CTX_new() : NULL;
+}
+
+static inline void EVP_MD_CTX_free_shim(EVP_MD_CTX *ctx)
+{
+	if (!ctx) return;
+	if (!oscam_ossl_crypto_available()) return;
+	if (oscam_EVP_MD_CTX_free) oscam_EVP_MD_CTX_free(ctx);
+}
+
+static inline int EVP_DigestInit_ex_shim(EVP_MD_CTX *ctx,
+										 const EVP_MD *type, ENGINE *impl)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_EVP_DigestInit_ex ? oscam_EVP_DigestInit_ex(ctx, type, impl) : 0;
+}
+
+static inline int EVP_DigestUpdate_shim(EVP_MD_CTX *ctx,
+										const void *d, size_t cnt)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_EVP_DigestUpdate ? oscam_EVP_DigestUpdate(ctx, d, cnt) : 0;
+}
+
+static inline int EVP_DigestFinal_ex_shim(EVP_MD_CTX *ctx,
+										  unsigned char *md, unsigned int *s)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_EVP_DigestFinal_ex ? oscam_EVP_DigestFinal_ex(ctx, md, s) : 0;
+}
+
+static inline int EVP_Digest_shim(const void *data, size_t count,
+								  unsigned char *md, unsigned int *size,
+								  const EVP_MD *type, ENGINE *impl)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_EVP_Digest ? oscam_EVP_Digest(data, count, md, size, type, impl) : 0;
+}
+
+/* ===== inline wrappers for EVP ciphers / contexts ===== */
+static inline const EVP_CIPHER *EVP_aes_128_ecb_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_EVP_aes_128_ecb ? oscam_EVP_aes_128_ecb() : NULL;
+}
+static inline const EVP_CIPHER *EVP_aes_192_ecb_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_EVP_aes_192_ecb ? oscam_EVP_aes_192_ecb() : NULL;
+}
+static inline const EVP_CIPHER *EVP_aes_256_ecb_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_EVP_aes_256_ecb ? oscam_EVP_aes_256_ecb() : NULL;
+}
+static inline const EVP_CIPHER *EVP_aes_128_cbc_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_EVP_aes_128_cbc ? oscam_EVP_aes_128_cbc() : NULL;
+}
+static inline const EVP_CIPHER *EVP_aes_192_cbc_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_EVP_aes_192_cbc ? oscam_EVP_aes_192_cbc() : NULL;
+}
+static inline const EVP_CIPHER *EVP_aes_256_cbc_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_EVP_aes_256_cbc ? oscam_EVP_aes_256_cbc() : NULL;
+}
+
+static inline EVP_CIPHER_CTX *EVP_CIPHER_CTX_new_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_EVP_CIPHER_CTX_new ? oscam_EVP_CIPHER_CTX_new() : NULL;
+}
+
+static inline void EVP_CIPHER_CTX_free_shim(EVP_CIPHER_CTX *ctx)
+{
+	if (!ctx) return;
+	if (!oscam_ossl_crypto_available()) return;
+	if (oscam_EVP_CIPHER_CTX_free) oscam_EVP_CIPHER_CTX_free(ctx);
+}
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+static inline int EVP_CIPHER_CTX_cleanup_shim(EVP_CIPHER_CTX *ctx)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_EVP_CIPHER_CTX_cleanup ? oscam_EVP_CIPHER_CTX_cleanup(ctx) : 0;
+}
+
+static inline void EVP_CIPHER_CTX_init_shim(EVP_CIPHER_CTX *ctx)
+{
+	if (!oscam_ossl_crypto_available()) return;
+	if (oscam_EVP_CIPHER_CTX_init) oscam_EVP_CIPHER_CTX_init(ctx);
+}
+#endif
+
+static inline int EVP_CIPHER_CTX_set_padding_shim(EVP_CIPHER_CTX *ctx, int pad)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_EVP_CIPHER_CTX_set_padding ? oscam_EVP_CIPHER_CTX_set_padding(ctx, pad) : 0;
+}
+
+static inline int EVP_CipherInit_ex_shim(EVP_CIPHER_CTX *ctx,
+										 const EVP_CIPHER *type, ENGINE *e,
+										 const unsigned char *k,
+										 const unsigned char *iv, int enc)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_EVP_CipherInit_ex ? oscam_EVP_CipherInit_ex(ctx, type, e, k, iv, enc) : 0;
+}
+
+static inline int EVP_CipherUpdate_shim(EVP_CIPHER_CTX *ctx,
+										unsigned char *out, int *outl,
+										const unsigned char *in, int inl)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_EVP_CipherUpdate ? oscam_EVP_CipherUpdate(ctx, out, outl, in, inl) : 0;
+}
+
+static inline int EVP_EncryptInit_ex_shim(EVP_CIPHER_CTX *ctx,
+										  const EVP_CIPHER *type, ENGINE *e,
+										  const unsigned char *k,
+										  const unsigned char *iv)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_EVP_EncryptInit_ex ? oscam_EVP_EncryptInit_ex(ctx, type, e, k, iv) : 0;
+}
+
+static inline int EVP_EncryptUpdate_shim(EVP_CIPHER_CTX *ctx, unsigned char *out,
+										 int *outl, const unsigned char *in, int inl)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_EVP_EncryptUpdate ? oscam_EVP_EncryptUpdate(ctx, out, outl, in, inl) : 0;
+}
+
+static inline int EVP_DecryptInit_ex_shim(EVP_CIPHER_CTX *ctx,
+										  const EVP_CIPHER *type, ENGINE *e,
+										  const unsigned char *k,
+										  const unsigned char *iv)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_EVP_DecryptInit_ex ? oscam_EVP_DecryptInit_ex(ctx, type, e, k, iv) : 0;
+}
+
+static inline int EVP_DecryptUpdate_shim(EVP_CIPHER_CTX *ctx, unsigned char *out,
+										 int *outl, const unsigned char *in, int inl)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_EVP_DecryptUpdate ? oscam_EVP_DecryptUpdate(ctx, out, outl, in, inl) : 0;
+}
+
+/* Remove OpenSSL's definitions (OpenSSL 1.1+ uses reset() instead) */
+#undef EVP_CIPHER_CTX_init
+#undef EVP_CIPHER_CTX_cleanup
+#undef EVP_CipherInit_ex
+
+/* Map all EVP names used in the codebase to the shim versions */
+#define EVP_md5                    EVP_md5_shim
+#define EVP_sha1                   EVP_sha1_shim
+#define EVP_sha256                 EVP_sha256_shim
+#define EVP_MD_CTX_new             EVP_MD_CTX_new_shim
+#define EVP_MD_CTX_free            EVP_MD_CTX_free_shim
+#define EVP_DigestInit_ex          EVP_DigestInit_ex_shim
+#define EVP_DigestUpdate           EVP_DigestUpdate_shim
+#define EVP_DigestFinal_ex         EVP_DigestFinal_ex_shim
+#define EVP_Digest                 EVP_Digest_shim
+
+#define EVP_aes_128_ecb            EVP_aes_128_ecb_shim
+#define EVP_aes_192_ecb            EVP_aes_192_ecb_shim
+#define EVP_aes_256_ecb            EVP_aes_256_ecb_shim
+#define EVP_aes_128_cbc            EVP_aes_128_cbc_shim
+#define EVP_aes_192_cbc            EVP_aes_192_cbc_shim
+#define EVP_aes_256_cbc            EVP_aes_256_cbc_shim
+
+#define EVP_CIPHER_CTX_new         EVP_CIPHER_CTX_new_shim
+#define EVP_CIPHER_CTX_free        EVP_CIPHER_CTX_free_shim
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#define EVP_CIPHER_CTX_cleanup     EVP_CIPHER_CTX_cleanup_shim
+#define EVP_CIPHER_CTX_init        EVP_CIPHER_CTX_init_shim
+#endif
+
+#define EVP_CIPHER_CTX_set_padding EVP_CIPHER_CTX_set_padding_shim
+#define EVP_CipherInit_ex          EVP_CipherInit_ex_shim
+#define EVP_CipherUpdate           EVP_CipherUpdate_shim
+#define EVP_EncryptInit_ex         EVP_EncryptInit_ex_shim
+#define EVP_EncryptUpdate          EVP_EncryptUpdate_shim
+#define EVP_DecryptInit_ex         EVP_DecryptInit_ex_shim
+#define EVP_DecryptUpdate          EVP_DecryptUpdate_shim
+
+#else  /* !WITH_OPENSSL_DLOPEN */
+
+/* When not using dlopen, these do nothing. */
+#define DECLARE_OSSL_PTR(name, type)
+#define RESET_OSSL_PTR(name)  do { } while (0)
+
+#endif /* WITH_OPENSSL_DLOPEN */
+
+
 /*
  * OpenSSL < 1.1.0 does not have EVP_CIPHER_CTX_new/free.
  * Some vendor toolchains (e.g. Dreambox) ship headers that declare them
@@ -134,7 +477,47 @@ static inline int OSCAM_SHA256_Final(unsigned char *md, SHA256_CTX *c) {
 
 #include <openssl/des.h>
 typedef DES_key_schedule des_key_schedule;
-#endif
+
+#if WITH_OPENSSL_DLOPEN
+/* ===== DES dlopen shims (only when DES is actually used) ===== */
+
+typedef void (*oscam_DES_set_key_unchecked_f)(const_DES_cblock *, DES_key_schedule *);
+typedef void (*oscam_DES_ecb_encrypt_f)(const_DES_cblock *, DES_cblock *,
+										DES_key_schedule *, int);
+typedef void (*oscam_DES_ecb3_encrypt_f)(const_DES_cblock *, DES_cblock *,
+										 DES_key_schedule *, DES_key_schedule *,
+										 DES_key_schedule *, int);
+
+extern oscam_DES_set_key_unchecked_f oscam_DES_set_key_unchecked;
+extern oscam_DES_ecb_encrypt_f       oscam_DES_ecb_encrypt;
+extern oscam_DES_ecb3_encrypt_f      oscam_DES_ecb3_encrypt;
+
+static inline void DES_set_key_unchecked_shim(const_DES_cblock *k, DES_key_schedule *s)
+{
+	if (!oscam_ossl_crypto_available()) return;
+	if (oscam_DES_set_key_unchecked) oscam_DES_set_key_unchecked(k, s);
+}
+static inline void DES_ecb_encrypt_shim(const_DES_cblock *in, DES_cblock *out,
+										DES_key_schedule *ks, int enc)
+{
+	if (!oscam_ossl_crypto_available()) return;
+	if (oscam_DES_ecb_encrypt) oscam_DES_ecb_encrypt(in, out, ks, enc);
+}
+static inline void DES_ecb3_encrypt_shim(const_DES_cblock *in, DES_cblock *out,
+										 DES_key_schedule *ks1, DES_key_schedule *ks2,
+										 DES_key_schedule *ks3, int enc)
+{
+	if (!oscam_ossl_crypto_available()) return;
+	if (oscam_DES_ecb3_encrypt) oscam_DES_ecb3_encrypt(in, out, ks1, ks2, ks3, enc);
+}
+
+#define DES_set_key_unchecked  DES_set_key_unchecked_shim
+#define DES_ecb_encrypt        DES_ecb_encrypt_shim
+#define DES_ecb3_encrypt       DES_ecb3_encrypt_shim
+
+#endif /* WITH_OPENSSL_DLOPEN */
+
+#endif /* DES-related includes */
 
 #if defined(WITH_SSL) || defined(WITH_LIB_AES)
 #include <openssl/aes.h>
@@ -144,7 +527,7 @@ typedef DES_key_schedule des_key_schedule;
 #include <openssl/bn.h>
 #endif
 
-#else
+#else  /* !WITH_OPENSSL */
 
 #if defined(WITH_SSL) || defined(WITH_LIB_BIGNUM)
 #include "mbedtls/bignum.h"
@@ -218,42 +601,10 @@ struct oscam_des_key_schedule {
 };
 #endif
 
-/* When using OpenSSL, des_* are legacy macros in <openssl/des.h>.
-   Undef them so our aliases are clean and consistent on 0.9.8/1.0.x/3.x. */
-#ifdef WITH_OPENSSL
-# undef des_set_key
-# undef des_ecb_encrypt
-# undef des_ecb_decrypt
-# undef des_cbc_encrypt
-# undef des_cbc_decrypt
-# undef des_ede2_cbc_encrypt
-# undef des_ede2_cbc_decrypt
-# undef des_ecb3_encrypt
-# undef des_ecb3_decrypt
-# undef des
-# undef des_set_odd_parity
-# undef des_set_odd_parity_all
-#endif
-
-/* Public API names used by the rest of OSCam */
-#define des_set_key              oscam_des_set_key
-#define des                      oscam_des
-#define des_set_odd_parity       oscam_des_set_odd_parity
-#define des_set_odd_parity_all   oscam_des_set_odd_parity_all
-
-#define des_ecb_encrypt          oscam_des_ecb_encrypt
-#define des_ecb_decrypt          oscam_des_ecb_decrypt
-#define des_cbc_encrypt          oscam_des_cbc_encrypt
-#define des_cbc_decrypt          oscam_des_cbc_decrypt
-#define des_ede2_cbc_encrypt     oscam_des_ede2_cbc_encrypt
-#define des_ede2_cbc_decrypt     oscam_des_ede2_cbc_decrypt
-#define des_ecb3_encrypt         oscam_des_ecb3_encrypt
-#define des_ecb3_decrypt         oscam_des_ecb3_decrypt
-
 void oscam_des_set_key(const uint8_t *key, des_key_schedule *schedule);
 void oscam_des(uint8_t *data, des_key_schedule *schedule, int enc);
-void des_set_odd_parity(uint8_t key8[8]);
-void des_set_odd_parity_all(uint8_t *key, size_t len);
+void oscam_des_set_odd_parity(uint8_t key8[8]);
+void oscam_des_set_odd_parity_all(uint8_t *key, size_t len);
 
 void oscam_des_ecb_encrypt(uint8_t *data, const uint8_t *key, int32_t len);
 void oscam_des_ecb_decrypt(uint8_t *data, const uint8_t *key, int32_t len);
@@ -400,7 +751,155 @@ int32_t aes_present(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t key
 #ifdef WITH_OPENSSL
 typedef struct bignum_st  BIGNUM;
 typedef struct bignum_ctx BN_CTX;
-#else
+
+#if WITH_OPENSSL_DLOPEN
+/* ===== BIGNUM dlopen shims (only when BIGNUM is enabled) ===== */
+typedef BN_CTX  *(*oscam_BN_CTX_new_f)(void);
+typedef void     (*oscam_BN_CTX_free_f)(BN_CTX *);
+typedef void     (*oscam_BN_CTX_start_f)(BN_CTX *);
+typedef void     (*oscam_BN_CTX_end_f)(BN_CTX *);
+typedef BIGNUM  *(*oscam_BN_CTX_get_f)(BN_CTX *);
+
+typedef BIGNUM  *(*oscam_BN_new_f)(void);
+typedef void     (*oscam_BN_free_f)(BIGNUM *);
+
+typedef BIGNUM  *(*oscam_BN_bin2bn_f)(const unsigned char *, int, BIGNUM *);
+typedef int      (*oscam_BN_bn2bin_f)(const BIGNUM *, unsigned char *);
+
+typedef int      (*oscam_BN_mod_exp_f)(BIGNUM *, const BIGNUM *,
+									   const BIGNUM *, const BIGNUM *, BN_CTX *);
+typedef int      (*oscam_BN_num_bits_f)(const BIGNUM *);
+typedef int      (*oscam_BN_mul_f)(BIGNUM *, const BIGNUM *, const BIGNUM *, BN_CTX *);
+typedef int      (*oscam_BN_add_word_f)(BIGNUM *, BN_ULONG);
+typedef int      (*oscam_BN_sub_word_f)(BIGNUM *, BN_ULONG);
+typedef BIGNUM  *(*oscam_BN_mod_inverse_f)(BIGNUM *, const BIGNUM *,
+										   const BIGNUM *, BN_CTX *);
+
+/* extern pointers (defined in oscam-crypto-openssl.c) */
+extern oscam_BN_CTX_new_f       oscam_BN_CTX_new;
+extern oscam_BN_CTX_free_f      oscam_BN_CTX_free;
+extern oscam_BN_CTX_start_f     oscam_BN_CTX_start;
+extern oscam_BN_CTX_end_f       oscam_BN_CTX_end;
+extern oscam_BN_CTX_get_f       oscam_BN_CTX_get;
+
+extern oscam_BN_new_f           oscam_BN_new;
+extern oscam_BN_free_f          oscam_BN_free;
+
+extern oscam_BN_bin2bn_f        oscam_BN_bin2bn;
+extern oscam_BN_bn2bin_f        oscam_BN_bn2bin;
+
+extern oscam_BN_mod_exp_f       oscam_BN_mod_exp;
+extern oscam_BN_num_bits_f      oscam_BN_num_bits;
+extern oscam_BN_mul_f           oscam_BN_mul;
+extern oscam_BN_add_word_f      oscam_BN_add_word;
+extern oscam_BN_sub_word_f      oscam_BN_sub_word;
+extern oscam_BN_mod_inverse_f   oscam_BN_mod_inverse;
+
+/* wrappers */
+static inline BN_CTX *BN_CTX_new_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_BN_CTX_new ? oscam_BN_CTX_new() : NULL;
+}
+static inline void BN_CTX_free_shim(BN_CTX *c)
+{
+	if (!c) return;
+	if (!oscam_ossl_crypto_available()) return;
+	if (oscam_BN_CTX_free) oscam_BN_CTX_free(c);
+}
+static inline void BN_CTX_start_shim(BN_CTX *c)
+{
+	if (!oscam_ossl_crypto_available()) return;
+	if (oscam_BN_CTX_start) oscam_BN_CTX_start(c);
+}
+static inline void BN_CTX_end_shim(BN_CTX *c)
+{
+	if (!oscam_ossl_crypto_available()) return;
+	if (oscam_BN_CTX_end) oscam_BN_CTX_end(c);
+}
+static inline BIGNUM *BN_CTX_get_shim(BN_CTX *c)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_BN_CTX_get ? oscam_BN_CTX_get(c) : NULL;
+}
+
+static inline BIGNUM *BN_new_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_BN_new ? oscam_BN_new() : NULL;
+}
+static inline void BN_free_shim(BIGNUM *a)
+{
+	if (!a) return;
+	if (!oscam_ossl_crypto_available()) return;
+	if (oscam_BN_free) oscam_BN_free(a);
+}
+
+static inline BIGNUM *BN_bin2bn_shim(const unsigned char *s, int len, BIGNUM *ret)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_BN_bin2bn ? oscam_BN_bin2bn(s, len, ret) : NULL;
+}
+static inline int BN_bn2bin_shim(const BIGNUM *a, unsigned char *to)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_BN_bn2bin ? oscam_BN_bn2bin(a, to) : 0;
+}
+static inline int BN_mod_exp_shim(BIGNUM *r, const BIGNUM *a, const BIGNUM *p,
+								  const BIGNUM *m, BN_CTX *ctx)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_BN_mod_exp ? oscam_BN_mod_exp(r, a, p, m, ctx) : 0;
+}
+static inline int BN_num_bits_shim(const BIGNUM *a)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_BN_num_bits ? oscam_BN_num_bits(a) : 0;
+}
+static inline int BN_mul_shim(BIGNUM *r, const BIGNUM *a, const BIGNUM *b, BN_CTX *ctx)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_BN_mul ? oscam_BN_mul(r, a, b, ctx) : 0;
+}
+static inline int BN_add_word_shim(BIGNUM *a, BN_ULONG w)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_BN_add_word ? oscam_BN_add_word(a, w) : 0;
+}
+static inline int BN_sub_word_shim(BIGNUM *a, BN_ULONG w)
+{
+	if (!oscam_ossl_crypto_available()) return 0;
+	return oscam_BN_sub_word ? oscam_BN_sub_word(a, w) : 0;
+}
+static inline BIGNUM *BN_mod_inverse_shim(BIGNUM *ret, const BIGNUM *a,
+										  const BIGNUM *n, BN_CTX *ctx)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_BN_mod_inverse ? oscam_BN_mod_inverse(ret, a, n, ctx) : NULL;
+}
+
+/* map BN APIs */
+#define BN_CTX_new        BN_CTX_new_shim
+#define BN_CTX_free       BN_CTX_free_shim
+#define BN_CTX_start      BN_CTX_start_shim
+#define BN_CTX_end        BN_CTX_end_shim
+#define BN_CTX_get        BN_CTX_get_shim
+#define BN_new            BN_new_shim
+#define BN_free           BN_free_shim
+#define BN_bin2bn         BN_bin2bn_shim
+#define BN_bn2bin         BN_bn2bin_shim
+#define BN_mod_exp        BN_mod_exp_shim
+#define BN_num_bits       BN_num_bits_shim
+#define BN_mul            BN_mul_shim
+#define BN_add_word       BN_add_word_shim
+#define BN_sub_word       BN_sub_word_shim
+#define BN_mod_inverse    BN_mod_inverse_shim
+
+#endif /* WITH_OPENSSL_DLOPEN */
+
+#else  /* !WITH_OPENSSL */
+
+/* ----------------- mbedTLS backend ----------------- */
 typedef mbedtls_mpi BIGNUM;
 typedef struct { int dummy; } BN_CTX;
 
@@ -423,6 +922,7 @@ unsigned long BN_get_word(const BIGNUM *a);
 void BN_CTX_start(BN_CTX *ctx);
 BIGNUM *BN_CTX_get(BN_CTX *ctx);
 void BN_CTX_end(BN_CTX *ctx);
+
 #endif /* WITH_OPENSSL */
 #endif /* WITH_LIB_BIGNUM */
 
@@ -469,14 +969,14 @@ typedef struct idea_key_st
  * names via macros.
  */
 #ifdef WITH_OPENSSL
-# undef idea_set_encrypt_key
-# undef idea_set_decrypt_key
-# undef idea_ecb_encrypt
-# undef idea_cbc_encrypt
-# undef idea_encrypt
-# undef idea_cfb64_encrypt
-# undef idea_ofb64_encrypt
-# undef idea_options
+#undef idea_set_encrypt_key
+#undef idea_set_decrypt_key
+#undef idea_ecb_encrypt
+#undef idea_cbc_encrypt
+#undef idea_encrypt
+#undef idea_cfb64_encrypt
+#undef idea_ofb64_encrypt
+#undef idea_options
 #endif
 
 /* public names used by the rest of OSCam */

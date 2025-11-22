@@ -1389,8 +1389,8 @@ static int32_t nagra2_do_ecm(struct s_reader *reader, const ECM_REQUEST *er, str
 					return ERROR;
 				}
 
-				des_ecb3_decrypt(_cwe0, reader->cak63cwekey);
-				des_ecb3_decrypt(_cwe1, reader->cak63cwekey);
+				oscam_des_ecb3_decrypt(_cwe0, reader->cak63cwekey);
+				oscam_des_ecb3_decrypt(_cwe1, reader->cak63cwekey);
 				rdr_log_dbg(reader, D_READER, "CW0 after 3DES decrypt: %s", cs_hexdump(1, _cwe0, 8, tmp_dbg, sizeof(tmp_dbg)));
 				rdr_log_dbg(reader, D_READER, "CW1 after 3DES decrypt: %s", cs_hexdump(1, _cwe1, 8, tmp_dbg, sizeof(tmp_dbg)));
 
