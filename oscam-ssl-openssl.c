@@ -90,6 +90,7 @@ DECLARE_OSSL_PTR(RAND_bytes,                             oscam_RAND_bytes_f);
 /* --- libcrypto function-pointer instances used by SSL backend --- */
 DECLARE_OSSL_PTR(EVP_PKEY_new,                           oscam_EVP_PKEY_new_f);
 DECLARE_OSSL_PTR(EVP_PKEY_free,                          oscam_EVP_PKEY_free_f);
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 DECLARE_OSSL_PTR(EVP_PKEY_CTX_new_id,                    oscam_EVP_PKEY_CTX_new_id_f);
 DECLARE_OSSL_PTR(EVP_PKEY_keygen_init,                   oscam_EVP_PKEY_keygen_init_f);
 DECLARE_OSSL_PTR(EVP_PKEY_CTX_set_rsa_keygen_bits,       oscam_EVP_PKEY_CTX_set_rsa_keygen_bits_f);
@@ -99,6 +100,7 @@ DECLARE_OSSL_PTR(EVP_PKEY_verify_init,                   oscam_EVP_PKEY_verify_i
 DECLARE_OSSL_PTR(EVP_PKEY_CTX_set_signature_md,          oscam_EVP_PKEY_CTX_set_signature_md_f);
 DECLARE_OSSL_PTR(EVP_PKEY_verify,                        oscam_EVP_PKEY_verify_f);
 DECLARE_OSSL_PTR(EVP_PKEY_CTX_free,                      oscam_EVP_PKEY_CTX_free_f);
+#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
 DECLARE_OSSL_PTR(EVP_PKEY_bits,                          oscam_EVP_PKEY_bits_f);
 DECLARE_OSSL_PTR(EVP_PKEY_dup,                           oscam_EVP_PKEY_dup_f);
 DECLARE_OSSL_PTR(EVP_PKEY_base_id,                       oscam_EVP_PKEY_base_id_f);
@@ -143,14 +145,18 @@ DECLARE_OSSL_PTR(X509_set_subject_name,                  oscam_X509_set_subject_
 DECLARE_OSSL_PTR(X509_set_issuer_name,                   oscam_X509_set_issuer_name_f);
 
 DECLARE_OSSL_PTR(X509V3_set_ctx,                         oscam_X509V3_set_ctx_f);
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 DECLARE_OSSL_PTR(X509V3_EXT_conf_nid,                    oscam_X509V3_EXT_conf_nid_f);
+#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
 DECLARE_OSSL_PTR(X509_add_ext,                           oscam_X509_add_ext_f);
 DECLARE_OSSL_PTR(X509_EXTENSION_free,                    oscam_X509_EXTENSION_free_f);
 DECLARE_OSSL_PTR(X509V3_EXT_i2d,                         oscam_X509V3_EXT_i2d_f);
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 DECLARE_OSSL_PTR(OPENSSL_sk_new_null,                    oscam_OPENSSL_sk_new_null_f);
 DECLARE_OSSL_PTR(OPENSSL_sk_push,                        oscam_OPENSSL_sk_push_f);
 DECLARE_OSSL_PTR(OPENSSL_sk_pop_free,                    oscam_OPENSSL_sk_pop_free_f);
+#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
 DECLARE_OSSL_PTR(OPENSSL_free,                           oscam_OPENSSL_free_f);
 
 DECLARE_OSSL_PTR(GENERAL_NAME_new,                       oscam_GENERAL_NAME_new_f);
@@ -314,6 +320,7 @@ static int oscam_ossl_resolve_ssl_symbols(void)
 	/* EVP_PKEY / RSA / EC / EVP_MD */
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_new,                           oscam_EVP_PKEY_new_f, 1);
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_free,                          oscam_EVP_PKEY_free_f, 1);
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_CTX_new_id,                    oscam_EVP_PKEY_CTX_new_id_f, 1);
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_keygen_init,                   oscam_EVP_PKEY_keygen_init_f, 1);
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_CTX_set_rsa_keygen_bits,       oscam_EVP_PKEY_CTX_set_rsa_keygen_bits_f, 1);
@@ -323,6 +330,7 @@ static int oscam_ossl_resolve_ssl_symbols(void)
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_CTX_set_signature_md,          oscam_EVP_PKEY_CTX_set_signature_md_f, 1);
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_verify,                        oscam_EVP_PKEY_verify_f, 1);
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_CTX_free,                      oscam_EVP_PKEY_CTX_free_f, 1);
+#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
 	/* Try EVP_PKEY_bits first (OpenSSL <= 1.1.x may export this) */
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_bits,                          oscam_EVP_PKEY_bits_f, 0);
 	/* If EVP_PKEY_bits is not exported, try EVP_PKEY_get_bits (OpenSSL 3.x) */
@@ -373,15 +381,17 @@ static int oscam_ossl_resolve_ssl_symbols(void)
 	RESOLVE_OSSL_SSL_FN(X509_set_issuer_name,                   oscam_X509_set_issuer_name_f, 1);
 
 	RESOLVE_OSSL_SSL_FN(X509V3_set_ctx,                         oscam_X509V3_set_ctx_f, 1);
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	RESOLVE_OSSL_SSL_FN(X509V3_EXT_conf_nid,                    oscam_X509V3_EXT_conf_nid_f, 1);
+#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
 	RESOLVE_OSSL_SSL_FN(X509_add_ext,                           oscam_X509_add_ext_f, 1);
 	RESOLVE_OSSL_SSL_FN(X509_EXTENSION_free,                    oscam_X509_EXTENSION_free_f, 1);
 	RESOLVE_OSSL_SSL_FN(X509V3_EXT_i2d,                         oscam_X509V3_EXT_i2d_f, 1);
-
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	RESOLVE_OSSL_SSL_FN(OPENSSL_sk_new_null,                    oscam_OPENSSL_sk_new_null_f, 1);
 	RESOLVE_OSSL_SSL_FN(OPENSSL_sk_push,                        oscam_OPENSSL_sk_push_f, 1);
 	RESOLVE_OSSL_SSL_FN(OPENSSL_sk_pop_free,                    oscam_OPENSSL_sk_pop_free_f, 1);
-
+#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
 	RESOLVE_OSSL_SSL_FN(GENERAL_NAME_new,                       oscam_GENERAL_NAME_new_f, 1);
 	RESOLVE_OSSL_SSL_FN(GENERAL_NAME_free,                      oscam_GENERAL_NAME_free_f, 1);
 	RESOLVE_OSSL_SSL_FN(GENERAL_NAME_set0_value,                oscam_GENERAL_NAME_set0_value_f, 1);
@@ -1302,13 +1312,22 @@ void oscam_ssl_cert_get_validity(const oscam_x509_crt *crt, oscam_cert_time_t *f
 	memset(&tm_to,   0, sizeof(tm_to));
 
 	/* Convert ASN1_TIME → struct tm */
+
+#if defined(WITH_OPENSSL_DLOPEN) && OPENSSL_VERSION_NUMBER >= 0x10100000L
 	if (oscam_ASN1_TIME_to_tm) {
+		/* Use real OpenSSL helper when available via dlopen */
 		oscam_ASN1_TIME_to_tm(nb, &tm_from);
 		oscam_ASN1_TIME_to_tm(na, &tm_to);
 	} else {
-		oscam_asn1_time_to_tm(nb, &tm_from);   /* local fallback */
+		/* Fallback for older runtimes or missing symbol */
+		oscam_asn1_time_to_tm(nb, &tm_from);
 		oscam_asn1_time_to_tm(na, &tm_to);
 	}
+#else
+	/* Static builds or very old headers: always use local fallback */
+	oscam_asn1_time_to_tm(nb, &tm_from);
+	oscam_asn1_time_to_tm(na, &tm_to);
+#endif
 
 	/* Fill our simple struct */
 	from->year = tm_from.tm_year + 1900;
@@ -1454,10 +1473,10 @@ int oscam_ssl_pk_verify(oscam_pk_context *pk,
 
 	/* ================================================================
 	 * Modern EVP_PKEY path (OpenSSL >= 1.0.2)
-	 *   - used on 1.0.2, 1.1.x and 3.x+
+	 *   - used on 1.1.x and 3.x+
 	 *   - treats `hash` as already-digested SHA-256
 	 * ================================================================ */
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 
 	const EVP_MD *md = oscam_EVP_sha256();
 	EVP_PKEY_CTX *ctx = oscam_EVP_PKEY_CTX_new(pkey, NULL);
@@ -1480,10 +1499,10 @@ int oscam_ssl_pk_verify(oscam_pk_context *pk,
 	oscam_EVP_PKEY_CTX_free(ctx);
 	return (ret == 1) ? 0 : -1;
 
-#else /* OPENSSL_VERSION_NUMBER < 0x10002000L */
+#else /* OPENSSL_VERSION_NUMBER < 0x10100000L */
 
 /* ================================================================
- * Legacy path: OpenSSL 0.9.8 – 1.0.1
+ * Legacy path: OpenSSL 0.9.8 – 1.0.2
  *   - RSA_verify / ECDSA_verify expect precomputed digest
  * ================================================================ */
 
@@ -1516,12 +1535,14 @@ int oscam_ssl_pk_verify(oscam_pk_context *pk,
 #endif /* version split */
 }
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 static void oscam_sk_GENERAL_NAME_free_cb(void *p)
 {
 	if (!p)
 		return;
 	oscam_GENERAL_NAME_free((GENERAL_NAME *)p);
 }
+#endif
 
 int oscam_ssl_generate_selfsigned(const char *path)
 {
@@ -1543,11 +1564,6 @@ int oscam_ssl_generate_selfsigned(const char *path)
 
 	if (!path || !*path)
 		return OSCAM_SSL_ERR;
-
-	/* ---- Create empty PKEY ---- */
-	pkey = oscam_EVP_PKEY_new();
-	if (!pkey)
-		goto cleanup;
 
 	/* ===============================================
 	 * KEY GENERATION
@@ -1596,13 +1612,11 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	}
 	BN_free(e);
 
+	pkey = EVP_PKEY_new();
 	if (!pkey) {
-		pkey = EVP_PKEY_new();
-		if (!pkey) {
-			RSA_free(rsa);
-			rsa = NULL;
-			goto cleanup;
-		}
+		RSA_free(rsa);
+		rsa = NULL;
+		goto cleanup;
 	}
 
 	if (!EVP_PKEY_assign_RSA(pkey, rsa)) {
@@ -1647,21 +1661,21 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	end_tm = start_tm;
 	end_tm.tm_year += OSCAM_SSL_CERT_YEARS;
 
-	#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-		if (!oscam_X509_gmtime_adj(oscam_X509_getm_notBefore(crt), 0))
-			goto cleanup;
-		if (!oscam_X509_gmtime_adj(
-				oscam_X509_getm_notAfter(crt),
-				(long)3600 * 24 * 365 * OSCAM_SSL_CERT_YEARS))
-			goto cleanup;
-	#else
-		if (!oscam_X509_gmtime_adj(oscam_X509_get_notBefore(crt), 0))
-			goto cleanup;
-		if (!oscam_X509_gmtime_adj(
-				oscam_X509_get_notAfter(crt),
-				(long)3600 * 24 * 365 * OSCAM_SSL_CERT_YEARS))
-			goto cleanup;
-	#endif
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	if (!oscam_X509_gmtime_adj(oscam_X509_getm_notBefore(crt), 0))
+		goto cleanup;
+	if (!oscam_X509_gmtime_adj(
+			oscam_X509_getm_notAfter(crt),
+			(long)3600 * 24 * 365 * OSCAM_SSL_CERT_YEARS))
+		goto cleanup;
+#else
+	if (!oscam_X509_gmtime_adj(oscam_X509_get_notBefore(crt), 0))
+		goto cleanup;
+	if (!oscam_X509_gmtime_adj(
+			oscam_X509_get_notAfter(crt),
+			(long)3600 * 24 * 365 * OSCAM_SSL_CERT_YEARS))
+		goto cleanup;
+#endif
 
 	if (!oscam_X509_set_pubkey(crt, pkey))
 		goto cleanup;
@@ -1679,15 +1693,150 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	if (!name) goto cleanup;
 
 	oscam_X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-							   (const unsigned char*)cn, -1, -1, 0);
+	                                 (const unsigned char*)cn, -1, -1, 0);
 	oscam_X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
-							   (unsigned char*)"OSCam AutoCert", -1, -1, 0);
+	                                 (unsigned char*)"OSCam AutoCert", -1, -1, 0);
 	oscam_X509_NAME_add_entry_by_txt(name, "OU", MBSTRING_ASC,
-							   (unsigned char*)"Private WebIf Certificate", -1, -1, 0);
+	                                 (unsigned char*)"Private WebIf Certificate", -1, -1, 0);
 
 	oscam_X509_set_subject_name(crt, name);
 	oscam_X509_set_issuer_name(crt, name);
 	oscam_X509_NAME_free(name);
+
+/* =====================================================================
+ * Extensions + SAN
+ *   - OpenSSL < 1.1.0  : use plain X509V3_EXT_conf_nid + STACK_OF(GENERAL_NAME)
+ *   - OpenSSL >= 1.1.0 : use dlopen-friendly oscam_* wrappers
+ * ===================================================================*/
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+
+	/* ------------------------- LEGACY PATH ------------------------- */
+
+	/* Extensions */
+	{
+		X509V3_CTX ctx;
+		X509V3_set_ctx(&ctx, crt, crt, NULL, NULL, 0);
+
+		X509_EXTENSION *ext;
+
+		/* basicConstraints: CA:FALSE */
+		ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_basic_constraints, "CA:FALSE");
+		if (ext) {
+			X509_add_ext(crt, ext, -1);
+			X509_EXTENSION_free(ext);
+		}
+
+		/* keyUsage */
+		ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_key_usage,
+		                          "digitalSignature,keyEncipherment");
+		if (ext) {
+			X509_add_ext(crt, ext, -1);
+			X509_EXTENSION_free(ext);
+		}
+
+		/* nsCertType: server */
+		ext = X509V3_EXT_conf_nid(NULL, &ctx, NID_netscape_cert_type, "server");
+		if (ext) {
+			X509_add_ext(crt, ext, -1);
+			X509_EXTENSION_free(ext);
+		}
+	}
+
+	/* SAN */
+	{
+		STACK_OF(GENERAL_NAME) *gens = sk_GENERAL_NAME_new_null();
+		if (!gens)
+			goto cleanup;
+
+		/* DNS: CN */
+		{
+			GENERAL_NAME *gn = GENERAL_NAME_new();
+			if (gn) {
+				ASN1_IA5STRING *dns = ASN1_IA5STRING_new();
+				if (dns) {
+					ASN1_STRING_set(dns, cn, (int)strlen(cn));
+					gn->type  = GEN_DNS;
+					gn->d.ia5 = dns;
+					sk_GENERAL_NAME_push(gens, gn);
+				} else {
+					GENERAL_NAME_free(gn);
+				}
+			}
+		}
+
+		/* DNS: CN.local */
+		{
+			char buf_local[256];
+			snprintf(buf_local, sizeof(buf_local), "%s.local", cn);
+
+			GENERAL_NAME *gn = GENERAL_NAME_new();
+			if (gn) {
+				ASN1_IA5STRING *dns = ASN1_IA5STRING_new();
+				if (dns) {
+					ASN1_STRING_set(dns, buf_local, (int)strlen(buf_local));
+					gn->type  = GEN_DNS;
+					gn->d.ia5 = dns;
+					sk_GENERAL_NAME_push(gens, gn);
+				} else {
+					GENERAL_NAME_free(gn);
+				}
+			}
+		}
+
+		/* IPv4 127.0.0.1 */
+		{
+			GENERAL_NAME *gn = GENERAL_NAME_new();
+			if (gn) {
+				unsigned char ip4[4] = {127, 0, 0, 1};
+				ASN1_OCTET_STRING *ip = ASN1_OCTET_STRING_new();
+				if (ip) {
+					ASN1_OCTET_STRING_set(ip, ip4, 4);
+					gn->type = GEN_IPADD;
+					gn->d.ip = ip; /* owned by GENERAL_NAME */
+					sk_GENERAL_NAME_push(gens, gn);
+				} else {
+					GENERAL_NAME_free(gn);
+				}
+			}
+		}
+
+# if OPENSSL_VERSION_NUMBER >= 0x10002000L
+		/* IPv6 ::1 */
+		{
+			GENERAL_NAME *gn = GENERAL_NAME_new();
+			if (gn) {
+				unsigned char ip6[16] = {0};
+				ip6[15] = 1; /* ::1 */
+				ASN1_OCTET_STRING *ip = ASN1_OCTET_STRING_new();
+				if (ip) {
+					ASN1_OCTET_STRING_set(ip, ip6, 16);
+					gn->type = GEN_IPADD;
+					gn->d.ip = ip;
+					sk_GENERAL_NAME_push(gens, gn);
+				} else {
+					GENERAL_NAME_free(gn);
+				}
+			}
+		}
+# else
+		cs_log("OpenSSL: IPv6 SAN skipped (OpenSSL < 1.0.2)");
+# endif
+
+		/* subjectAltName extension */
+		{
+			X509_EXTENSION *ext = X509V3_EXT_i2d(NID_subject_alt_name, 0, gens);
+			if (ext) {
+				X509_add_ext(crt, ext, -1);
+				X509_EXTENSION_free(ext);
+			}
+		}
+
+		sk_GENERAL_NAME_pop_free(gens, GENERAL_NAME_free);
+	}
+
+#else  /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
+
+	/* ------------------- MODERN / DLOPEN-FRIENDLY PATH ------------------- */
 
 	/* Extensions */
 	{
@@ -1698,14 +1847,23 @@ int oscam_ssl_generate_selfsigned(const char *path)
 		X509_EXTENSION *ext;
 
 		ext = oscam_X509V3_EXT_conf_nid(NULL, &ctx, NID_basic_constraints, "CA:FALSE");
-		if (ext) { oscam_X509_add_ext(crt, ext, -1); oscam_X509_EXTENSION_free(ext); }
+		if (ext) {
+			oscam_X509_add_ext(crt, ext, -1);
+			oscam_X509_EXTENSION_free(ext);
+		}
 
 		ext = oscam_X509V3_EXT_conf_nid(NULL, &ctx, NID_key_usage,
-								  "digitalSignature,keyEncipherment");
-		if (ext) { oscam_X509_add_ext(crt, ext, -1); oscam_X509_EXTENSION_free(ext); }
+		                                "digitalSignature,keyEncipherment");
+		if (ext) {
+			oscam_X509_add_ext(crt, ext, -1);
+			oscam_X509_EXTENSION_free(ext);
+		}
 
 		ext = oscam_X509V3_EXT_conf_nid(NULL, &ctx, NID_netscape_cert_type, "server");
-		if (ext) { oscam_X509_add_ext(crt, ext, -1); oscam_X509_EXTENSION_free(ext); }
+		if (ext) {
+			oscam_X509_add_ext(crt, ext, -1);
+			oscam_X509_EXTENSION_free(ext);
+		}
 	}
 
 	/* SAN */
@@ -1716,52 +1874,35 @@ int oscam_ssl_generate_selfsigned(const char *path)
 
 		/* DNS: CN */
 		gn = oscam_GENERAL_NAME_new();
-		ASN1_IA5STRING *dns1 = oscam_ASN1_IA5STRING_new();
-		oscam_ASN1_STRING_set(dns1, cn, strlen(cn));
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-		oscam_GENERAL_NAME_set0_value(gn, GEN_DNS, dns1);
-#else
-		/* OpenSSL 1.0.2 and below: only manual setting */
-		gn->type = GEN_DNS;
-		gn->d.ia5 = ASN1_IA5STRING_new();
-		ASN1_STRING_set(gn->d.ia5, cn, strlen(cn));
-#endif
-		oscam_OPENSSL_sk_push((void*)gens, gn);
+		{
+			ASN1_IA5STRING *dns1 = oscam_ASN1_IA5STRING_new();
+			oscam_ASN1_STRING_set(dns1, cn, strlen(cn));
+			oscam_GENERAL_NAME_set0_value(gn, GEN_DNS, dns1);
+			oscam_OPENSSL_sk_push((void *)gens, gn);
+		}
 
 		/* DNS: CN.local */
-		char buf[256];
-		snprintf(buf, sizeof(buf), "%s.local", cn);
-		gn = oscam_GENERAL_NAME_new();
-		ASN1_IA5STRING *dns2 = oscam_ASN1_IA5STRING_new();
-		oscam_ASN1_STRING_set(dns2, buf, strlen(buf));
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-		oscam_GENERAL_NAME_set0_value(gn, GEN_DNS, dns2);
-#else
-		/* OpenSSL 1.0.2 and below: only manual setting */
-		gn->type = GEN_DNS;
-		gn->d.ia5 = ASN1_IA5STRING_new();
-		ASN1_STRING_set(gn->d.ia5, buf, strlen(buf));
-#endif
-		oscam_OPENSSL_sk_push((void*)gens, gn);
+		{
+			char buf_local[256];
+			snprintf(buf_local, sizeof(buf_local), "%s.local", cn);
+			gn = oscam_GENERAL_NAME_new();
+			ASN1_IA5STRING *dns2 = oscam_ASN1_IA5STRING_new();
+			oscam_ASN1_STRING_set(dns2, buf_local, strlen(buf_local));
+			oscam_GENERAL_NAME_set0_value(gn, GEN_DNS, dns2);
+			oscam_OPENSSL_sk_push((void *)gens, gn);
+		}
 
 		/* IPv4 127.0.0.1 */
 		gn = oscam_GENERAL_NAME_new();
 		{
-			unsigned char ip4[4] = {127,0,0,1};
+			unsigned char ip4[4] = {127, 0, 0, 1};
 			ASN1_OCTET_STRING *ip = oscam_ASN1_OCTET_STRING_new();
 			oscam_ASN1_OCTET_STRING_set(ip, ip4, 4);
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 			oscam_GENERAL_NAME_set0_value(gn, GEN_IPADD, ip);
-#else
-			/* OpenSSL 1.0.2 and below: manual GEN_IPADD with OCTET_STRING */
-			gn->type   = GEN_IPADD;
-			gn->d.ip   = ip;    /* note: union field is 'ip' in older OpenSSL */
-			/* do NOT free 'ip' separately; GENERAL_NAME_free() will own it */
-#endif
-			oscam_OPENSSL_sk_push((void*)gens, gn);
+			oscam_OPENSSL_sk_push((void *)gens, gn);
 		}
 
-#if OPENSSL_VERSION_NUMBER >= 0x10002000L
+# if OPENSSL_VERSION_NUMBER >= 0x10002000L
 		/* IPv6 ::1 */
 		gn = oscam_GENERAL_NAME_new();
 		{
@@ -1769,25 +1910,21 @@ int oscam_ssl_generate_selfsigned(const char *path)
 			ip6[15] = 1;
 			ASN1_OCTET_STRING *ipx = oscam_ASN1_OCTET_STRING_new();
 			oscam_ASN1_OCTET_STRING_set(ipx, ip6, 16);
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 			oscam_GENERAL_NAME_set0_value(gn, GEN_IPADD, ipx);
-#else
-			gn->type = GEN_IPADD;
-			gn->d.ip = ipx;
-#endif
-			oscam_OPENSSL_sk_push((void*)gens, gn);
+			oscam_OPENSSL_sk_push((void *)gens, gn);
 		}
-#else
+# else
 		cs_log("OpenSSL: IPv6 SAN skipped (OpenSSL < 1.0.2)");
-#endif
+# endif
 
 		ext = oscam_X509V3_EXT_i2d(NID_subject_alt_name, 0, gens);
 		if (ext) {
 			oscam_X509_add_ext(crt, ext, -1);
 			oscam_X509_EXTENSION_free(ext);
 		}
-		oscam_OPENSSL_sk_pop_free((_STACK *)gens, oscam_sk_GENERAL_NAME_free_cb);
+		oscam_OPENSSL_sk_pop_free((void *)gens, oscam_sk_GENERAL_NAME_free_cb);
 	}
+#endif /* version split */
 
 	/* Sign cert */
 	if (!oscam_X509_sign(crt, pkey, oscam_EVP_sha256())) {
@@ -1808,12 +1945,13 @@ int oscam_ssl_generate_selfsigned(const char *path)
 
 cleanup:
 	if (crt) oscam_X509_free(crt);
-	if (pkey) oscam_EVP_PKEY_free(pkey);
 
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
+	if (pkey) oscam_EVP_PKEY_free(pkey);
 	if (kctx) oscam_EVP_PKEY_CTX_free(kctx);
 #else
-	if (rsa) oscam_RSA_free(rsa);
+	if (pkey) EVP_PKEY_free(pkey);
+	if (rsa)  RSA_free(rsa);
 #endif
 
 	if (f) fclose(f);
