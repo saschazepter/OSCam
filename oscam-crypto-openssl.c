@@ -69,6 +69,7 @@ DECLARE_OSSL_PTR(EVP_aes_256_ecb,            oscam_EVP_aes_256_ecb_f);
 DECLARE_OSSL_PTR(EVP_aes_128_cbc,            oscam_EVP_aes_128_cbc_f);
 DECLARE_OSSL_PTR(EVP_aes_192_cbc,            oscam_EVP_aes_192_cbc_f);
 DECLARE_OSSL_PTR(EVP_aes_256_cbc,            oscam_EVP_aes_256_cbc_f);
+DECLARE_OSSL_PTR(EVP_des_cbc,                oscam_EVP_des_cbc_f);
 
 /* ===== EVP cipher context & operations ===== */
 DECLARE_OSSL_PTR(EVP_CIPHER_CTX_new,         oscam_EVP_CIPHER_CTX_new_f);
@@ -92,6 +93,9 @@ DECLARE_OSSL_PTR(EVP_DecryptUpdate,          oscam_EVP_DecryptUpdate_f);
 DECLARE_OSSL_PTR(DES_set_key_unchecked,      oscam_DES_set_key_unchecked_f);
 DECLARE_OSSL_PTR(DES_ecb_encrypt,            oscam_DES_ecb_encrypt_f);
 DECLARE_OSSL_PTR(DES_ecb3_encrypt,           oscam_DES_ecb3_encrypt_f);
+DECLARE_OSSL_PTR(DES_set_odd_parity,         oscam_DES_set_odd_parity_f);
+DECLARE_OSSL_PTR(DES_ede3_cbc_encrypt,       oscam_DES_ede3_cbc_encrypt_f);
+DECLARE_OSSL_PTR(DES_ncbc_encrypt,           oscam_DES_ncbc_encrypt_f);
 #endif
 
 /* ===== BIGNUM (only when enabled) ===== */
@@ -198,6 +202,7 @@ static void oscam_ossl_resolve_crypto_symbols(void)
 	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_aes_128_cbc_f,            oscam_EVP_aes_128_cbc,            "EVP_aes_128_cbc");
 	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_aes_192_cbc_f,            oscam_EVP_aes_192_cbc,            "EVP_aes_192_cbc");
 	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_aes_256_cbc_f,            oscam_EVP_aes_256_cbc,            "EVP_aes_256_cbc");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_des_cbc_f,                oscam_EVP_des_cbc,                "EVP_des_cbc");
 
 	/* --- EVP cipher ctx / operations --- */
 	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_CIPHER_CTX_new_f,         oscam_EVP_CIPHER_CTX_new,         "EVP_CIPHER_CTX_new");
@@ -219,6 +224,9 @@ static void oscam_ossl_resolve_crypto_symbols(void)
 	RESOLVE_OSSL_CRYPTO_FN(oscam_DES_set_key_unchecked_f,         oscam_DES_set_key_unchecked,      "DES_set_key_unchecked");
 	RESOLVE_OSSL_CRYPTO_FN(oscam_DES_ecb_encrypt_f,               oscam_DES_ecb_encrypt,            "DES_ecb_encrypt");
 	RESOLVE_OSSL_CRYPTO_FN(oscam_DES_ecb3_encrypt_f,              oscam_DES_ecb3_encrypt,           "DES_ecb3_encrypt");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_DES_set_odd_parity_f,            oscam_DES_set_odd_parity,         "DES_set_odd_parity");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_DES_ede3_cbc_encrypt_f,          oscam_DES_ede3_cbc_encrypt,       "DES_ede3_cbc_encrypt");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_DES_ncbc_encrypt_f,              oscam_DES_ncbc_encrypt,           "DES_ncbc_encrypt");
 #endif
 
 #if defined(WITH_LIB_BIGNUM) && defined(WITH_OPENSSL)
@@ -322,6 +330,7 @@ void oscam_ossl_unload(void)
 	RESET_OSSL_PTR(EVP_aes_128_cbc);
 	RESET_OSSL_PTR(EVP_aes_192_cbc);
 	RESET_OSSL_PTR(EVP_aes_256_cbc);
+	RESET_OSSL_PTR(EVP_des_cbc);
 
 	/* ===== EVP cipher ctx + ops ===== */
 	RESET_OSSL_PTR(EVP_CIPHER_CTX_new);
@@ -343,6 +352,9 @@ void oscam_ossl_unload(void)
 	RESET_OSSL_PTR(DES_set_key_unchecked);
 	RESET_OSSL_PTR(DES_ecb_encrypt);
 	RESET_OSSL_PTR(DES_ecb3_encrypt);
+	RESET_OSSL_PTR(DES_set_odd_parity);
+	RESET_OSSL_PTR(DES_ede3_cbc_encrypt);
+	RESET_OSSL_PTR(DES_ncbc_encrypt);
 #endif
 
 #if defined(WITH_LIB_BIGNUM)
