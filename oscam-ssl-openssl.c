@@ -964,7 +964,7 @@ int oscam_ssl_get_peer_cn(oscam_ssl_t *ssl, char *out, size_t outlen)
 
 	int len = oscam_ASN1_STRING_to_UTF8(&utf8, cn);
 	if (len <= 0 || (size_t)len >= outlen) {
-		X509_free(peer);
+		oscam_X509_free(peer);
 		return OSCAM_SSL_ERR;
 	}
 

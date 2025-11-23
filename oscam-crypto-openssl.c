@@ -69,6 +69,7 @@ DECLARE_OSSL_PTR(EVP_aes_256_ecb,            oscam_EVP_aes_256_ecb_f);
 DECLARE_OSSL_PTR(EVP_aes_128_cbc,            oscam_EVP_aes_128_cbc_f);
 DECLARE_OSSL_PTR(EVP_aes_192_cbc,            oscam_EVP_aes_192_cbc_f);
 DECLARE_OSSL_PTR(EVP_aes_256_cbc,            oscam_EVP_aes_256_cbc_f);
+DECLARE_OSSL_PTR(EVP_des_cbc,                oscam_EVP_des_cbc_f);
 
 /* ===== EVP cipher context & operations ===== */
 DECLARE_OSSL_PTR(EVP_CIPHER_CTX_new,         oscam_EVP_CIPHER_CTX_new_f);
@@ -92,6 +93,8 @@ DECLARE_OSSL_PTR(EVP_DecryptUpdate,          oscam_EVP_DecryptUpdate_f);
 DECLARE_OSSL_PTR(DES_set_key_unchecked,      oscam_DES_set_key_unchecked_f);
 DECLARE_OSSL_PTR(DES_ecb_encrypt,            oscam_DES_ecb_encrypt_f);
 DECLARE_OSSL_PTR(DES_ecb3_encrypt,           oscam_DES_ecb3_encrypt_f);
+DECLARE_OSSL_PTR(DES_set_odd_parity,         oscam_DES_set_odd_parity_f);
+DECLARE_OSSL_PTR(DES_ede3_cbc_encrypt,       oscam_DES_ede3_cbc_encrypt_f);
 #endif
 
 /* ===== BIGNUM (only when enabled) ===== */
@@ -198,6 +201,7 @@ static void oscam_ossl_resolve_crypto_symbols(void)
 	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_aes_128_cbc_f,            oscam_EVP_aes_128_cbc,            "EVP_aes_128_cbc");
 	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_aes_192_cbc_f,            oscam_EVP_aes_192_cbc,            "EVP_aes_192_cbc");
 	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_aes_256_cbc_f,            oscam_EVP_aes_256_cbc,            "EVP_aes_256_cbc");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_des_cbc_f,                oscam_EVP_des_cbc,                "EVP_des_cbc");
 
 	/* --- EVP cipher ctx / operations --- */
 	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_CIPHER_CTX_new_f,         oscam_EVP_CIPHER_CTX_new,         "EVP_CIPHER_CTX_new");
@@ -219,6 +223,8 @@ static void oscam_ossl_resolve_crypto_symbols(void)
 	RESOLVE_OSSL_CRYPTO_FN(oscam_DES_set_key_unchecked_f,         oscam_DES_set_key_unchecked,      "DES_set_key_unchecked");
 	RESOLVE_OSSL_CRYPTO_FN(oscam_DES_ecb_encrypt_f,               oscam_DES_ecb_encrypt,            "DES_ecb_encrypt");
 	RESOLVE_OSSL_CRYPTO_FN(oscam_DES_ecb3_encrypt_f,              oscam_DES_ecb3_encrypt,           "DES_ecb3_encrypt");
+	RESOLVE_OSSL_CRYPTO_FN(oscam_DES_set_odd_parity_f,            oscam_DES_set_odd_parity,         "DES_set_odd_parity");
+    RESOLVE_OSSL_CRYPTO_FN(oscam_DES_ede3_cbc_encrypt_f,          oscam_DES_ede3_cbc_encrypt,       "DES_ede3_cbc_encrypt");
 #endif
 
 #if defined(WITH_LIB_BIGNUM) && defined(WITH_OPENSSL)
@@ -322,6 +328,7 @@ void oscam_ossl_unload(void)
 	RESET_OSSL_PTR(EVP_aes_128_cbc);
 	RESET_OSSL_PTR(EVP_aes_192_cbc);
 	RESET_OSSL_PTR(EVP_aes_256_cbc);
+	RESET_OSSL_PTR(EVP_des_cbc);
 
 	/* ===== EVP cipher ctx + ops ===== */
 	RESET_OSSL_PTR(EVP_CIPHER_CTX_new);
@@ -343,6 +350,8 @@ void oscam_ossl_unload(void)
 	RESET_OSSL_PTR(DES_set_key_unchecked);
 	RESET_OSSL_PTR(DES_ecb_encrypt);
 	RESET_OSSL_PTR(DES_ecb3_encrypt);
+	RESET_OSSL_PTR(DES_set_odd_parity);
+	RESET_OSSL_PTR(DES_ede3_cbc_encrypt);
 #endif
 
 #if defined(WITH_LIB_BIGNUM)
@@ -636,6 +645,35 @@ char *__md5_crypt(const char *pw, const char *salt, char *passwd)
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
 
+static int oscam_des_cbc_do(uint8_t *data, const uint8_t *iv,
+							const uint8_t *key, int32_t len, int enc)
+{
+	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+	if (!ctx)
+		return -1;
+
+	unsigned char iv_copy[8];
+	memcpy(iv_copy, iv, 8);
+
+	if (!EVP_CipherInit_ex(ctx, EVP_des_cbc(), NULL, key, iv_copy, enc)) {
+		EVP_CIPHER_CTX_free(ctx);
+		return -1;
+	}
+
+	EVP_CIPHER_CTX_set_padding(ctx, 0);
+
+	int outl = 0;
+	int n = len & ~7;
+
+	if (!EVP_CipherUpdate(ctx, data, &outl, data, n)) {
+		EVP_CIPHER_CTX_free(ctx);
+		return -1;
+	}
+
+	EVP_CIPHER_CTX_free(ctx);
+	return outl;
+}
+
 void oscam_des_set_key(const uint8_t *key, des_key_schedule *schedule)
 {
 	/* On OpenSSL builds, des_key_schedule is the library type (DES_key_schedule). */
@@ -686,23 +724,9 @@ void oscam_des_ecb_decrypt(uint8_t *data, const uint8_t *key, int32_t len)
 	}
 }
 
-void oscam_des_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len)
-{
-	DES_key_schedule ks;
-	DES_set_key_unchecked((const_DES_cblock *)key, &ks);
-	DES_cblock ivc;
-	memcpy(ivc, iv, 8);
-	DES_ncbc_encrypt(data, data, len & ~7, &ks, &ivc, DES_ENCRYPT);
-}
+void oscam_des_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len) { oscam_des_cbc_do(data, iv, key, len, DES_ENCRYPT); }
 
-void oscam_des_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len)
-{
-	DES_key_schedule ks;
-	DES_set_key_unchecked((const_DES_cblock *)key, &ks);
-	DES_cblock ivc;
-	memcpy(ivc, iv, 8);
-	DES_ncbc_encrypt(data, data, len & ~7, &ks, &ivc, DES_DECRYPT);
-}
+void oscam_des_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len) { oscam_des_cbc_do(data, iv, key, len, DES_DECRYPT); }
 
 void oscam_des_ede2_cbc_encrypt(uint8_t *data, const uint8_t *iv,
                                 const uint8_t *k1, const uint8_t *k2, int32_t len)

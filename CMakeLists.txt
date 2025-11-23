@@ -146,7 +146,7 @@ endif ()
 message(STATUS "Selecting security backend: ${SECURITY_BACKEND}")
 
 if (SECURITY_BACKEND STREQUAL "OPENSSL")
-	add_definitions(-DWITH_OPENSSL=1)
+	add_definitions(-DWITH_OPENSSL=1 -DWITH_OPENSSL_DLOPEN=1)
 elseif(SECURITY_BACKEND STREQUAL "MBEDTLS")
 	add_definitions(-DWITH_MBEDTLS=1)
 	set (mbedtls "mbedtls")

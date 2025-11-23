@@ -63,6 +63,7 @@ typedef const EVP_CIPHER *(*oscam_EVP_aes_256_ecb_f)(void);
 typedef const EVP_CIPHER *(*oscam_EVP_aes_128_cbc_f)(void);
 typedef const EVP_CIPHER *(*oscam_EVP_aes_192_cbc_f)(void);
 typedef const EVP_CIPHER *(*oscam_EVP_aes_256_cbc_f)(void);
+typedef const EVP_CIPHER *(*oscam_EVP_des_cbc_f)(void);
 
 typedef EVP_CIPHER_CTX *(*oscam_EVP_CIPHER_CTX_new_f)(void);
 typedef void            (*oscam_EVP_CIPHER_CTX_free_f)(EVP_CIPHER_CTX *);
@@ -110,6 +111,7 @@ extern oscam_EVP_aes_256_ecb_f            oscam_EVP_aes_256_ecb;
 extern oscam_EVP_aes_128_cbc_f            oscam_EVP_aes_128_cbc;
 extern oscam_EVP_aes_192_cbc_f            oscam_EVP_aes_192_cbc;
 extern oscam_EVP_aes_256_cbc_f            oscam_EVP_aes_256_cbc;
+extern oscam_EVP_des_cbc_f                oscam_EVP_des_cbc;
 
 /* Cipher ctx / cipher operations */
 extern oscam_EVP_CIPHER_CTX_new_f         oscam_EVP_CIPHER_CTX_new;
@@ -220,13 +222,16 @@ static inline const EVP_CIPHER *EVP_aes_256_cbc_shim(void)
 	if (!oscam_ossl_crypto_available()) return NULL;
 	return oscam_EVP_aes_256_cbc ? oscam_EVP_aes_256_cbc() : NULL;
 }
-
+static inline const EVP_CIPHER *EVP_des_cbc_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_EVP_des_cbc ? oscam_EVP_des_cbc() : NULL;
+}
 static inline EVP_CIPHER_CTX *EVP_CIPHER_CTX_new_shim(void)
 {
 	if (!oscam_ossl_crypto_available()) return NULL;
 	return oscam_EVP_CIPHER_CTX_new ? oscam_EVP_CIPHER_CTX_new() : NULL;
 }
-
 static inline void EVP_CIPHER_CTX_free_shim(EVP_CIPHER_CTX *ctx)
 {
 	if (!ctx) return;
@@ -325,6 +330,7 @@ static inline int EVP_DecryptUpdate_shim(EVP_CIPHER_CTX *ctx, unsigned char *out
 #define EVP_aes_128_cbc            EVP_aes_128_cbc_shim
 #define EVP_aes_192_cbc            EVP_aes_192_cbc_shim
 #define EVP_aes_256_cbc            EVP_aes_256_cbc_shim
+#define EVP_des_cbc                EVP_des_cbc_shim
 
 #define EVP_CIPHER_CTX_new         EVP_CIPHER_CTX_new_shim
 #define EVP_CIPHER_CTX_free        EVP_CIPHER_CTX_free_shim
@@ -378,11 +384,6 @@ void            oscam_EVP_CIPHER_CTX_free(EVP_CIPHER_CTX *ctx);
 
 #if defined(WITH_SSL) || defined(WITH_LIB_MD5)
 #include <openssl/md5.h>
-#endif
-
-#if defined(WITH_SSL) || defined(WITH_LIB_SHA1) || defined(WITH_LIB_SHA256)
-#include <openssl/sha.h>
-#endif
 
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 /* -------- MD5 shim (old-style calls) ---------- */
@@ -414,6 +415,13 @@ static inline int OSCAM_MD5_Final(unsigned char *md, MD5_CTX *c) {
 #define MD5_Update OSCAM_MD5_Update
 #define MD5_Final  OSCAM_MD5_Final
 
+#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
+#endif
+
+#if defined(WITH_SSL) || defined(WITH_LIB_SHA1) || defined(WITH_LIB_SHA256)
+#include <openssl/sha.h>
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 /* -------- SHA1 shim (old-style calls) ---------- */
 typedef struct { EVP_MD_CTX *p; } OSCAM_SHA_CTX;
 #define SHA_CTX OSCAM_SHA_CTX
@@ -460,6 +468,7 @@ static inline int OSCAM_SHA256_Final(unsigned char *md, SHA256_CTX *c) {
 #define SHA256_Update OSCAM_SHA256_Update
 #define SHA256_Final  OSCAM_SHA256_Final
 #endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
+#endif
 
 #if defined(WITH_SSL) || defined(WITH_LIB_MDC2) || defined(WITH_LIB_DES)
 /*
@@ -487,10 +496,16 @@ typedef void (*oscam_DES_ecb_encrypt_f)(const_DES_cblock *, DES_cblock *,
 typedef void (*oscam_DES_ecb3_encrypt_f)(const_DES_cblock *, DES_cblock *,
 										 DES_key_schedule *, DES_key_schedule *,
 										 DES_key_schedule *, int);
+typedef void (*oscam_DES_set_odd_parity_f)(DES_cblock *);
+typedef void (*oscam_DES_ede3_cbc_encrypt_f)(const unsigned char *, unsigned char *,
+											 long, DES_key_schedule *, DES_key_schedule *,
+											 DES_key_schedule *, DES_cblock *, int);
 
 extern oscam_DES_set_key_unchecked_f oscam_DES_set_key_unchecked;
 extern oscam_DES_ecb_encrypt_f       oscam_DES_ecb_encrypt;
 extern oscam_DES_ecb3_encrypt_f      oscam_DES_ecb3_encrypt;
+extern oscam_DES_set_odd_parity_f    oscam_DES_set_odd_parity;
+extern oscam_DES_ede3_cbc_encrypt_f  oscam_DES_ede3_cbc_encrypt;
 
 static inline void DES_set_key_unchecked_shim(const_DES_cblock *k, DES_key_schedule *s)
 {
@@ -510,10 +525,29 @@ static inline void DES_ecb3_encrypt_shim(const_DES_cblock *in, DES_cblock *out,
 	if (!oscam_ossl_crypto_available()) return;
 	if (oscam_DES_ecb3_encrypt) oscam_DES_ecb3_encrypt(in, out, ks1, ks2, ks3, enc);
 }
+static inline void DES_set_odd_parity_shim(DES_cblock *d)
+{
+	if (!oscam_ossl_crypto_available()) return;
+	if (oscam_DES_set_odd_parity) oscam_DES_set_odd_parity(d);
+}
+static inline void DES_ede3_cbc_encrypt_shim(const unsigned char *in, unsigned char *out,
+											 long len,
+											 DES_key_schedule *ks1,
+											 DES_key_schedule *ks2,
+											 DES_key_schedule *ks3,
+											 DES_cblock *iv,
+											 int enc)
+{
+	if (!oscam_ossl_crypto_available()) return;
+	if (oscam_DES_ede3_cbc_encrypt)
+		oscam_DES_ede3_cbc_encrypt(in, out, len, ks1, ks2, ks3, iv, enc);
+}
 
 #define DES_set_key_unchecked  DES_set_key_unchecked_shim
 #define DES_ecb_encrypt        DES_ecb_encrypt_shim
 #define DES_ecb3_encrypt       DES_ecb3_encrypt_shim
+#define DES_set_odd_parity     DES_set_odd_parity_shim
+#define DES_ede3_cbc_encrypt   DES_ede3_cbc_encrypt_shim
 
 #endif /* WITH_OPENSSL_DLOPEN */
 
