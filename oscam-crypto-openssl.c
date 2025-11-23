@@ -123,6 +123,25 @@ DECLARE_OSSL_PTR(BN_mod_inverse,             oscam_BN_mod_inverse_f);
 /* ----------------------------------------------------------------------
  * Helper: dlopen with fallback list
  * ---------------------------------------------------------------------- */
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+static EVP_CIPHER_CTX *oscam_EVP_CIPHER_CTX_new_fallback(void)
+{
+	EVP_CIPHER_CTX *ctx = (EVP_CIPHER_CTX *)malloc(sizeof(EVP_CIPHER_CTX));
+	if (!ctx)
+		return NULL;
+	EVP_CIPHER_CTX_init(ctx);
+	return ctx;
+}
+
+static void oscam_EVP_CIPHER_CTX_free_fallback(EVP_CIPHER_CTX *ctx)
+{
+	if (!ctx)
+		return;
+	EVP_CIPHER_CTX_cleanup(ctx);
+	free(ctx);
+}
+#endif
+
 static void *oscam_ossl_try_open(const char *explicit_name, const char *const *fallbacks)
 {
 	void *h = NULL;
@@ -210,6 +229,11 @@ static void oscam_ossl_resolve_crypto_symbols(void)
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_CIPHER_CTX_cleanup_f,     oscam_EVP_CIPHER_CTX_cleanup,     "EVP_CIPHER_CTX_cleanup");
 	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_CIPHER_CTX_init_f,        oscam_EVP_CIPHER_CTX_init,        "EVP_CIPHER_CTX_init");
+
+	if (!oscam_EVP_CIPHER_CTX_new)
+		oscam_EVP_CIPHER_CTX_new = oscam_EVP_CIPHER_CTX_new_fallback;
+	if (!oscam_EVP_CIPHER_CTX_free)
+		oscam_EVP_CIPHER_CTX_free = oscam_EVP_CIPHER_CTX_free_fallback;
 #endif
 	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_CIPHER_CTX_set_padding_f, oscam_EVP_CIPHER_CTX_set_padding, "EVP_CIPHER_CTX_set_padding");
 	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_CipherInit_ex_f,          oscam_EVP_CipherInit_ex,          "EVP_CipherInit_ex");
