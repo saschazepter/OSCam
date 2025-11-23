@@ -140,6 +140,7 @@ typedef int   (*oscam_X509_set_pubkey_f)(X509 *x, EVP_PKEY *pkey);
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 typedef ASN1_TIME *(*oscam_X509_getm_notBefore_f)(X509 *x);
 typedef ASN1_TIME *(*oscam_X509_getm_notAfter_f)(X509 *x);
+typedef int (*oscam_ASN1_TIME_to_tm_f)(const ASN1_TIME *t, struct tm *tm);
 #else
 /* OpenSSL < 1.1.0 */
 typedef ASN1_TIME *(*oscam_X509_get_notBefore_f)(X509 *x);
