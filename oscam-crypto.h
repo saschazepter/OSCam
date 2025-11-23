@@ -354,19 +354,13 @@ static inline int EVP_DecryptUpdate_shim(EVP_CIPHER_CTX *ctx, unsigned char *out
 #define DECLARE_OSSL_PTR(name, type)
 #define RESET_OSSL_PTR(name)  do { } while (0)
 
-#endif /* WITH_OPENSSL_DLOPEN */
-
-
 /*
- * OpenSSL < 1.1.0 does not have EVP_CIPHER_CTX_new/free.
- * Some vendor toolchains (e.g. Dreambox) ship headers that declare them
- * but the library does not implement them.
- *
- * We avoid fighting with those declarations by providing our own
- * wrapper functions with different names and then remapping
- * EVP_CIPHER_CTX_new/free to those wrappers.
+ * OpenSSL < 1.1.0 often lacks EVP_CIPHER_CTX_new/free in libcrypto
+ * even if headers declare them (seen on various vendor toolchains).
+ * For non-dlopen builds we provide our own implementation and
+ * remap the public names.
  */
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#if OPENSSL_VERSION_NUMBER < 0x10100000L && !defined(WITH_OPENSSL_DLOPEN)
 
 EVP_CIPHER_CTX *oscam_EVP_CIPHER_CTX_new(void);
 void            oscam_EVP_CIPHER_CTX_free(EVP_CIPHER_CTX *ctx);
@@ -374,7 +368,9 @@ void            oscam_EVP_CIPHER_CTX_free(EVP_CIPHER_CTX *ctx);
 #define EVP_CIPHER_CTX_new  oscam_EVP_CIPHER_CTX_new
 #define EVP_CIPHER_CTX_free oscam_EVP_CIPHER_CTX_free
 
-#endif /* < 1.1.0 */
+#endif
+
+#endif /* WITH_OPENSSL_DLOPEN */
 
 /*
  * OpenSSL 3.x deprecates low-level MD5/SHA1 (SHA_CTX/MD5_CTX, *_Init/Update/Final).
