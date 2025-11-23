@@ -125,6 +125,7 @@ DECLARE_OSSL_PTR(X509_get_issuer_name,                   oscam_X509_get_issuer_n
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 DECLARE_OSSL_PTR(X509_getm_notBefore,                    oscam_X509_getm_notBefore_f);
 DECLARE_OSSL_PTR(X509_getm_notAfter,                     oscam_X509_getm_notAfter_f);
+DECLARE_OSSL_PTR(ASN1_TIME_to_tm,                        oscam_ASN1_TIME_to_tm_f);
 #else
 DECLARE_OSSL_PTR(X509_get_notBefore,                     oscam_X509_get_notBefore_f);
 DECLARE_OSSL_PTR(X509_get_notAfter,                      oscam_X509_get_notAfter_f);
@@ -354,6 +355,7 @@ static int oscam_ossl_resolve_ssl_symbols(void)
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	RESOLVE_OSSL_SSL_FN(X509_getm_notBefore,                    oscam_X509_getm_notBefore_f, 1);
 	RESOLVE_OSSL_SSL_FN(X509_getm_notAfter,                     oscam_X509_getm_notAfter_f, 1);
+	RESOLVE_OSSL_SSL_FN(ASN1_TIME_to_tm,                        oscam_ASN1_TIME_to_tm_f, 0);
 #else
 	RESOLVE_OSSL_SSL_FN(X509_get_notBefore,                     oscam_X509_get_notBefore_f, 1);
 	RESOLVE_OSSL_SSL_FN(X509_get_notAfter,                      oscam_X509_get_notAfter_f, 1);
@@ -484,16 +486,15 @@ static const SSL_METHOD *oscam_ssl_choose_server_method(void)
 #define SSL_OP_NO_TLSv1_2 0
 #endif
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
 /* --------------------------------------------------------------------
- * OpenSSL 1.0.2 compatibility: ASN1_TIME_to_tm()
+ * OpenSSL fallback: ASN1_TIME_to_tm()
  *
- * OpenSSL < 1.1.0 does not provide ASN1_TIME_to_tm, so we emulate it
+ * Some OpenSSL versions does not provide ASN1_TIME_to_tm, so we emulate it
  * using ASN1_TIME_print() + sscanf. Format is typically:
  *   "MMM DD HH:MM:SS YYYY GMT"
  * which is stable enough for our "display validity" use-case.
  * ------------------------------------------------------------------ */
-static int ASN1_TIME_to_tm(const ASN1_TIME *t, struct tm *tm)
+static int oscam_asn1_time_to_tm(const ASN1_TIME *t, struct tm *tm)
 {
 	if (!t || !tm)
 		return 0;
@@ -541,8 +542,6 @@ static int ASN1_TIME_to_tm(const ASN1_TIME *t, struct tm *tm)
 
 	return 1;
 }
-
-#endif /* OPENSSL_VERSION_NUMBER < 0x10100000L */
 
 /* Opaque structs defined here (match header typedefs) */
 struct oscam_ssl_conf_s {
@@ -1303,8 +1302,13 @@ void oscam_ssl_cert_get_validity(const oscam_x509_crt *crt, oscam_cert_time_t *f
 	memset(&tm_to,   0, sizeof(tm_to));
 
 	/* Convert ASN1_TIME → struct tm */
-	ASN1_TIME_to_tm(nb, &tm_from);
-	ASN1_TIME_to_tm(na, &tm_to);
+	if (oscam_ASN1_TIME_to_tm) {
+		oscam_ASN1_TIME_to_tm(nb, &tm_from);
+		oscam_ASN1_TIME_to_tm(na, &tm_to);
+	} else {
+		oscam_asn1_time_to_tm(nb, &tm_from);   /* local fallback */
+		oscam_asn1_time_to_tm(na, &tm_to);
+	}
 
 	/* Fill our simple struct */
 	from->year = tm_from.tm_year + 1900;
