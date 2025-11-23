@@ -63,6 +63,7 @@ typedef const EVP_CIPHER *(*oscam_EVP_aes_256_ecb_f)(void);
 typedef const EVP_CIPHER *(*oscam_EVP_aes_128_cbc_f)(void);
 typedef const EVP_CIPHER *(*oscam_EVP_aes_192_cbc_f)(void);
 typedef const EVP_CIPHER *(*oscam_EVP_aes_256_cbc_f)(void);
+typedef const EVP_CIPHER *(*oscam_EVP_des_cbc_f)(void);
 
 typedef EVP_CIPHER_CTX *(*oscam_EVP_CIPHER_CTX_new_f)(void);
 typedef void            (*oscam_EVP_CIPHER_CTX_free_f)(EVP_CIPHER_CTX *);
@@ -110,6 +111,7 @@ extern oscam_EVP_aes_256_ecb_f            oscam_EVP_aes_256_ecb;
 extern oscam_EVP_aes_128_cbc_f            oscam_EVP_aes_128_cbc;
 extern oscam_EVP_aes_192_cbc_f            oscam_EVP_aes_192_cbc;
 extern oscam_EVP_aes_256_cbc_f            oscam_EVP_aes_256_cbc;
+extern oscam_EVP_des_cbc_f                oscam_EVP_des_cbc;
 
 /* Cipher ctx / cipher operations */
 extern oscam_EVP_CIPHER_CTX_new_f         oscam_EVP_CIPHER_CTX_new;
@@ -220,13 +222,16 @@ static inline const EVP_CIPHER *EVP_aes_256_cbc_shim(void)
 	if (!oscam_ossl_crypto_available()) return NULL;
 	return oscam_EVP_aes_256_cbc ? oscam_EVP_aes_256_cbc() : NULL;
 }
-
+static inline const EVP_CIPHER *EVP_des_cbc_shim(void)
+{
+	if (!oscam_ossl_crypto_available()) return NULL;
+	return oscam_EVP_des_cbc ? oscam_EVP_des_cbc() : NULL;
+}
 static inline EVP_CIPHER_CTX *EVP_CIPHER_CTX_new_shim(void)
 {
 	if (!oscam_ossl_crypto_available()) return NULL;
 	return oscam_EVP_CIPHER_CTX_new ? oscam_EVP_CIPHER_CTX_new() : NULL;
 }
-
 static inline void EVP_CIPHER_CTX_free_shim(EVP_CIPHER_CTX *ctx)
 {
 	if (!ctx) return;
@@ -325,6 +330,7 @@ static inline int EVP_DecryptUpdate_shim(EVP_CIPHER_CTX *ctx, unsigned char *out
 #define EVP_aes_128_cbc            EVP_aes_128_cbc_shim
 #define EVP_aes_192_cbc            EVP_aes_192_cbc_shim
 #define EVP_aes_256_cbc            EVP_aes_256_cbc_shim
+#define EVP_des_cbc                EVP_des_cbc_shim
 
 #define EVP_CIPHER_CTX_new         EVP_CIPHER_CTX_new_shim
 #define EVP_CIPHER_CTX_free        EVP_CIPHER_CTX_free_shim
@@ -378,11 +384,6 @@ void            oscam_EVP_CIPHER_CTX_free(EVP_CIPHER_CTX *ctx);
 
 #if defined(WITH_SSL) || defined(WITH_LIB_MD5)
 #include <openssl/md5.h>
-#endif
-
-#if defined(WITH_SSL) || defined(WITH_LIB_SHA1) || defined(WITH_LIB_SHA256)
-#include <openssl/sha.h>
-#endif
 
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 /* -------- MD5 shim (old-style calls) ---------- */
@@ -414,6 +415,13 @@ static inline int OSCAM_MD5_Final(unsigned char *md, MD5_CTX *c) {
 #define MD5_Update OSCAM_MD5_Update
 #define MD5_Final  OSCAM_MD5_Final
 
+#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
+#endif
+
+#if defined(WITH_SSL) || defined(WITH_LIB_SHA1) || defined(WITH_LIB_SHA256)
+#include <openssl/sha.h>
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 /* -------- SHA1 shim (old-style calls) ---------- */
 typedef struct { EVP_MD_CTX *p; } OSCAM_SHA_CTX;
 #define SHA_CTX OSCAM_SHA_CTX
@@ -460,6 +468,7 @@ static inline int OSCAM_SHA256_Final(unsigned char *md, SHA256_CTX *c) {
 #define SHA256_Update OSCAM_SHA256_Update
 #define SHA256_Final  OSCAM_SHA256_Final
 #endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
+#endif
 
 #if defined(WITH_SSL) || defined(WITH_LIB_MDC2) || defined(WITH_LIB_DES)
 /*
