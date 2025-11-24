@@ -232,27 +232,21 @@ static long oscam_BIO_get_mem_data_impl(BIO *b, char **pp)
 /* --- symbol binding using the shared loader --- */
 static int oscam_ossl_resolve_ssl_symbols(void)
 {
-#define RESOLVE_OSSL_SSL_FN_EX(sym, var, type, required)                                  \
-	do {                                                                                  \
-		/* First try libssl */                                                            \
-		var = (type)oscam_ossl_sym(1, #sym);                                              \
-		/* Fall back to libcrypto */                                                      \
-		if (!(var)) {                                                                     \
-			cs_log_dbg(D_TRACE, "OpenSSL: fallback for symbol '%s' to libcrypto", #sym);  \
-			var = (type)oscam_ossl_sym(0, #sym);                                          \
-		}                                                                                 \
-		if (!(var)) {                                                                     \
-			if (required) {                                                               \
-				cs_log_dbg(D_TRACE, "OpenSSL: required symbol '%s' not found!", #sym);    \
-				return 0;                                                                 \
-			} else {                                                                      \
-				cs_log_dbg(D_TRACE, "OpenSSL: optional symbol '%s' not found", #sym);     \
-			}                                                                             \
-		}                                                                                 \
-	} while (0)
+#define RESOLVE_OSSL_SSL_FN_EX(sym, var, type, required)                               \
+    do {                                                                               \
+        var = (type)oscam_ossl_sym(#sym, OSSL_FROM_SSL_FIRST);                         \
+        if (!(var)) {                                                                  \
+            if (required) {                                                            \
+                cs_log_dbg(D_TRACE, "OpenSSL: required symbol '%s' not found!", #sym); \
+                return 0;                                                              \
+            } else {                                                                   \
+                cs_log_dbg(D_TRACE, "OpenSSL: optional symbol '%s' not found", #sym);  \
+            }                                                                          \
+        }                                                                              \
+    } while (0)
 
-#define RESOLVE_OSSL_SSL_FN(name, type, required)                                         \
-	RESOLVE_OSSL_SSL_FN_EX(name, oscam_##name, type, required)
+#define RESOLVE_OSSL_SSL_FN(name, type, required)                                      \
+    RESOLVE_OSSL_SSL_FN_EX(name, oscam_##name, type, required)
 
 	/* Ensure libcrypto is actually loaded (trigger dlopen if needed) */
 	if (!oscam_ossl_crypto_available())
