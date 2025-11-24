@@ -22,7 +22,7 @@
 #include <openssl/evp.h>
 #include <openssl/x509v3.h>
 
-#ifdef WITH_OPENSSL_DLOPEN
+#ifdef WITH_DLOPEN
 
 /* --- function pointer types for SSL-centric symbols --- */
 
@@ -36,6 +36,10 @@ typedef const SSL_METHOD *(*oscam_TLS_method_f)(void);
 typedef int  (*oscam_SSL_library_init_f)(void);
 typedef void (*oscam_SSL_load_error_strings_f)(void);
 typedef void (*oscam_OpenSSL_add_all_algorithms_f)(void);
+
+typedef int  (*oscam_CRYPTO_num_locks_f)(void);
+typedef void (*oscam_CRYPTO_set_locking_callback_f)(void (*func)(int mode, int n, const char *file, int line));
+typedef void (*oscam_CRYPTO_set_id_callback_f)(unsigned long (*func)(void));
 #endif
 
 /* SSL_CTX API */
@@ -255,7 +259,7 @@ typedef int (*oscam_X509_sign_f)(X509 *x, EVP_PKEY *pkey, const EVP_MD *md);
 extern oscam_BIO_get_mem_data_f oscam_BIO_get_mem_data;
 extern oscam_EVP_PKEY_up_ref_f oscam_EVP_PKEY_up_ref;
 
-#endif /* WITH_OPENSSL_DLOPEN */
+#endif /* WITH_DLOPEN */
 
 #endif /* WITH_OPENSSL */
 

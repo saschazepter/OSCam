@@ -36,7 +36,6 @@ override USE_$(SECURITY_BACKEND) = 1
 
 ifeq ($(USE_OPENSSL),1)
 	override USE_LIBCRYPTO=1
-	override CFLAGS += -DWITH_OPENSSL_DLOPEN=1
 endif
 
 ifeq "$(shell ./config.sh --enabled WITH_SSL)" "Y"
@@ -205,11 +204,11 @@ DEFAULT_COOLAPI2_LIB = -llnxUKAL -llnxcssUsr -llnxscsUsr -llnxnotifyqUsr -llnxpl
 DEFAULT_SU980_LIB = -lentropic -lrt
 DEFAULT_AZBOX_LIB = -Lextapi/openxcas -lOpenXCASAPI
 DEFAULT_LIBCRYPTO_LIB = \
-	$(if $(USE_MBEDTLS),, \
-	$(if $(USE_OPENSSL),,))
+	$(if $(USE_MBEDTLS),,\
+	$(if $(USE_OPENSSL),$(if $(USE_DLOPEN),,-lcrypto),))
 DEFAULT_SSL_LIB = \
-	$(if $(USE_MBEDTLS),, \
-	$(if $(USE_OPENSSL),,))
+	$(if $(USE_MBEDTLS),,\
+	$(if $(USE_OPENSSL),$(if $(USE_DLOPEN),,-lssl),))
 DEFAULT_LIBDVBCSA_LIB = -ldvbcsa
 ifeq ($(uname_S),Linux)
 	DEFAULT_LIBUSB_LIB = -lusb-1.0 -lrt
@@ -231,10 +230,10 @@ else ifeq ($(uname_S),Darwin)
 		$(if $(USE_OPENSSL),-I/usr/local/opt/openssl/include,))
 	DEFAULT_LIBCRYPTO_LIB = \
 		$(if $(USE_MBEDTLS),, \
-		$(if $(USE_OPENSSL),,))
+		$(if $(USE_OPENSSL),$(if $(USE_DLOPEN),,-L/usr/local/opt/openssl/lib -lcrypto),))
 	DEFAULT_SSL_LIB = \
 		$(if $(USE_MBEDTLS),, \
-		$(if $(USE_OPENSSL),,))
+		$(if $(USE_OPENSSL),$(if $(USE_DLOPEN),,-L/usr/local/opt/openssl/lib -lssl),))
 	DEFAULT_LIBDVBCSA_FLAGS = -I/usr/local/opt/libdvbcsa/include
 	DEFAULT_LIBDVBCSA_LIB = -L/usr/local/opt/libdvbcsa/lib -ldvbcsa
 	DEFAULT_LIBUSB_FLAGS = -I/usr/local/opt/libusb/include
@@ -357,6 +356,7 @@ $(eval $(call prepare_use_flags,MBEDTLS,))
 $(eval $(call prepare_use_flags,OPENSSL,))
 $(eval $(call prepare_use_flags,SSL,ssl))
 $(eval $(call prepare_use_flags,LIBCRYPTO,))
+$(eval $(call prepare_use_flags,DLOPEN,))
 $(eval $(call prepare_use_flags,LIBUSB,libusb))
 $(eval $(call prepare_use_flags,PCSC,pcsc))
 $(eval $(call prepare_use_flags,LIBDVBCSA,libdvbcsa))
@@ -884,7 +884,6 @@ OSCam build system documentation\n\
 \n\
    USE_OPENSSL=1   - Request using OpenSSL as security backend. This overrides\n\
                      the use of default mbedtls backend.\n\
-                     the use of default mbedtls backend.\n\
 \n\
    USE_LIBCRYPTO=1 - Request linking with libcrypto instead of using de\n\
                      internal crypto functions. USE_LIBCRYPTO is automatically\n\
@@ -903,6 +902,10 @@ OSCam build system documentation\n\
                          SSL_LDFLAGS='$(DEFAULT_SSL_FLAGS)'\n\
                          SSL_LIB='$(DEFAULT_SSL_LIB)'\n\
                      Using USE_SSL=1 adds to '-ssl' to PLUS_TARGET.\n\
+\n\
+   USE_DLOPEN=1    - Request to skip static/dynamic linking of OpenSSL libraries.\n\
+                     This produces more version-independent OpenSSL binaries.\n\
+                     Necessary functions are loaded from the OpenSSL libraries during startup.\n\
 \n\
    USE_LIBDVBCSA=1 - Request linking with libdvbcsa. USE_LIBDVBCSA is automatically\n\
                      enabled if the build is configured with STREAMRELAY support. The\n\

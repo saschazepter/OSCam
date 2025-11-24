@@ -46,7 +46,7 @@
 
 static void ssl_init(void)
 {
-#if defined(WITH_OPENSSL) || defined(WITH_OPENSSL_DLOPEN)
+#if defined(WITH_OPENSSL) || defined(WITH_DLOPEN)
 	/* Eagerly load both libcrypto + libssl for the SSL backend */
 	int state = oscam_ossl_load(1);
 
@@ -67,7 +67,7 @@ static void ssl_init(void)
 static void ssl_done(void)
 {
 	oscam_ssl_global_free();
-#if defined(WITH_OPENSSL) || defined(WITH_OPENSSL_DLOPEN)
+#if defined(WITH_OPENSSL) || defined(WITH_DLOPEN)
 	oscam_ossl_unload();
 #endif
 }
@@ -76,7 +76,7 @@ static void ssl_done(void)
 
 static void ssl_init(void)
 {
-#if defined(WITH_OPENSSL) || defined(WITH_OPENSSL_DLOPEN)
+#if defined(WITH_OPENSSL) || defined(WITH_DLOPEN)
 	/* Eagerly load libcrypto for the SSL backend */
 	int state = oscam_ossl_load(0);
 
@@ -93,7 +93,7 @@ static void ssl_init(void)
 
 static void ssl_done(void)
 {
-#if defined(WITH_OPENSSL) || defined(WITH_OPENSSL_DLOPEN)
+#if defined(WITH_OPENSSL) || defined(WITH_DLOPEN)
 	oscam_ossl_unload();
 #endif
 }

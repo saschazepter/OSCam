@@ -24,17 +24,17 @@
 #include <openssl/opensslv.h>
 
 /*
- * For static builds (no WITH_OPENSSL_DLOPEN) we call OpenSSL directly.
+ * For static builds (no WITH_DLOPEN) we call OpenSSL directly.
  * For dlopen builds we use function pointers declared via DECLARE_OSSL_PTR.
  * These helper macros are only enabled in the static-link path.
  */
-#ifndef WITH_OPENSSL_DLOPEN
+#ifndef WITH_DLOPEN
 #define oscam_RSA_new()                    RSA_new()
 #define oscam_RSA_generate_key_ex(r,b,e,c) RSA_generate_key_ex((r),(b),(e),(c))
 #define oscam_EVP_PKEY_assign(p,t,k)       EVP_PKEY_assign((p),(t),(k))
 #endif
 
-#ifdef WITH_OPENSSL_DLOPEN
+#ifdef WITH_DLOPEN
 
 /* ------------------------------------------------------------------
  * OpenSSL dlopen glue for the SSL backend
@@ -53,6 +53,10 @@ DECLARE_OSSL_PTR(TLS_method,                             oscam_TLS_method_f);
 DECLARE_OSSL_PTR(SSL_library_init,                       oscam_SSL_library_init_f);
 DECLARE_OSSL_PTR(SSL_load_error_strings,                 oscam_SSL_load_error_strings_f);
 DECLARE_OSSL_PTR(OpenSSL_add_all_algorithms,             oscam_OpenSSL_add_all_algorithms_f);
+
+DECLARE_OSSL_PTR(CRYPTO_num_locks,                       oscam_CRYPTO_num_locks_f);
+DECLARE_OSSL_PTR(CRYPTO_set_locking_callback,            oscam_CRYPTO_set_locking_callback_f);
+DECLARE_OSSL_PTR(CRYPTO_set_id_callback,                 oscam_CRYPTO_set_id_callback_f);
 #endif
 
 DECLARE_OSSL_PTR(SSL_CTX_new,                            oscam_SSL_CTX_new_f);
@@ -229,6 +233,116 @@ static long oscam_BIO_get_mem_data_impl(BIO *b, char **pp)
 	return oscam_BIO_ctrl(b, BIO_CTRL_INFO, 0, (void *)pp);
 }
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+
+/* --------------------------------------------------------------------
+ * Legacy OpenSSL (<= 1.0.2) thread-safety
+ *
+ * For OpenSSL <= 1.0.2, libcrypto is NOT thread-safe by default.
+ * We must install CRYPTO_set_id_callback() and CRYPTO_set_locking_callback().
+ * In dlopen builds, we also have to obtain CRYPTO_* via our function pointers.
+ * ------------------------------------------------------------------ */
+
+static pthread_mutex_t *oscam_ssl_locks = NULL;
+static int              oscam_ssl_num_locks = 0;
+
+static void oscam_ssl_locking_callback(int mode, int n, const char *file, int line)
+{
+	(void)file;
+	(void)line;
+
+	if (!oscam_ssl_locks || n < 0 || n >= oscam_ssl_num_locks)
+		return;
+
+	if (mode & CRYPTO_LOCK) {
+		pthread_mutex_lock(&oscam_ssl_locks[n]);
+	} else {
+		pthread_mutex_unlock(&oscam_ssl_locks[n]);
+	}
+}
+
+static unsigned long oscam_ssl_thread_id_callback(void)
+{
+	return (unsigned long)pthread_self();
+}
+
+/*
+ * Initialize OpenSSL 1.0.x / 0.9.x global thread-safety.
+ *
+ * This must be called AFTER the CRYPTO_* symbols have been resolved by
+ * the crypto backend (oscam-crypto-openssl), but BEFORE any multi-threaded
+ * use of libcrypto/libssl.
+ *
+ * Returns 1 on success, 0 on failure.
+ */
+int oscam_ssl_initialize_thread_safety(void)
+{
+	/* These function pointers are expected to come from the crypto backend:
+	 *   oscam_CRYPTO_num_locks
+	 *   oscam_CRYPTO_set_locking_callback
+	 *   oscam_CRYPTO_set_id_callback
+	 *
+	 * If they are NULL, check that oscam-crypto-openssl resolves them.
+	 */
+	if (!oscam_CRYPTO_num_locks ||
+	    !oscam_CRYPTO_set_locking_callback ||
+	    !oscam_CRYPTO_set_id_callback)
+	{
+		cs_log_dbg(D_TRACE, "OpenSSL: CRYPTO_* thread callbacks not available; skipping thread-safety setup");
+		return 0;
+	}
+
+	if (oscam_ssl_locks) {
+		/* Already initialized */
+		return 1;
+	}
+
+	oscam_ssl_num_locks = oscam_CRYPTO_num_locks();
+	if (oscam_ssl_num_locks <= 0) {
+		cs_log_dbg(D_TRACE, "OpenSSL: CRYPTO_num_locks returned %d", oscam_ssl_num_locks);
+		return 0;
+	}
+
+	oscam_ssl_locks = calloc(oscam_ssl_num_locks, sizeof(pthread_mutex_t));
+	if (!oscam_ssl_locks) {
+		oscam_ssl_num_locks = 0;
+		return 0;
+	}
+
+	for (int i = 0; i < oscam_ssl_num_locks; ++i) {
+		pthread_mutex_init(&oscam_ssl_locks[i], NULL);
+	}
+
+	oscam_CRYPTO_set_id_callback(oscam_ssl_thread_id_callback);
+	oscam_CRYPTO_set_locking_callback(oscam_ssl_locking_callback);
+
+	cs_log_dbg(D_TRACE, "OpenSSL: installed legacy thread-safety callbacks (%d locks)", oscam_ssl_num_locks);
+	return 1;
+}
+
+/*
+ * Cleanup for legacy thread-safety. Called from oscam_ssl_global_free().
+ */
+static void oscam_ssl_cleanup_thread_safety(void)
+{
+	if (!oscam_ssl_locks)
+		return;
+
+	if (oscam_CRYPTO_set_locking_callback)
+		oscam_CRYPTO_set_locking_callback(NULL);
+	if (oscam_CRYPTO_set_id_callback)
+		oscam_CRYPTO_set_id_callback(NULL);
+
+	for (int i = 0; i < oscam_ssl_num_locks; ++i) {
+		pthread_mutex_destroy(&oscam_ssl_locks[i]);
+	}
+	free(oscam_ssl_locks);
+	oscam_ssl_locks      = NULL;
+	oscam_ssl_num_locks  = 0;
+}
+
+#endif /* OPENSSL_VERSION_NUMBER < 0x10100000L */
+
 /* --- symbol binding using the shared loader --- */
 static int oscam_ossl_resolve_ssl_symbols(void)
 {
@@ -262,6 +376,10 @@ static int oscam_ossl_resolve_ssl_symbols(void)
 	RESOLVE_OSSL_SSL_FN(SSL_library_init,                       oscam_SSL_library_init_f, 0);
 	RESOLVE_OSSL_SSL_FN(SSL_load_error_strings,                 oscam_SSL_load_error_strings_f, 0);
 	RESOLVE_OSSL_SSL_FN(OpenSSL_add_all_algorithms,             oscam_OpenSSL_add_all_algorithms_f, 0);
+
+	RESOLVE_OSSL_SSL_FN(CRYPTO_num_locks,                       oscam_CRYPTO_num_locks_f, 1);
+	RESOLVE_OSSL_SSL_FN(CRYPTO_set_locking_callback,            oscam_CRYPTO_set_locking_callback_f, 1);
+	RESOLVE_OSSL_SSL_FN(CRYPTO_set_id_callback,                 oscam_CRYPTO_set_id_callback_f, 1);
 #endif
 
 	/* Server-method resolution (server + generic + legacy) */
@@ -476,7 +594,7 @@ static int oscam_ossl_resolve_ssl_symbols(void)
 	return 1;
 }
 
-#ifdef WITH_OPENSSL_DLOPEN
+#ifdef WITH_DLOPEN
 
 static const SSL_METHOD *oscam_ssl_choose_server_method(void)
 {
@@ -492,7 +610,7 @@ static const SSL_METHOD *oscam_ssl_choose_server_method(void)
 	return NULL;
 }
 
-#else  /* !WITH_OPENSSL_DLOPEN */
+#else  /* !WITH_DLOPEN */
 
 /* Static-linking path: use compile-time API directly */
 static const SSL_METHOD *oscam_ssl_choose_server_method(void)
@@ -506,9 +624,9 @@ static const SSL_METHOD *oscam_ssl_choose_server_method(void)
 #endif
 }
 
-#endif /* WITH_OPENSSL_DLOPEN */
+#endif /* WITH_DLOPEN */
 
-#endif /* WITH_OPENSSL_DLOPEN */
+#endif /* WITH_DLOPEN */
 
 /* Some very old OpenSSL releases (0.9.8 / 1.0.0) don't define these.
  * Define them as 0 so SSL_CTX_set_options() still compiles. */
@@ -634,7 +752,7 @@ void oscam_ssl_pk_delete(oscam_pk_context *pk)
 
 int oscam_ssl_global_init(void)
 {
-#ifdef WITH_OPENSSL_DLOPEN
+#ifdef WITH_DLOPEN
 	/* Request both libcrypto + libssl from the shared loader */
 	if (!oscam_ossl_load(1))
 	{
@@ -648,10 +766,17 @@ int oscam_ssl_global_init(void)
 		cs_exit_oscam();
 		return OSCAM_SSL_FATAL;
 	}
-#endif /* WITH_OPENSSL_DLOPEN */
+#endif /* WITH_DLOPEN */
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
-#ifdef WITH_OPENSSL_DLOPEN
+#ifdef WITH_DLOPEN
+	/* Install legacy thread-safety callbacks for OpenSSL <= 1.0.2 */
+	if (!oscam_ssl_initialize_thread_safety()) {
+		cs_log("FATAL: OpenSSL (<=1.0.2) thread-safety initialization failed in dlopen backend!");
+		cs_exit_oscam();
+		return OSCAM_SSL_FATAL;
+	}
+
 	if (oscam_SSL_library_init)
 		oscam_SSL_library_init();
 	if (oscam_SSL_load_error_strings)
@@ -664,23 +789,25 @@ int oscam_ssl_global_init(void)
 	SSL_load_error_strings();
 	OpenSSL_add_all_algorithms();
 #endif
-#endif
+#endif /* OPENSSL_VERSION_NUMBER < 0x10100000L */
 
 	return OSCAM_SSL_OK;
 }
 
 void oscam_ssl_global_free(void)
 {
-	/* For older OpenSSL we call only the pieces that are safe.
-	 * EVP_cleanup is intentionally left to the crypto side (or skipped). */
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
+#ifdef WITH_DLOPEN
+	oscam_ssl_cleanup_thread_safety();
+#endif
+
 	if (oscam_CRYPTO_cleanup_all_ex_data)
 		oscam_CRYPTO_cleanup_all_ex_data();
 	if (oscam_ERR_free_strings)
 		oscam_ERR_free_strings();
 #endif
 
-#if defined(WITH_OPENSSL_DLOPEN)
+#if defined(WITH_DLOPEN)
 	oscam_ossl_unload();
 #endif
 }
@@ -699,7 +826,7 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 	oscam_ssl_conf_t *conf = calloc(1, sizeof(*conf));
 	if (!conf) return NULL;
 
-#ifdef WITH_OPENSSL_DLOPEN
+#ifdef WITH_DLOPEN
 	if (!oscam_SSL_CTX_new)
 	{
 		free(conf);
@@ -723,14 +850,14 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 #if OPENSSL_VERSION_NUMBER >= 0x10002000L && OPENSSL_VERSION_NUMBER < 0x10100000L
 	/* OpenSSL 1.0.2: has SSL_CTX_set_ecdh_auto() */
 #ifdef SSL_CTX_set_ecdh_auto
-#ifdef WITH_OPENSSL_DLOPEN
+#ifdef WITH_DLOPEN
 	if (oscam_SSL_CTX_set_ecdh_auto)
 		oscam_SSL_CTX_set_ecdh_auto(conf->ctx, 1);
 #else
 	SSL_CTX_set_ecdh_auto(conf->ctx, 1);
 #endif
 #endif
-#elif OPENSSL_VERSION_NUMBER >= 0x10100000L && !defined(WITH_OPENSSL_DLOPEN)
+#elif OPENSSL_VERSION_NUMBER >= 0x10100000L && !defined(WITH_DLOPEN)
 	/* OpenSSL 1.1.0+ and 3.x: use explicit groups (static-link path only) */
 	SSL_CTX_set1_groups_list(conf->ctx, "P-256:P-384");
 #else
@@ -1341,7 +1468,7 @@ void oscam_ssl_cert_get_validity(const oscam_x509_crt *crt, oscam_cert_time_t *f
 
 	/* Convert ASN1_TIME → struct tm */
 
-#if defined(WITH_OPENSSL_DLOPEN) && OPENSSL_VERSION_NUMBER >= 0x10100000L
+#if defined(WITH_DLOPEN) && OPENSSL_VERSION_NUMBER >= 0x10100000L
 	if (oscam_ASN1_TIME_to_tm) {
 		/* Use real OpenSSL helper when available via dlopen */
 		oscam_ASN1_TIME_to_tm(nb, &tm_from);
@@ -1579,7 +1706,7 @@ int oscam_ssl_pk_verify(oscam_pk_context *pk,
  * Needed whenever we use the OPENSSL_sk_* wrappers (dlopen path), regardless
  * of the compile-time OpenSSL version.
  */
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L || defined(WITH_OPENSSL_DLOPEN)
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L || defined(WITH_DLOPEN)
 static void oscam_sk_GENERAL_NAME_free_cb(void *p)
 {
 	if (p)
@@ -1756,7 +1883,7 @@ int oscam_ssl_generate_selfsigned(const char *path)
  *   - All dlopen builds, and OpenSSL >= 1.1.0 :
  *       use dlopen-friendly oscam_* wrappers (OPENSSL_sk_*, GENERAL_NAME_*, etc.)
  * ===================================================================*/
-#if !defined(WITH_OPENSSL_DLOPEN) && OPENSSL_VERSION_NUMBER < 0x10100000L
+#if !defined(WITH_DLOPEN) && OPENSSL_VERSION_NUMBER < 0x10100000L
 
 	/* ------------------------- LEGACY PATH ------------------------- */
 
@@ -1889,7 +2016,7 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	/* Extensions */
 	{
 		X509V3_CTX ctx;
-#ifdef WITH_OPENSSL_DLOPEN
+#ifdef WITH_DLOPEN
 		if (oscam_X509V3_set_ctx_nodb)
 			oscam_X509V3_set_ctx_nodb(&ctx);
 #else

@@ -11,7 +11,7 @@
 #include <openssl/rand.h>
 #include <openssl/err.h>
 
-#ifdef WITH_OPENSSL_DLOPEN
+#ifdef WITH_DLOPEN
 
 #include <dlfcn.h>
 
@@ -472,7 +472,7 @@ void oscam_crypto_init_dlopen(void)
 	}
 }
 
-#endif /* WITH_OPENSSL_DLOPEN */
+#endif /* WITH_DLOPEN */
 
 /* EVP_MD_CTX_create/free were renamed in 1.1.0 */
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
@@ -489,7 +489,7 @@ void oscam_crypto_init_dlopen(void)
  * We provide our own simple wrappers. These are used regardless of dlopen
  * or not, but they do *not* call OPENSSL_malloc/free (no ABI dependency).
  */
-#if OPENSSL_VERSION_NUMBER < 0x10100000L && !defined(WITH_OPENSSL_DLOPEN)
+#if OPENSSL_VERSION_NUMBER < 0x10100000L && !defined(WITH_DLOPEN)
 EVP_CIPHER_CTX *oscam_EVP_CIPHER_CTX_new(void)
 {
 	EVP_CIPHER_CTX *ctx = (EVP_CIPHER_CTX *)malloc(sizeof(EVP_CIPHER_CTX));

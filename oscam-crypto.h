@@ -12,7 +12,7 @@
  * Optional runtime loader API for OpenSSL
  * ---------------------------------------------------------------------- */
 
-#ifdef WITH_OPENSSL_DLOPEN
+#ifdef WITH_DLOPEN
 /*
  * libcrypto dlopen shim:
  *  - oscam-crypto-openssl.c provides:
@@ -353,7 +353,7 @@ static inline int EVP_DecryptUpdate_shim(EVP_CIPHER_CTX *ctx, unsigned char *out
 #define EVP_DecryptInit_ex         EVP_DecryptInit_ex_shim
 #define EVP_DecryptUpdate          EVP_DecryptUpdate_shim
 
-#else  /* !WITH_OPENSSL_DLOPEN */
+#else  /* !WITH_DLOPEN */
 
 /* When not using dlopen, these do nothing. */
 #define DECLARE_OSSL_PTR(name, type)
@@ -365,7 +365,7 @@ static inline int EVP_DecryptUpdate_shim(EVP_CIPHER_CTX *ctx, unsigned char *out
  * For non-dlopen builds we provide our own implementation and
  * remap the public names.
  */
-#if OPENSSL_VERSION_NUMBER < 0x10100000L && !defined(WITH_OPENSSL_DLOPEN)
+#if OPENSSL_VERSION_NUMBER < 0x10100000L && !defined(WITH_DLOPEN)
 
 EVP_CIPHER_CTX *oscam_EVP_CIPHER_CTX_new(void);
 void            oscam_EVP_CIPHER_CTX_free(EVP_CIPHER_CTX *ctx);
@@ -375,7 +375,7 @@ void            oscam_EVP_CIPHER_CTX_free(EVP_CIPHER_CTX *ctx);
 
 #endif
 
-#endif /* WITH_OPENSSL_DLOPEN */
+#endif /* WITH_DLOPEN */
 
 /*
  * OpenSSL 3.x deprecates low-level MD5/SHA1 (SHA_CTX/MD5_CTX, *_Init/Update/Final).
@@ -391,7 +391,7 @@ void            oscam_EVP_CIPHER_CTX_free(EVP_CIPHER_CTX *ctx);
 #include <openssl/sha.h>
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L || defined(WITH_OPENSSL_DLOPEN)
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L || defined(WITH_DLOPEN)
 /* -------- MD5 shim (old-style calls) ---------- */
 typedef struct { EVP_MD_CTX *p; } OSCAM_MD5_CTX;
 #define MD5_CTX OSCAM_MD5_CTX
@@ -466,7 +466,7 @@ static inline int OSCAM_SHA256_Final(unsigned char *md, SHA256_CTX *c) {
 #define SHA256_Init   OSCAM_SHA256_Init
 #define SHA256_Update OSCAM_SHA256_Update
 #define SHA256_Final  OSCAM_SHA256_Final
-#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L || WITH_OPENSSL_DLOPEN */
+#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L || WITH_DLOPEN */
 
 #if defined(WITH_SSL) || defined(WITH_LIB_MDC2) || defined(WITH_LIB_DES)
 /*
@@ -485,7 +485,7 @@ static inline int OSCAM_SHA256_Final(unsigned char *md, SHA256_CTX *c) {
 #include <openssl/des.h>
 typedef DES_key_schedule des_key_schedule;
 
-#if WITH_OPENSSL_DLOPEN
+#if WITH_DLOPEN
 /* ===== DES dlopen shims (only when DES is actually used) ===== */
 
 typedef void (*oscam_DES_set_key_unchecked_f)(const_DES_cblock *, DES_key_schedule *);
@@ -563,7 +563,7 @@ static inline void DES_ncbc_encrypt_shim(const unsigned char *in,
 #define DES_ede3_cbc_encrypt   DES_ede3_cbc_encrypt_shim
 #define DES_ncbc_encrypt DES_ncbc_encrypt_shim
 
-#endif /* WITH_OPENSSL_DLOPEN */
+#endif /* WITH_DLOPEN */
 
 #endif /* DES-related includes */
 
@@ -800,7 +800,7 @@ int32_t aes_present(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t key
 typedef struct bignum_st  BIGNUM;
 typedef struct bignum_ctx BN_CTX;
 
-#if WITH_OPENSSL_DLOPEN
+#if WITH_DLOPEN
 /* ===== BIGNUM dlopen shims (only when BIGNUM is enabled) ===== */
 typedef BN_CTX  *(*oscam_BN_CTX_new_f)(void);
 typedef void     (*oscam_BN_CTX_free_f)(BN_CTX *);
@@ -943,7 +943,7 @@ static inline BIGNUM *BN_mod_inverse_shim(BIGNUM *ret, const BIGNUM *a,
 #define BN_sub_word       BN_sub_word_shim
 #define BN_mod_inverse    BN_mod_inverse_shim
 
-#endif /* WITH_OPENSSL_DLOPEN */
+#endif /* WITH_DLOPEN */
 
 #else  /* !WITH_OPENSSL */
 
