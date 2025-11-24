@@ -23,6 +23,17 @@
 #include <openssl/bio.h>
 #include <openssl/opensslv.h>
 
+/*
+ * For static builds (no WITH_OPENSSL_DLOPEN) we call OpenSSL directly.
+ * For dlopen builds we use function pointers declared via DECLARE_OSSL_PTR.
+ * These helper macros are only enabled in the static-link path.
+ */
+#ifndef WITH_OPENSSL_DLOPEN
+#define oscam_RSA_new()                    RSA_new()
+#define oscam_RSA_generate_key_ex(r,b,e,c) RSA_generate_key_ex((r),(b),(e),(c))
+#define oscam_EVP_PKEY_assign(p,t,k)       EVP_PKEY_assign((p),(t),(k))
+#endif
+
 #ifdef WITH_OPENSSL_DLOPEN
 
 /* ------------------------------------------------------------------
@@ -56,6 +67,7 @@ DECLARE_OSSL_PTR(SSL_CTX_check_private_key,              oscam_SSL_CTX_check_pri
 DECLARE_OSSL_PTR(SSL_CTX_set_min_proto_version,          oscam_SSL_CTX_set_min_proto_version_f);
 DECLARE_OSSL_PTR(SSL_CTX_set_cipher_list,                oscam_SSL_CTX_set_cipher_list_f);
 DECLARE_OSSL_PTR(SSL_CTX_set_default_passwd_cb_userdata, oscam_SSL_CTX_set_default_passwd_cb_userdata_f);
+DECLARE_OSSL_PTR(SSL_CTX_set_ecdh_auto,                  oscam_SSL_CTX_set_ecdh_auto_f);
 
 DECLARE_OSSL_PTR(SSL_new,                                oscam_SSL_new_f);
 DECLARE_OSSL_PTR(SSL_free,                               oscam_SSL_free_f);
@@ -104,12 +116,15 @@ DECLARE_OSSL_PTR(EVP_PKEY_CTX_free,                      oscam_EVP_PKEY_CTX_free
 DECLARE_OSSL_PTR(EVP_PKEY_bits,                          oscam_EVP_PKEY_bits_f);
 DECLARE_OSSL_PTR(EVP_PKEY_dup,                           oscam_EVP_PKEY_dup_f);
 DECLARE_OSSL_PTR(EVP_PKEY_base_id,                       oscam_EVP_PKEY_base_id_f);
+DECLARE_OSSL_PTR(EVP_PKEY_assign,                        oscam_EVP_PKEY_assign_f);
 DECLARE_OSSL_PTR(EVP_PKEY_type,                          oscam_EVP_PKEY_type_f);
 DECLARE_OSSL_PTR(EVP_PKEY_get1_RSA,                      oscam_EVP_PKEY_get1_RSA_f);
 DECLARE_OSSL_PTR(EVP_PKEY_get1_EC_KEY,                   oscam_EVP_PKEY_get1_EC_KEY_f);
 
 DECLARE_OSSL_PTR(RSA_verify,                             oscam_RSA_verify_f);
 DECLARE_OSSL_PTR(RSA_free,                               oscam_RSA_free_f);
+DECLARE_OSSL_PTR(RSA_new,                                oscam_RSA_new_f);
+DECLARE_OSSL_PTR(RSA_generate_key_ex,                    oscam_RSA_generate_key_ex_f);
 DECLARE_OSSL_PTR(ECDSA_verify,                           oscam_ECDSA_verify_f);
 DECLARE_OSSL_PTR(EC_KEY_free,                            oscam_EC_KEY_free_f);
 
@@ -137,6 +152,7 @@ DECLARE_OSSL_PTR(X509_gmtime_adj,                        oscam_X509_gmtime_adj_f
 DECLARE_OSSL_PTR(ASN1_INTEGER_to_BN,                     oscam_ASN1_INTEGER_to_BN_f);
 DECLARE_OSSL_PTR(BN_bn2hex,                              oscam_BN_bn2hex_f);
 DECLARE_OSSL_PTR(BN_to_ASN1_INTEGER,                     oscam_BN_to_ASN1_INTEGER_f);
+DECLARE_OSSL_PTR(BN_set_word,                            oscam_BN_set_word_f);
 
 DECLARE_OSSL_PTR(X509_NAME_new,                          oscam_X509_NAME_new_f);
 DECLARE_OSSL_PTR(X509_NAME_free,                         oscam_X509_NAME_free_f);
@@ -145,18 +161,15 @@ DECLARE_OSSL_PTR(X509_set_subject_name,                  oscam_X509_set_subject_
 DECLARE_OSSL_PTR(X509_set_issuer_name,                   oscam_X509_set_issuer_name_f);
 
 DECLARE_OSSL_PTR(X509V3_set_ctx,                         oscam_X509V3_set_ctx_f);
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 DECLARE_OSSL_PTR(X509V3_EXT_conf_nid,                    oscam_X509V3_EXT_conf_nid_f);
-#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
 DECLARE_OSSL_PTR(X509_add_ext,                           oscam_X509_add_ext_f);
 DECLARE_OSSL_PTR(X509_EXTENSION_free,                    oscam_X509_EXTENSION_free_f);
 DECLARE_OSSL_PTR(X509V3_EXT_i2d,                         oscam_X509V3_EXT_i2d_f);
+DECLARE_OSSL_PTR(X509V3_set_ctx_nodb,                    oscam_X509V3_set_ctx_nodb_f);
 
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 DECLARE_OSSL_PTR(OPENSSL_sk_new_null,                    oscam_OPENSSL_sk_new_null_f);
 DECLARE_OSSL_PTR(OPENSSL_sk_push,                        oscam_OPENSSL_sk_push_f);
 DECLARE_OSSL_PTR(OPENSSL_sk_pop_free,                    oscam_OPENSSL_sk_pop_free_f);
-#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
 DECLARE_OSSL_PTR(OPENSSL_free,                           oscam_OPENSSL_free_f);
 
 DECLARE_OSSL_PTR(GENERAL_NAME_new,                       oscam_GENERAL_NAME_new_f);
@@ -282,6 +295,9 @@ static int oscam_ossl_resolve_ssl_symbols(void)
 #ifdef SSL_CTX_set_default_passwd_cb_userdata
 	RESOLVE_OSSL_SSL_FN(SSL_CTX_set_default_passwd_cb_userdata, oscam_SSL_CTX_set_default_passwd_cb_userdata_f, 0);
 #endif
+#ifdef SSL_CTX_set_ecdh_auto
+	RESOLVE_OSSL_SSL_FN(SSL_CTX_set_ecdh_auto,                  oscam_SSL_CTX_set_ecdh_auto_f, 0);
+#endif
 
 	/* SSL connection API */
 	RESOLVE_OSSL_SSL_FN(SSL_new,                                oscam_SSL_new_f, 1);
@@ -341,11 +357,14 @@ static int oscam_ossl_resolve_ssl_symbols(void)
 
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_dup,                           oscam_EVP_PKEY_dup_f, 1);
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_base_id,                       oscam_EVP_PKEY_base_id_f, 1);
+	RESOLVE_OSSL_SSL_FN(EVP_PKEY_assign,                        oscam_EVP_PKEY_assign_f, 1);
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_type,                          oscam_EVP_PKEY_type_f, 1);
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_get1_RSA,                      oscam_EVP_PKEY_get1_RSA_f, 1);
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_get1_EC_KEY,                   oscam_EVP_PKEY_get1_EC_KEY_f, 1);
 	RESOLVE_OSSL_SSL_FN(RSA_verify,                             oscam_RSA_verify_f, 1);
 	RESOLVE_OSSL_SSL_FN(RSA_free,                               oscam_RSA_free_f, 1);
+	RESOLVE_OSSL_SSL_FN(RSA_new,                                oscam_RSA_new_f, 1);
+	RESOLVE_OSSL_SSL_FN(RSA_generate_key_ex,                    oscam_RSA_generate_key_ex_f, 1);
 	RESOLVE_OSSL_SSL_FN(ECDSA_verify,                           oscam_ECDSA_verify_f, 1);
 	RESOLVE_OSSL_SSL_FN(EC_KEY_free,                            oscam_EC_KEY_free_f, 1);
 
@@ -373,6 +392,7 @@ static int oscam_ossl_resolve_ssl_symbols(void)
 	RESOLVE_OSSL_SSL_FN(ASN1_INTEGER_to_BN,                     oscam_ASN1_INTEGER_to_BN_f, 1);
 	RESOLVE_OSSL_SSL_FN(BN_bn2hex,                              oscam_BN_bn2hex_f, 1);
 	RESOLVE_OSSL_SSL_FN(BN_to_ASN1_INTEGER,                     oscam_BN_to_ASN1_INTEGER_f, 1);
+	RESOLVE_OSSL_SSL_FN(BN_set_word,                            oscam_BN_set_word_f, 1);
 
 	RESOLVE_OSSL_SSL_FN(X509_NAME_new,                          oscam_X509_NAME_new_f, 1);
 	RESOLVE_OSSL_SSL_FN(X509_NAME_free,                         oscam_X509_NAME_free_f, 1);
@@ -381,17 +401,16 @@ static int oscam_ossl_resolve_ssl_symbols(void)
 	RESOLVE_OSSL_SSL_FN(X509_set_issuer_name,                   oscam_X509_set_issuer_name_f, 1);
 
 	RESOLVE_OSSL_SSL_FN(X509V3_set_ctx,                         oscam_X509V3_set_ctx_f, 1);
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	RESOLVE_OSSL_SSL_FN(X509V3_EXT_conf_nid,                    oscam_X509V3_EXT_conf_nid_f, 1);
-#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
 	RESOLVE_OSSL_SSL_FN(X509_add_ext,                           oscam_X509_add_ext_f, 1);
 	RESOLVE_OSSL_SSL_FN(X509_EXTENSION_free,                    oscam_X509_EXTENSION_free_f, 1);
 	RESOLVE_OSSL_SSL_FN(X509V3_EXT_i2d,                         oscam_X509V3_EXT_i2d_f, 1);
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	RESOLVE_OSSL_SSL_FN(X509V3_set_ctx_nodb,                    oscam_X509V3_set_ctx_nodb_f, 0);
+
 	RESOLVE_OSSL_SSL_FN(OPENSSL_sk_new_null,                    oscam_OPENSSL_sk_new_null_f, 1);
 	RESOLVE_OSSL_SSL_FN(OPENSSL_sk_push,                        oscam_OPENSSL_sk_push_f, 1);
 	RESOLVE_OSSL_SSL_FN(OPENSSL_sk_pop_free,                    oscam_OPENSSL_sk_pop_free_f, 1);
-#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
+
 	RESOLVE_OSSL_SSL_FN(GENERAL_NAME_new,                       oscam_GENERAL_NAME_new_f, 1);
 	RESOLVE_OSSL_SSL_FN(GENERAL_NAME_free,                      oscam_GENERAL_NAME_free_f, 1);
 	RESOLVE_OSSL_SSL_FN(GENERAL_NAME_set0_value,                oscam_GENERAL_NAME_set0_value_f, 1);
@@ -700,10 +719,15 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 #if OPENSSL_VERSION_NUMBER >= 0x10002000L && OPENSSL_VERSION_NUMBER < 0x10100000L
 	/* OpenSSL 1.0.2: has SSL_CTX_set_ecdh_auto() */
 #ifdef SSL_CTX_set_ecdh_auto
+#ifdef WITH_OPENSSL_DLOPEN
+	if (oscam_SSL_CTX_set_ecdh_auto)
+		oscam_SSL_CTX_set_ecdh_auto(conf->ctx, 1);
+#else
 	SSL_CTX_set_ecdh_auto(conf->ctx, 1);
 #endif
+#endif
 #elif OPENSSL_VERSION_NUMBER >= 0x10100000L && !defined(WITH_OPENSSL_DLOPEN)
-	/* OpenSSL 1.1.0+ and 3.x: use explicit groups */
+	/* OpenSSL 1.1.0+ and 3.x: use explicit groups (static-link path only) */
 	SSL_CTX_set1_groups_list(conf->ctx, "P-256:P-384");
 #else
 	/* OpenSSL 0.9.8 – 1.0.1: either no ECDHE or configured elsewhere */
@@ -712,32 +736,32 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 
 #ifdef SSL_CTX_set_min_proto_version
 	/* We have SSL_CTX_set_min_proto_version (OpenSSL >= 1.1.0 or compatible) */
-# if OPENSSL_VERSION_NUMBER < 0x10100000L
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	/* Weird combo: headers define SSL_CTX_set_min_proto_version but OpenSSL is < 1.1.0
 	   -> fall back to masking out old protocols, but guard TLSv1.1 symbol. */
 	long opts = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3;
-#  ifdef SSL_OP_NO_TLSv1
+#ifdef SSL_OP_NO_TLSv1
 	opts |= SSL_OP_NO_TLSv1;
-#  endif
-#  ifdef SSL_OP_NO_TLSv1_1
+#endif
+#ifdef SSL_OP_NO_TLSv1_1
 	opts |= SSL_OP_NO_TLSv1_1;
-#  endif
+#endif
 	if (oscam_SSL_CTX_set_options)
 		oscam_SSL_CTX_set_options(conf->ctx, opts);
-# else
+#else
 	/* Normal modern case: just require TLS 1.2+ */
 	if (oscam_SSL_CTX_set_min_proto_version)
 		oscam_SSL_CTX_set_min_proto_version(conf->ctx, TLS1_2_VERSION);
-# endif
+#endif
 #else  /* !SSL_CTX_set_min_proto_version */
 	/* Old OpenSSL (<= 1.0.x) – only options mask available */
 	long opts = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3;
-# ifdef SSL_OP_NO_TLSv1
+#ifdef SSL_OP_NO_TLSv1
 	opts |= SSL_OP_NO_TLSv1;
-# endif
-# ifdef SSL_OP_NO_TLSv1_1
+#endif
+#ifdef SSL_OP_NO_TLSv1_1
 	opts |= SSL_OP_NO_TLSv1_1;
-# endif
+#endif
 	if (oscam_SSL_CTX_set_options)
 		oscam_SSL_CTX_set_options(conf->ctx, opts);
 #endif
@@ -1437,10 +1461,10 @@ int oscam_ssl_pk_get_type(const oscam_pk_context *pk)
 	if (id == EVP_PKEY_RSA)
 		return OSCAM_PK_RSA;
 
-# ifdef EVP_PKEY_EC
+#ifdef EVP_PKEY_EC
 	if (id == EVP_PKEY_EC)
 		return OSCAM_PK_EC;
-# endif
+#endif
 
 	/* --- Fallback probing ONLY on old OpenSSL --- */
 	RSA *rsa = oscam_EVP_PKEY_get1_RSA(pk->pk);
@@ -1449,13 +1473,13 @@ int oscam_ssl_pk_get_type(const oscam_pk_context *pk)
 		return OSCAM_PK_RSA;
 	}
 
-# ifdef EVP_PKEY_EC
+#ifdef EVP_PKEY_EC
 	EC_KEY *ec = oscam_EVP_PKEY_get1_EC_KEY(pk->pk);
 	if (ec) {
 		oscam_EC_KEY_free(ec);
 		return OSCAM_PK_EC;
 	}
-# endif
+#endif
 
 	return OSCAM_PK_NONE;
 
@@ -1517,7 +1541,7 @@ int oscam_ssl_pk_verify(oscam_pk_context *pk,
 		return ok == 1 ? 0 : -1;
 	}
 
-# ifdef EVP_PKEY_EC
+#ifdef EVP_PKEY_EC
 	/* Then EC */
 	EC_KEY *eckey = oscam_EVP_PKEY_get1_EC_KEY(pkey);
 	if (eckey) {
@@ -1528,19 +1552,23 @@ int oscam_ssl_pk_verify(oscam_pk_context *pk,
 		oscam_EC_KEY_free(eckey);
 		return ok == 1 ? 0 : -1;
 	}
-# endif
+#endif
 
 	return -1;
 
 #endif /* version split */
 }
 
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+/*
+ * Free callback for GENERAL_NAME when using OPENSSL_sk_pop_free().
+ * Needed whenever we use the OPENSSL_sk_* wrappers (dlopen path), regardless
+ * of the compile-time OpenSSL version.
+ */
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L || defined(WITH_OPENSSL_DLOPEN)
 static void oscam_sk_GENERAL_NAME_free_cb(void *p)
 {
-	if (!p)
-		return;
-	oscam_GENERAL_NAME_free((GENERAL_NAME *)p);
+	if (p)
+		oscam_GENERAL_NAME_free((GENERAL_NAME *)p);
 }
 #endif
 
@@ -1549,12 +1577,12 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	int ret = OSCAM_SSL_ERR;
 	EVP_PKEY *pkey = NULL;
 	X509 *crt = NULL;
-	FILE *f = NULL;
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	EVP_PKEY_CTX *kctx = NULL;
 #else
 	RSA *rsa = NULL;
 #endif
+	FILE *f = NULL;
 
 	struct utsname un;
 	const char *cn;
@@ -1565,69 +1593,72 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	if (!path || !*path)
 		return OSCAM_SSL_ERR;
 
+	pkey = oscam_EVP_PKEY_new();
+	if (!pkey)
+		goto cleanup;
+
 	/* ===============================================
 	 * KEY GENERATION
 	 * =============================================== */
+	/* Modern API available only in OpenSSL >= 1.1.0 */
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
-
-	/* ---- OpenSSL 3.x (modern API only) ---- */
+	/* Modern EVP_PKEY_CTX-based RSA key generation */
 	kctx = oscam_EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
 	if (!kctx)
 		goto cleanup;
 
 	if (oscam_EVP_PKEY_keygen_init(kctx) <= 0)
 		goto cleanup;
+
 	if (oscam_EVP_PKEY_CTX_set_rsa_keygen_bits(kctx, 4096) <= 0)
 		goto cleanup;
+
 	if (oscam_EVP_PKEY_keygen(kctx, &pkey) <= 0)
 		goto cleanup;
 
 	oscam_EVP_PKEY_CTX_free(kctx);
 	kctx = NULL;
 
-#else /* OPENSSL_VERSION_NUMBER < 0x30000000L */
+#else
+	/* -------------------------------
+	 * Legacy OpenSSL 0.9.8 – 1.0.2
+	 * Use RSA_generate_key_ex + EVP_PKEY_assign_RSA
+	 * ------------------------------- */
 
-	/* ---- Legacy OpenSSL (<3.0) ----
-	 * Works on 0.9.8 .. 1.0.x .. 1.1.x
-	 */
-	BIGNUM *e = BN_new();
+	BIGNUM *e = oscam_BN_new();
 	if (!e)
 		goto cleanup;
 
-	if (!BN_set_word(e, RSA_F4)) {
-		BN_free(e);
+	if (!oscam_BN_set_word(e, RSA_F4)) {
+		oscam_BN_free(e);
 		goto cleanup;
 	}
 
-	rsa = RSA_new();
+	rsa = oscam_RSA_new();
 	if (!rsa) {
-		BN_free(e);
+		oscam_BN_free(e);
 		goto cleanup;
 	}
 
-	if (!RSA_generate_key_ex(rsa, 4096, e, NULL)) {
-		BN_free(e);
-		goto cleanup;
-	}
-	BN_free(e);
-
-	pkey = EVP_PKEY_new();
-	if (!pkey) {
-		RSA_free(rsa);
+	if (!oscam_RSA_generate_key_ex(rsa, 4096, e, NULL)) {
+		oscam_BN_free(e);
+		oscam_RSA_free(rsa);
 		rsa = NULL;
 		goto cleanup;
 	}
 
-	if (!EVP_PKEY_assign_RSA(pkey, rsa)) {
-		RSA_free(rsa);
+	oscam_BN_free(e);
+
+	if (!oscam_EVP_PKEY_assign(pkey, EVP_PKEY_RSA, rsa)) {
+		oscam_RSA_free(rsa);
 		rsa = NULL;
 		goto cleanup;
 	}
 
-	rsa = NULL; /* ownership transferred to pkey */
+	/* rsa ownership transferred to pkey */
 
-#endif /* OPENSSL_VERSION_NUMBER */
+#endif
 
 	/* ===============================================
 	 * CERTIFICATE BUILD
@@ -1705,10 +1736,12 @@ int oscam_ssl_generate_selfsigned(const char *path)
 
 /* =====================================================================
  * Extensions + SAN
- *   - OpenSSL < 1.1.0  : use plain X509V3_EXT_conf_nid + STACK_OF(GENERAL_NAME)
- *   - OpenSSL >= 1.1.0 : use dlopen-friendly oscam_* wrappers
+ *   - Static builds with OpenSSL < 1.1.0 :
+ *       use plain X509V3_EXT_conf_nid + STACK_OF(GENERAL_NAME)
+ *   - All dlopen builds, and OpenSSL >= 1.1.0 :
+ *       use dlopen-friendly oscam_* wrappers (OPENSSL_sk_*, GENERAL_NAME_*, etc.)
  * ===================================================================*/
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#if !defined(WITH_OPENSSL_DLOPEN) && OPENSSL_VERSION_NUMBER < 0x10100000L
 
 	/* ------------------------- LEGACY PATH ------------------------- */
 
@@ -1800,7 +1833,7 @@ int oscam_ssl_generate_selfsigned(const char *path)
 			}
 		}
 
-# if OPENSSL_VERSION_NUMBER >= 0x10002000L
+#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 		/* IPv6 ::1 */
 		{
 			GENERAL_NAME *gn = GENERAL_NAME_new();
@@ -1818,9 +1851,9 @@ int oscam_ssl_generate_selfsigned(const char *path)
 				}
 			}
 		}
-# else
+#else
 		cs_log("OpenSSL: IPv6 SAN skipped (OpenSSL < 1.0.2)");
-# endif
+#endif
 
 		/* subjectAltName extension */
 		{
@@ -1834,14 +1867,19 @@ int oscam_ssl_generate_selfsigned(const char *path)
 		sk_GENERAL_NAME_pop_free(gens, GENERAL_NAME_free);
 	}
 
-#else  /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
+#else  /* modern / dlopen-friendly path */
 
 	/* ------------------- MODERN / DLOPEN-FRIENDLY PATH ------------------- */
 
 	/* Extensions */
 	{
 		X509V3_CTX ctx;
+#ifdef WITH_OPENSSL_DLOPEN
+		if (oscam_X509V3_set_ctx_nodb)
+			oscam_X509V3_set_ctx_nodb(&ctx);
+#else
 		X509V3_set_ctx_nodb(&ctx);
+#endif
 		oscam_X509V3_set_ctx(&ctx, crt, crt, NULL, NULL, 0);
 
 		X509_EXTENSION *ext;
@@ -1902,7 +1940,7 @@ int oscam_ssl_generate_selfsigned(const char *path)
 			oscam_OPENSSL_sk_push((void *)gens, gn);
 		}
 
-# if OPENSSL_VERSION_NUMBER >= 0x10002000L
+#if OPENSSL_VERSION_NUMBER >= 0x10002000L
 		/* IPv6 ::1 */
 		gn = oscam_GENERAL_NAME_new();
 		{
@@ -1913,9 +1951,9 @@ int oscam_ssl_generate_selfsigned(const char *path)
 			oscam_GENERAL_NAME_set0_value(gn, GEN_IPADD, ipx);
 			oscam_OPENSSL_sk_push((void *)gens, gn);
 		}
-# else
+#else
 		cs_log("OpenSSL: IPv6 SAN skipped (OpenSSL < 1.0.2)");
-# endif
+#endif
 
 		ext = oscam_X509V3_EXT_i2d(NID_subject_alt_name, 0, gens);
 		if (ext) {
@@ -1928,7 +1966,7 @@ int oscam_ssl_generate_selfsigned(const char *path)
 
 	/* Sign cert */
 	if (!oscam_X509_sign(crt, pkey, oscam_EVP_sha256())) {
-		if (!oscam_X509_sign(crt, pkey, EVP_sha1()))
+		if (!oscam_X509_sign(crt, pkey, oscam_EVP_sha1()))
 			goto cleanup;
 	}
 
@@ -1944,17 +1982,23 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	ret = OSCAM_SSL_OK;
 
 cleanup:
-	if (crt) oscam_X509_free(crt);
+	if (crt)
+		oscam_X509_free(crt);
 
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
-	if (pkey) oscam_EVP_PKEY_free(pkey);
-	if (kctx) oscam_EVP_PKEY_CTX_free(kctx);
+	if (pkey)
+		oscam_EVP_PKEY_free(pkey);
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	if (kctx)
+		oscam_EVP_PKEY_CTX_free(kctx);
 #else
-	if (pkey) EVP_PKEY_free(pkey);
-	if (rsa)  RSA_free(rsa);
+	if (rsa)
+		oscam_RSA_free(rsa);
 #endif
 
-	if (f) fclose(f);
+	if (f)
+		fclose(f);
+
 	return ret;
 }
 
