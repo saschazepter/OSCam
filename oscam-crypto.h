@@ -30,11 +30,16 @@
 /* Reset an OpenSSL function-pointer */
 #define RESET_OSSL_PTR(name) do { oscam_##name = NULL; } while (0)
 
+typedef enum {
+	OSSL_FROM_CRYPTO_FIRST,
+	OSSL_FROM_SSL_FIRST
+} oscam_ossl_lookup_order_t;
+
 /* Loader state (implemented in oscam-crypto-openssl.c) */
 int         oscam_ossl_crypto_available(void);
 int         oscam_ossl_load(int need_ssl);
 void        oscam_ossl_unload(void);
-void       *oscam_ossl_sym(int from_ssl, const char *name);
+void       *oscam_ossl_sym(const char *name, oscam_ossl_lookup_order_t order);
 int         oscam_ossl_have_crypto(void);
 int         oscam_ossl_have_ssl(void);
 void        oscam_crypto_init_dlopen(void);

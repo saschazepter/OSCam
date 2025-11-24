@@ -180,20 +180,20 @@ static void *oscam_ossl_try_open(const char *explicit_name, const char *const *f
 /* ----------------------------------------------------------------------
  * Resolve individual symbols
  * ---------------------------------------------------------------------- */
-static void oscam_ossl_resolve_crypto_symbols(void)
+static int oscam_ossl_resolve_crypto_symbols(void)
 {
-#define RESOLVE_OSSL_CRYPTO_FN(type, var, sym) do {                     \
-	if (g_oscam_libcrypto) {                                     \
-		var = (type) dlsym(g_oscam_libcrypto, (sym));            \
-		if (!(var))                                              \
-			cs_debug_mask(D_TRACE,                               \
-				"OpenSSL: dlsym(\"%s\") failed: %s",             \
-				(sym), dlerror());                               \
-	}                                                            \
+#define RESOLVE_OSSL_CRYPTO_FN(type, var, sym) do {                 \
+    if (g_oscam_libcrypto) {                                        \
+        var = (type)oscam_ossl_sym((sym), OSSL_FROM_CRYPTO_FIRST);  \
+        if (!(var)) {                                               \
+            cs_log_dbg(D_TRACE, "OpenSSL: required symbol '%s' not found!", (sym)); \
+            return 0;                                               \
+        }                                                           \
+    }                                                               \
 } while (0)
 
 	if (!g_oscam_libcrypto)
-		return;
+		return 0;
 
 	/* --- EVP digests --- */
 	RESOLVE_OSSL_CRYPTO_FN(oscam_EVP_md5_f,                    oscam_EVP_md5,                    "EVP_md5");
@@ -274,6 +274,7 @@ static void oscam_ossl_resolve_crypto_symbols(void)
 	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_sub_word_f,                    oscam_BN_sub_word,                 "BN_sub_word");
 	RESOLVE_OSSL_CRYPTO_FN(oscam_BN_mod_inverse_f,                 oscam_BN_mod_inverse,              "BN_mod_inverse");
 #endif
+	return 1;
 }
 
 /* ----------------------------------------------------------------------
@@ -301,7 +302,8 @@ int oscam_ossl_load(int need_ssl)
 		g_oscam_crypto_tried = 1;
 		g_oscam_libcrypto = oscam_ossl_try_open(NULL, g_oscam_crypto_sonames);
 		if (g_oscam_libcrypto)
-			oscam_ossl_resolve_crypto_symbols();
+			if (!oscam_ossl_resolve_crypto_symbols())
+				return 0;
 	}
 
 	if (!g_oscam_libcrypto)
@@ -411,34 +413,40 @@ const char *oscam_ossl_ssl_soname(void)    { return g_oscam_ssl_used; }
 
 /*
  * Generic symbol resolver.
- *  from_ssl = 0 -> search libcrypto
- *  from_ssl = 1 -> search libssl first, then libcrypto as fallback
- *
- * This is kept for completeness, but the main API uses typed function
- * pointers (oscam_EVP_*, oscam_BN_*, etc.).
  */
-void *oscam_ossl_sym(int from_ssl, const char *name)
+void *oscam_ossl_sym(const char *name, oscam_ossl_lookup_order_t order)
 {
+	void *h = NULL;
+	void *libs[2] = { NULL, NULL };
+	int i;
+
 	if (!name)
 		return NULL;
 
-	void *h = NULL;
-	if (from_ssl && g_oscam_libssl)
-	{
-		h = dlsym(g_oscam_libssl, name);
-		if (h)
-			return h;
-		else
-			cs_debug_mask(D_TRACE, "OpenSSL: dlsym(\"%s\") failed: %s", name, dlerror());
+	/* Determine lookup order */
+	if (order == OSSL_FROM_SSL_FIRST) {
+		libs[0] = g_oscam_libssl;
+		libs[1] = g_oscam_libcrypto;
+	} else {
+		libs[0] = g_oscam_libcrypto;
+//		libs[1] = g_oscam_libssl;
 	}
 
-	if (g_oscam_libcrypto)
-	{
-		h = dlsym(g_oscam_libcrypto, name);
-		if (!h)
-			cs_debug_mask(D_TRACE, "OpenSSL: dlsym(\"%s\") failed: %s", name, dlerror());
+	/* Try both libraries in selected order */
+	for (i = 0; i < 2; i++) {
+		if (!libs[i])
+			continue;
+
+		h = dlsym(libs[i], name);
+		if (h) {
+			cs_debug_mask(D_TRACE, "OpenSSL: dlsym(\"%s\") success", name);
+			return h;
+		}
+
+		cs_debug_mask(D_TRACE, "OpenSSL: dlsym(\"%s\") failed: %s", name, dlerror());
 	}
-	return h;
+
+	return NULL;
 }
 
 /*
