@@ -96,22 +96,22 @@ typedef EVP_PKEY *(*oscam_X509_get_pubkey_f)(X509 *x);
 typedef EVP_PKEY *(*oscam_EVP_PKEY_new_f)(void);
 typedef void      (*oscam_EVP_PKEY_free_f)(EVP_PKEY *pkey);
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
-typedef void      (*oscam_EVP_PKEY_CTX_free_f)(EVP_PKEY_CTX *ctx);
 typedef EVP_PKEY_CTX *(*oscam_EVP_PKEY_CTX_new_id_f)(int id, void *engine /* ENGINE* or NULL */);
 typedef int           (*oscam_EVP_PKEY_keygen_init_f)(EVP_PKEY_CTX *ctx);
 typedef int           (*oscam_EVP_PKEY_CTX_set_rsa_keygen_bits_f)(EVP_PKEY_CTX *ctx, int bits);
 typedef int           (*oscam_EVP_PKEY_keygen_f)(EVP_PKEY_CTX *ctx, EVP_PKEY **pkey);
-
 typedef EVP_PKEY_CTX *(*oscam_EVP_PKEY_CTX_new_f)(EVP_PKEY *pkey, void *engine);
 typedef int           (*oscam_EVP_PKEY_verify_init_f)(EVP_PKEY_CTX *ctx);
 typedef int           (*oscam_EVP_PKEY_CTX_set_signature_md_f)(EVP_PKEY_CTX *ctx, const EVP_MD *md);
 typedef int           (*oscam_EVP_PKEY_verify_f)(EVP_PKEY_CTX *ctx,
 												const unsigned char *sig, size_t siglen,
 												const unsigned char *tbs, size_t tbslen);
+typedef void          (*oscam_EVP_PKEY_CTX_free_f)(EVP_PKEY_CTX *ctx);
 #endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
 typedef int (*oscam_EVP_PKEY_bits_f)(const EVP_PKEY *pkey);
 typedef EVP_PKEY *(*oscam_EVP_PKEY_dup_f)(EVP_PKEY *pkey);
 typedef int (*oscam_EVP_PKEY_base_id_f)(const EVP_PKEY *pkey);
+typedef int (*oscam_EVP_PKEY_assign_f)(EVP_PKEY *pkey, int type, void *key);
 typedef int (*oscam_EVP_PKEY_type_f)(int type);
 typedef RSA *(*oscam_EVP_PKEY_get1_RSA_f)(EVP_PKEY *pkey);
 typedef EC_KEY *(*oscam_EVP_PKEY_get1_EC_KEY_f)(EVP_PKEY *pkey);
@@ -122,6 +122,8 @@ typedef int (*oscam_RSA_verify_f)(int type,
 									const unsigned char *sigbuf, unsigned int siglen,
 									RSA *rsa);
 typedef void (*oscam_RSA_free_f)(RSA *rsa);
+typedef RSA *(*oscam_RSA_new_f)(void);
+typedef int  (*oscam_RSA_generate_key_ex_f)(RSA *rsa, int bits, BIGNUM *e, void *cb);
 
 typedef int (*oscam_ECDSA_verify_f)(int type,
 									const unsigned char *dgst, int dgst_len,
@@ -168,19 +170,19 @@ typedef ASN1_INTEGER *(*oscam_BN_to_ASN1_INTEGER_f)(const BIGNUM *bn, ASN1_INTEG
 typedef void     (*oscam_X509V3_set_ctx_f)(X509V3_CTX *ctx,
                                        X509 *issuer, X509 *subject,
                                        X509 *req, X509_CRL *crl, int flags);
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-typedef X509_EXTENSION *(*oscam_X509V3_EXT_conf_nid_f)(LHASH_OF(CONF_VALUE) *conf,
-														X509V3_CTX *ctx, int nid,
-														const char *value);
-#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
+typedef X509_EXTENSION *(*oscam_X509V3_EXT_conf_nid_f)(void *conf,
+                                                       X509V3_CTX *ctx,
+                                                       int nid,
+                                                       const char *value);
 typedef int (*oscam_X509_add_ext_f)(X509 *x, X509_EXTENSION *ex, int loc);
 typedef void (*oscam_X509_EXTENSION_free_f)(X509_EXTENSION *ex);
 typedef X509_EXTENSION *(*oscam_X509V3_EXT_i2d_f)(int nid, int crit, void *value);
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-typedef _STACK *(*oscam_OPENSSL_sk_new_null_f)(void);
-typedef int     (*oscam_OPENSSL_sk_push_f)(_STACK *st, void *data);
-typedef void    (*oscam_OPENSSL_sk_pop_free_f)(_STACK *st, void (*func)(void *));
-#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
+
+typedef void *oscam_ossl_stack_t;
+typedef oscam_ossl_stack_t (*oscam_OPENSSL_sk_new_null_f)(void);
+typedef int                (*oscam_OPENSSL_sk_push_f)(oscam_ossl_stack_t st, void *data);
+typedef void               (*oscam_OPENSSL_sk_pop_free_f)(oscam_ossl_stack_t st, void (*func)(void *));
+
 typedef GENERAL_NAME *(*oscam_GENERAL_NAME_new_f)(void);
 typedef void          (*oscam_GENERAL_NAME_free_f)(GENERAL_NAME *a);
 typedef void          (*oscam_GENERAL_NAME_set0_value_f)(GENERAL_NAME *a, int type, void *value);
