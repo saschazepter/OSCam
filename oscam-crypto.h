@@ -380,8 +380,13 @@ void            oscam_EVP_CIPHER_CTX_free(EVP_CIPHER_CTX *ctx);
 
 #if defined(WITH_SSL) || defined(WITH_LIB_MD5)
 #include <openssl/md5.h>
+#endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+#if defined(WITH_SSL) || defined(WITH_LIB_SHA1) || defined(WITH_LIB_SHA256)
+#include <openssl/sha.h>
+#endif
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L || defined(WITH_OPENSSL_DLOPEN)
 /* -------- MD5 shim (old-style calls) ---------- */
 typedef struct { EVP_MD_CTX *p; } OSCAM_MD5_CTX;
 #define MD5_CTX OSCAM_MD5_CTX
@@ -411,13 +416,6 @@ static inline int OSCAM_MD5_Final(unsigned char *md, MD5_CTX *c) {
 #define MD5_Update OSCAM_MD5_Update
 #define MD5_Final  OSCAM_MD5_Final
 
-#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
-#endif
-
-#if defined(WITH_SSL) || defined(WITH_LIB_SHA1) || defined(WITH_LIB_SHA256)
-#include <openssl/sha.h>
-
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 /* -------- SHA1 shim (old-style calls) ---------- */
 typedef struct { EVP_MD_CTX *p; } OSCAM_SHA_CTX;
 #define SHA_CTX OSCAM_SHA_CTX
@@ -463,8 +461,7 @@ static inline int OSCAM_SHA256_Final(unsigned char *md, SHA256_CTX *c) {
 #define SHA256_Init   OSCAM_SHA256_Init
 #define SHA256_Update OSCAM_SHA256_Update
 #define SHA256_Final  OSCAM_SHA256_Final
-#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
-#endif
+#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L || WITH_OPENSSL_DLOPEN */
 
 #if defined(WITH_SSL) || defined(WITH_LIB_MDC2) || defined(WITH_LIB_DES)
 /*
