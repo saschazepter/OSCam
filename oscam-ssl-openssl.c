@@ -105,7 +105,9 @@ DECLARE_OSSL_PTR(EVP_PKEY_free,                          oscam_EVP_PKEY_free_f);
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 DECLARE_OSSL_PTR(EVP_PKEY_CTX_new_id,                    oscam_EVP_PKEY_CTX_new_id_f);
 DECLARE_OSSL_PTR(EVP_PKEY_keygen_init,                   oscam_EVP_PKEY_keygen_init_f);
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
 DECLARE_OSSL_PTR(EVP_PKEY_CTX_set_rsa_keygen_bits,       oscam_EVP_PKEY_CTX_set_rsa_keygen_bits_f);
+#endif /* OPENSSL_VERSION_NUMBER >= 0x30000000L */
 DECLARE_OSSL_PTR(EVP_PKEY_keygen,                        oscam_EVP_PKEY_keygen_f);
 DECLARE_OSSL_PTR(EVP_PKEY_CTX_new,                       oscam_EVP_PKEY_CTX_new_f);
 DECLARE_OSSL_PTR(EVP_PKEY_verify_init,                   oscam_EVP_PKEY_verify_init_f);
@@ -339,7 +341,9 @@ static int oscam_ossl_resolve_ssl_symbols(void)
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_CTX_new_id,                    oscam_EVP_PKEY_CTX_new_id_f, 1);
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_keygen_init,                   oscam_EVP_PKEY_keygen_init_f, 1);
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_CTX_set_rsa_keygen_bits,       oscam_EVP_PKEY_CTX_set_rsa_keygen_bits_f, 1);
+#endif /* OPENSSL_VERSION_NUMBER >= 0x30000000L */
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_keygen,                        oscam_EVP_PKEY_keygen_f, 1);
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_CTX_new,                       oscam_EVP_PKEY_CTX_new_f, 1);
 	RESOLVE_OSSL_SSL_FN(EVP_PKEY_verify_init,                   oscam_EVP_PKEY_verify_init_f, 1);
@@ -1600,8 +1604,8 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	/* ===============================================
 	 * KEY GENERATION
 	 * =============================================== */
-	/* Modern API available only in OpenSSL >= 1.1.0 */
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	/* Modern API available only in OpenSSL >= 3.0 */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
 
 	/* Modern EVP_PKEY_CTX-based RSA key generation */
 	kctx = oscam_EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
@@ -1622,7 +1626,7 @@ int oscam_ssl_generate_selfsigned(const char *path)
 
 #else
 	/* -------------------------------
-	 * Legacy OpenSSL 0.9.8 – 1.0.2
+	 * Legacy OpenSSL 0.9.8 – 1.1.1
 	 * Use RSA_generate_key_ex + EVP_PKEY_assign_RSA
 	 * ------------------------------- */
 

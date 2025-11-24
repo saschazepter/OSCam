@@ -428,6 +428,8 @@ void *oscam_ossl_sym(int from_ssl, const char *name)
 		h = dlsym(g_oscam_libssl, name);
 		if (h)
 			return h;
+		else
+			cs_debug_mask(D_TRACE, "OpenSSL: dlsym(\"%s\") failed: %s", name, dlerror());
 	}
 
 	if (g_oscam_libcrypto)
