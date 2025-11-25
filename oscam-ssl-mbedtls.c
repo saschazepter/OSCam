@@ -843,8 +843,8 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	mbedtls_x509write_cert crt;
 	mbedtls_entropy_context entropy;
 	mbedtls_ctr_drbg_context ctr_drbg;
-	unsigned char cert_buf[4096];
-	unsigned char key_buf[8192];  // larger buffer for 4096-bit RSA PEM
+	unsigned char cert_buf[OSCAM_SSL_CERT_BITS];
+	unsigned char key_buf[OSCAM_SSL_CERT_BITS*2];  // larger buffer for 4096-bit RSA PEM
 	const char *pers = "oscam_selfsign_rsa";
 	FILE *f = NULL;
 	char not_before[16], not_after[16];
@@ -869,7 +869,7 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	{
 		mbedtls_rsa_context *rsa = mbedtls_pk_rsa(key);
 		/* public exponent = 65537 */
-		if ((ret = mbedtls_rsa_gen_key(rsa, mbedtls_ctr_drbg_random, &ctr_drbg, 4096, 65537)) != 0)
+		if ((ret = mbedtls_rsa_gen_key(rsa, mbedtls_ctr_drbg_random, &ctr_drbg, OSCAM_SSL_CERT_BITS, 65537)) != 0)
 			goto cleanup;
 	}
 

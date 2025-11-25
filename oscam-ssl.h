@@ -46,6 +46,7 @@ typedef void (*oscam_CRYPTO_set_id_callback_f)(unsigned long (*func)(void));
 typedef SSL_CTX *(*oscam_SSL_CTX_new_f)(const SSL_METHOD *meth);
 typedef void     (*oscam_SSL_CTX_free_f)(SSL_CTX *ctx);
 typedef long     (*oscam_SSL_CTX_set_options_f)(SSL_CTX *ctx, long opts);
+typedef long     (*oscam_SSL_CTX_ctrl_f)(SSL_CTX *ctx, int cmd, long larg, void *parg);
 typedef void     (*oscam_SSL_CTX_set_verify_f)(SSL_CTX *ctx, int mode,
 						int (*cb)(int, X509_STORE_CTX *));
 typedef int      (*oscam_SSL_CTX_load_verify_locations_f)(SSL_CTX *ctx,
@@ -83,7 +84,7 @@ typedef long (*oscam_SSL_get_verify_result_f)(const SSL *ssl);
 /* Version / error helpers */
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 typedef void (*oscam_CRYPTO_cleanup_all_ex_data_f)(void);
-typedef int  (*oscam_CRYPTO_add_f)(volatile int *pointer, int amount, int type);
+typedef int (*oscam_CRYPTO_add_lock_f)(int *pointer, int amount, int type, const char *file, int line);
 typedef const char *(*oscam_SSLeay_version_f)(int type);
 #else
 typedef const char *(*oscam_OpenSSL_version_f)(int type);
@@ -148,16 +149,11 @@ typedef int   (*oscam_X509_set_version_f)(X509 *x, long version);
 typedef ASN1_INTEGER *(*oscam_X509_get_serialNumber_f)(X509 *x);
 typedef int   (*oscam_X509_set_pubkey_f)(X509 *x, EVP_PKEY *pkey);
 
-/* OpenSSL >= 1.1.0 (mutable getters) */
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 typedef ASN1_TIME *(*oscam_X509_getm_notBefore_f)(X509 *x);
 typedef ASN1_TIME *(*oscam_X509_getm_notAfter_f)(X509 *x);
 typedef int (*oscam_ASN1_TIME_to_tm_f)(const ASN1_TIME *t, struct tm *tm);
-#else
-/* OpenSSL < 1.1.0 */
 typedef ASN1_TIME *(*oscam_X509_get_notBefore_f)(X509 *x);
 typedef ASN1_TIME *(*oscam_X509_get_notAfter_f)(X509 *x);
-#endif
 typedef ASN1_TIME *(*oscam_X509_gmtime_adj_f)(ASN1_TIME *s, long adj);
 
 typedef X509_NAME *(*oscam_X509_NAME_new_f)(void);
@@ -194,6 +190,9 @@ typedef void *oscam_ossl_stack_t;
 typedef oscam_ossl_stack_t (*oscam_OPENSSL_sk_new_null_f)(void);
 typedef int                (*oscam_OPENSSL_sk_push_f)(oscam_ossl_stack_t st, void *data);
 typedef void               (*oscam_OPENSSL_sk_pop_free_f)(oscam_ossl_stack_t st, void (*func)(void *));
+typedef oscam_ossl_stack_t (*oscam_sk_new_null_ossl_f)(void);
+typedef int                (*oscam_sk_push_ossl_f)(oscam_ossl_stack_t st, void *data);
+typedef void               (*oscam_sk_pop_free_ossl_f)(oscam_ossl_stack_t st, void (*func)(void *));
 
 typedef GENERAL_NAME *(*oscam_GENERAL_NAME_new_f)(void);
 typedef void          (*oscam_GENERAL_NAME_free_f)(GENERAL_NAME *a);
@@ -234,6 +233,8 @@ typedef int (*oscam_RAND_bytes_f)(unsigned char *buf, int num);
 /* X509 store / verify */
 typedef X509_STORE *(*oscam_X509_STORE_new_f)(void);
 typedef void        (*oscam_X509_STORE_free_f)(X509_STORE *v);
+typedef int         (*oscam_X509_STORE_set_flags_f)(X509_STORE *ctx, unsigned long flags);
+typedef int         (*oscam_X509_check_issued_f)(X509 *issuer, X509 *subject);
 typedef int         (*oscam_X509_STORE_add_cert_f)(X509_STORE *ctx, X509 *x);
 typedef X509_STORE_CTX *(*oscam_X509_STORE_CTX_new_f)(void);
 typedef void           (*oscam_X509_STORE_CTX_free_f)(X509_STORE_CTX *ctx);
@@ -243,6 +244,7 @@ typedef int            (*oscam_X509_STORE_CTX_init_f)(X509_STORE_CTX *ctx,
                                                       STACK_OF(X509) *chain);
 typedef int (*oscam_X509_verify_cert_f)(X509_STORE_CTX *ctx);
 typedef X509 *(*oscam_SSL_get_peer_certificate_f)(const SSL *s);
+typedef int (*oscam_X509_VERIFY_PARAM_set_flags_f)(X509_VERIFY_PARAM *param, unsigned long);
 
 /* subject/issuer name utilities */
 typedef int          (*oscam_X509_NAME_get_index_by_NID_f)(X509_NAME *name, int nid, int lastpos);
@@ -278,6 +280,7 @@ enum {
 };
 
 #define OSCAM_SSL_CERT_YEARS 2
+#define OSCAM_SSL_CERT_BITS  4096
 
 #define OSCAM_PK_RSA   0
 #define OSCAM_PK_EC    1

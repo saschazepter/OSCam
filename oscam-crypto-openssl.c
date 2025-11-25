@@ -320,6 +320,10 @@ int oscam_ossl_load(int need_ssl)
 	return (g_oscam_libcrypto ? 1 : 0) + (g_oscam_libssl ? 1 : 0);
 }
 
+#ifdef WITH_SSL
+extern void oscam_ossl_reset_ssl_symbols(void);
+#endif
+
 void oscam_ossl_unload(void)
 {
 	if (g_oscam_libssl)
