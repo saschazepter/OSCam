@@ -880,7 +880,6 @@ OSCam build system documentation\n\
 \n\
    USE_OPENSSL=1   - Request using OpenSSL as security backend. This overrides\n\
                      the use of default mbedtls backend.\n\
-                     the use of default mbedtls backend.\n\
 \n\
    USE_LIBCRYPTO=1 - Request linking with libcrypto instead of using de\n\
                      internal crypto functions. USE_LIBCRYPTO is automatically\n\
