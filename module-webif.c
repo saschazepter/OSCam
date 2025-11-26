@@ -2737,6 +2737,51 @@ static char *send_oscam_reader_config(struct templatevars *vars, struct uriparam
 	for(i = 0; i < rdr->rsa_mod_length; i++)
 		{ tpl_printf(vars, TPLAPPEND, "RSAKEY", "%02X", rdr->rsa_mod[i]); }
 
+	for(i = 0; i < rdr->rsa_mod_tiger_length; i++)
+		{ tpl_printf(vars, TPLAPPEND, "TIGER_RSAKEY", "%02X", rdr->rsa_mod_tiger[i]); }
+
+	// Tiger EMM Reassembly
+	if(!apicall)
+	{
+		tpl_addVar(vars, TPLADD, "TIGEREMMREASSEMBLY", (rdr->tiger_emm_reassembly == 1) ? "checked" : "");
+	}
+	else
+	{
+		tpl_addVar(vars, TPLADD, "TIGEREMMREASSEMBLYVALUE", (rdr->tiger_emm_reassembly == 1) ? "1" : "0");
+	}
+
+	// Tiger Save EMM mode
+	if(!apicall)
+	{
+		tpl_addVar(vars, TPLADD, "TIGERSAVEEMMSEL0", (rdr->tiger_save_emm == 0) ? "selected" : "");
+		tpl_addVar(vars, TPLADD, "TIGERSAVEEMMSEL1", (rdr->tiger_save_emm == 1) ? "selected" : "");
+		tpl_addVar(vars, TPLADD, "TIGERSAVEEMMSEL2", (rdr->tiger_save_emm == 2) ? "selected" : "");
+	}
+	else
+	{
+		tpl_printf(vars, TPLADD, "TIGERSAVEEMMVALUE", "%d", rdr->tiger_save_emm);
+	}
+
+	// Tiger Round Keys
+	for(i = 0; i < rdr->tiger_round_keys_length; i++)
+		{ tpl_printf(vars, TPLAPPEND, "TIGER_ROUND_KEYS", "%02X", rdr->tiger_round_keys[i]); }
+
+	// Tiger T0
+	for(i = 0; i < rdr->tiger_t0_length; i++)
+		{ tpl_printf(vars, TPLAPPEND, "TIGER_T0", "%02X", rdr->tiger_t0[i]); }
+
+	// Tiger T1
+	for(i = 0; i < rdr->tiger_t1_length; i++)
+		{ tpl_printf(vars, TPLAPPEND, "TIGER_T1", "%02X", rdr->tiger_t1[i]); }
+
+	// Tiger T2
+	for(i = 0; i < rdr->tiger_t2_length; i++)
+		{ tpl_printf(vars, TPLAPPEND, "TIGER_T2", "%02X", rdr->tiger_t2[i]); }
+
+	// Tiger T3
+	for(i = 0; i < rdr->tiger_t3_length; i++)
+		{ tpl_printf(vars, TPLAPPEND, "TIGER_T3", "%02X", rdr->tiger_t3[i]); }
+
 	// 3DES Key
 	for(i = 0; i < rdr->des_key_length; i++)
 		{ tpl_printf(vars, TPLAPPEND, "DESKEY", "%02X", rdr->des_key[i]); }
