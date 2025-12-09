@@ -7878,9 +7878,7 @@ void dvbapi_send_dcw(struct s_client *client, ECM_REQUEST *er)
 		{
 			dvbapi_net_send(DVBAPI_ECM_INFO, demux[i].socket_fd, 0, i, 0, NULL, client, er, demux[i].client_proto_version);
 		}
-#ifndef __CYGWIN__
-		else if(!cfg.dvbapi_listenport && cfg.dvbapi_boxtype != BOXTYPE_PC_NODMX)
-#endif
+
 		if(cfg.dvbapi_ecminfo_file != 0 && cfg.dvbapi_boxtype != BOXTYPE_SAMYGO)
 		{
 #ifdef WITH_EXTENDED_CW
