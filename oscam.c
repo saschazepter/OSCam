@@ -424,10 +424,7 @@ static void write_versionfile(bool use_stdout)
 	if(config_enabled(HAVE_DVBAPI))
 	{
 		write_conf(WITH_EXTENDED_CW, "DVB API with extended CW API support");
-		if(config_enabled(MODULE_STREAMRELAY))
-		{
-			write_conf(true, "DVB API with Stream Relay support");
-		}
+		write_conf(MODULE_STREAMRELAY, "DVB API with Stream Relay support");
 		write_conf(WITH_AZBOX, "DVB API with AZBOX support");
 		write_conf(WITH_MCA, "DVB API with MCA support");
 		write_conf(WITH_COOLAPI, "DVB API with COOLAPI support");
