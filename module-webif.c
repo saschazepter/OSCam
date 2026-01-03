@@ -6994,7 +6994,7 @@ static char *send_oscam_services(struct templatevars * vars, struct uriparams * 
 		else
 		{
 			tpl_addVar(vars, TPLADD, "SIDCLASS", "");
-			tpl_printf(vars, TPLADD, "SID", "<A HREF=\"services.html?service=%s&amp;action=list\">Show Services</A>", urlencode(vars, sidtab->label));
+			tpl_printf(vars, TPLADD, "SID", "<A HREF=\"services.html?service=%s&amp;action=list\">[%03i] Show Services</A>", urlencode(vars, sidtab->label), counter+1);
 		}
 		tpl_addVar(vars, TPLADD, "LABELENC", urlencode(vars, sidtab->label));
 		tpl_addVar(vars, TPLADD, "LABEL", xml_encode(vars, sidtab->label));
