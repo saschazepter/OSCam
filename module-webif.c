@@ -4799,7 +4799,7 @@ static char *send_oscam_user_config(struct templatevars *vars, struct uriparams 
 			}
 
 			lastresponsetm = latestclient->cwlastresptime;
-			tpl_addVar(vars, TPLADD, "CLIENTIP", cs_inet_ntoa(latestclient->ip));
+			tpl_addVar(vars, TPLADD, "CLIENTIP", IP_ISSET(latestclient->ip) ? cs_inet_ntoa(latestclient->ip) : "socket");
 			connected_users++;
 			casc_users = ll_count(latestclient->cascadeusers);
 			LL_ITER it = ll_iter_create(latestclient->cascadeusers);
@@ -6002,7 +6002,13 @@ static char *send_oscam_status(struct templatevars * vars, struct uriparams * pa
 						else { tpl_addVar(vars, TPLADD, "CLIENTCRYPTED", ""); }
 					}
 					else { tpl_printf(vars, TPLADD, "CLIENTCRYPTED", "%d", cl->crypted); }
-					tpl_addVar(vars, TPLADD, "CLIENTIP", cs_inet_ntoa(cl->ip));
+
+					// Display address: "local" for local readers, "socket" for unix sockets, IP otherwise
+					if(cl->typ == 'r' && cl->reader && !is_network_reader(cl->reader))
+						{ tpl_addVar(vars, TPLADD, "CLIENTIP", "local"); }
+					else
+						{ tpl_addVar(vars, TPLADD, "CLIENTIP", IP_ISSET(cl->ip) ? cs_inet_ntoa(cl->ip) : "socket"); }
+
 					tpl_printf(vars, TPLADD, "CLIENTPORT", "%d", cl->port);
 					const char *proto = client_get_proto(cl);
 #ifdef CS_CACHEEX_AIO
@@ -8123,7 +8129,7 @@ static char *send_oscam_cacheex(struct templatevars * vars, struct uriparams * p
 				}
 			}
 
-			tpl_addVar(vars, TPLADD, "IP", cs_inet_ntoa(cl->ip));
+			tpl_addVar(vars, TPLADD, "IP", IP_ISSET(cl->ip) ? cs_inet_ntoa(cl->ip) : "socket");
 			tpl_printf(vars, TPLADD, "NODE", "%" PRIu64 "X", get_cacheex_node(cl));
 			tpl_addVar(vars, TPLADD, "LEVEL", level[cl->account->cacheex.mode]);
 			tpl_printf(vars, TPLADD, "PUSH", "%d", cl->account->cwcacheexpush);
@@ -8174,7 +8180,7 @@ static char *send_oscam_cacheex(struct templatevars * vars, struct uriparams * p
 				}
 			}
 
-			tpl_addVar(vars, TPLADD, "IP", cs_inet_ntoa(cl->ip));
+			tpl_addVar(vars, TPLADD, "IP", IP_ISSET(cl->ip) ? cs_inet_ntoa(cl->ip) : "socket");
 			tpl_printf(vars, TPLADD, "NODE", "%" PRIu64 "X", get_cacheex_node(cl));
 			tpl_addVar(vars, TPLADD, "LEVEL", level[cl->reader->cacheex.mode]);
 			tpl_printf(vars, TPLADD, "PUSH", "%d", cl->cwcacheexpush);
@@ -8209,7 +8215,7 @@ static char *send_oscam_cacheex(struct templatevars * vars, struct uriparams * p
 				tpl_addVar(vars, TPLADD, "NAME", "csp");
 			}
 
-			tpl_addVar(vars, TPLADD, "IP", cs_inet_ntoa(cl->ip));
+			tpl_addVar(vars, TPLADD, "IP", IP_ISSET(cl->ip) ? cs_inet_ntoa(cl->ip) : "socket");
 			tpl_addVar(vars, TPLADD, "NODE", "csp");
 
 			if(cl->cwcacheexping)
