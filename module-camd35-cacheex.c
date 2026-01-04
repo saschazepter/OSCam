@@ -280,7 +280,8 @@ void camd35_cacheex_feature_trigger_in(struct s_client *cl, uint8_t *buf)
 						str_len = sizeof(cl->account->cacheex.aio_version) - 1;
 					memcpy(cl->account->cacheex.aio_version, ofs, str_len);
 					// sanitize: remove non-printable characters
-					for(size_t x = 0; x < str_len; x++)
+					size_t x;
+					for(x = 0; x < str_len; x++)
 					{
 						if(cl->account->cacheex.aio_version[x] < 0x20 || cl->account->cacheex.aio_version[x] > 0x7E)
 						{
@@ -301,7 +302,8 @@ void camd35_cacheex_feature_trigger_in(struct s_client *cl, uint8_t *buf)
 						str_len = sizeof(cl->reader->cacheex.aio_version) - 1;
 					memcpy(cl->reader->cacheex.aio_version, ofs, str_len);
 					// sanitize: remove non-printable characters
-					for(size_t x = 0; x < str_len; x++)
+					size_t x;
+					for(x = 0; x < str_len; x++)
 					{
 						if(cl->reader->cacheex.aio_version[x] < 0x20 || cl->reader->cacheex.aio_version[x] > 0x7E)
 						{
