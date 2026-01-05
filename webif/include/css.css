@@ -1146,12 +1146,15 @@ only screen and (min-device-width : 320px) and (max-device-width : 568px) and (o
 	position:absolute;
 	z-index:1000;
 	width:400px;
-	max-height:500px;
 	background-color:#FFF;
 	border:2px solid #AAA;
 	border-radius:5px;
 	box-shadow:0 4px 12px rgba(0,0,0,0.3);
-	font-size:12px
+	font-size:12px;
+	resize:both;
+	overflow:auto;
+	min-width:250px;
+	min-height:150px
 }
 .wiki-popup-header {
 	background-color:#CCC;
@@ -1165,7 +1168,14 @@ only screen and (min-device-width : 320px) and (max-device-width : 568px) and (o
 	align-items:center
 }
 .wiki-popup-title {
-	font-family:monospace
+	font-family:Arial;
+	color:#000;
+	text-decoration:none;
+	cursor:pointer
+}
+.wiki-popup-title:hover {
+	color:#FF9E5F;
+	text-decoration:underline
 }
 .wiki-popup-close {
 	cursor:pointer;
@@ -1177,9 +1187,18 @@ only screen and (min-device-width : 320px) and (max-device-width : 568px) and (o
 .wiki-popup-close:hover {
 	color:#FF9E5F
 }
+.wiki-popup-reset {
+	cursor:pointer;
+	font-size:16px;
+	line-height:1;
+	padding:0 4px;
+	margin-left:auto
+}
+.wiki-popup-reset:hover {
+	color:#FF9E5F
+}
 .wiki-popup-content {
 	padding:12px;
-	max-height:440px;
 	overflow-y:auto;
 	line-height:1.5;
 	color:#333
