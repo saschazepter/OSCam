@@ -265,7 +265,7 @@ void camd35_cacheex_feature_trigger_in(struct s_client *cl, uint8_t *buf)
 				cl->reader->cacheex.maxhop = buf[24];
 				cl->reader->cacheex.maxhop_lg = buf[25];
 			}
-		break;
+			break;
 		// aio-version
 		case 32: ;
 			uint16_t payload_size = b2i(2, buf + i + 2);
