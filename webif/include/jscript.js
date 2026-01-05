@@ -2533,11 +2533,20 @@ var Base64={_keyStr:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456
  */
 var wikiPopupHtml = '<div id="wikiPopup" class="wiki-popup">' +
 	'<div class="wiki-popup-header">' +
-		'<span class="wiki-popup-title"></span>' +
-		'<span class="wiki-popup-close">&times;</span>' +
+		'<a class="wiki-popup-title" href="#" target="_blank"></a>' +
+		'<span class="wiki-popup-reset" title="Reset position and size">&#8634;</span>' +
+		'<span class="wiki-popup-close" title="Close">&times;</span>' +
 	'</div>' +
 	'<div class="wiki-popup-content"></div>' +
 	'</div>';
+
+var wikiDragState = { isDragging: false, startX: 0, startY: 0, startLeft: 0, startTop: 0 };
+var wikiSavedLeft = localStorage.getItem('wikiPopupLeft');
+var wikiSavedWidth = localStorage.getItem('wikiPopupWidth');
+var wikiSavedHeight = localStorage.getItem('wikiPopupHeight');
+var wikiDefaultWidth = 400;
+var wikiLastLinkOffset = 0;
+var wikiUserResized = !!(wikiSavedWidth || wikiSavedHeight);
 
 $(function() {
 	if (typeof oscamconf === 'undefined') return;
@@ -2546,6 +2555,22 @@ $(function() {
 
 	$('.wiki-popup-close').click(function() {
 		$('#wikiPopup').fadeOut(200);
+	});
+
+	$('.wiki-popup-reset').click(function() {
+		localStorage.removeItem('wikiPopupLeft');
+		localStorage.removeItem('wikiPopupWidth');
+		localStorage.removeItem('wikiPopupHeight');
+		wikiSavedLeft = null;
+		wikiSavedWidth = null;
+		wikiSavedHeight = null;
+		wikiUserResized = false;
+		var $popup = $('#wikiPopup');
+		var defaultLeft = wikiLastLinkOffset + 10;
+		if (defaultLeft + 420 > $(window).width()) {
+			defaultLeft = $(window).width() - 420;
+		}
+		$popup.css({ width: wikiDefaultWidth, height: 'auto', left: defaultLeft });
 	});
 
 	$(document).click(function(e) {
@@ -2559,6 +2584,81 @@ $(function() {
 		if (e.keyCode === 27) {
 			$('#wikiPopup').fadeOut(200);
 		}
+	});
+
+	/* Drag functionality for popup */
+	$('.wiki-popup-header').css('cursor', 'move').on('mousedown', function(e) {
+		if ($(e.target).hasClass('wiki-popup-close') || $(e.target).hasClass('wiki-popup-reset') || $(e.target).hasClass('wiki-popup-title')) return;
+		wikiDragState.isDragging = true;
+		wikiDragState.startX = e.pageX;
+		wikiDragState.startY = e.pageY;
+		wikiDragState.startLeft = parseInt($('#wikiPopup').css('left')) || 0;
+		wikiDragState.startTop = parseInt($('#wikiPopup').css('top')) || 0;
+		e.preventDefault();
+	});
+
+	/* Touch support for drag */
+	$('.wiki-popup-header').on('touchstart', function(e) {
+		if ($(e.target).hasClass('wiki-popup-close') || $(e.target).hasClass('wiki-popup-reset') || $(e.target).hasClass('wiki-popup-title')) return;
+		var touch = e.originalEvent.touches[0];
+		wikiDragState.isDragging = true;
+		wikiDragState.startX = touch.pageX;
+		wikiDragState.startY = touch.pageY;
+		wikiDragState.startLeft = parseInt($('#wikiPopup').css('left')) || 0;
+		wikiDragState.startTop = parseInt($('#wikiPopup').css('top')) || 0;
+	});
+
+	$(document).on('touchmove', function(e) {
+		if (!wikiDragState.isDragging) return;
+		var touch = e.originalEvent.touches[0];
+		var newLeft = wikiDragState.startLeft + (touch.pageX - wikiDragState.startX);
+		var newTop = wikiDragState.startTop + (touch.pageY - wikiDragState.startY);
+		newLeft = Math.max(0, Math.min(newLeft, $(window).width() - 420));
+		newTop = Math.max(0, newTop);
+		$('#wikiPopup').css({ left: newLeft, top: newTop });
+		e.preventDefault();
+	});
+
+	$(document).on('touchend', function() {
+		if (wikiDragState.isDragging) {
+			wikiDragState.isDragging = false;
+			wikiSavedLeft = $('#wikiPopup').css('left');
+			localStorage.setItem('wikiPopupLeft', wikiSavedLeft);
+		}
+	});
+
+	$(document).on('mousemove', function(e) {
+		if (!wikiDragState.isDragging) return;
+		var newLeft = wikiDragState.startLeft + (e.pageX - wikiDragState.startX);
+		var newTop = wikiDragState.startTop + (e.pageY - wikiDragState.startY);
+		newLeft = Math.max(0, Math.min(newLeft, $(window).width() - 420));
+		newTop = Math.max(0, newTop);
+		$('#wikiPopup').css({ left: newLeft, top: newTop });
+	});
+
+	$(document).on('mouseup', function() {
+		if (wikiDragState.isDragging) {
+			wikiDragState.isDragging = false;
+			wikiSavedLeft = $('#wikiPopup').css('left');
+			localStorage.setItem('wikiPopupLeft', wikiSavedLeft);
+		}
+	});
+
+	/* Save size after user resize */
+	var wikiLastWidth = 0;
+	var wikiLastHeight = 0;
+	$('#wikiPopup').on('mouseup', function() {
+		var w = $(this).width();
+		var h = $(this).height();
+		if (wikiLastWidth && wikiLastHeight && (w !== wikiLastWidth || h !== wikiLastHeight)) {
+			wikiUserResized = true;
+			wikiSavedWidth = w;
+			wikiSavedHeight = h;
+			localStorage.setItem('wikiPopupWidth', wikiSavedWidth);
+			localStorage.setItem('wikiPopupHeight', wikiSavedHeight);
+		}
+		wikiLastWidth = w;
+		wikiLastHeight = h;
 	});
 
 	$('form table a').off('click').click(function(e) {
@@ -2577,18 +2677,35 @@ $(function() {
 		var $link = $(this);
 		var $popup = $('#wikiPopup');
 
-		$('.wiki-popup-title').text(param);
+		$('.wiki-popup-title').text(param).attr('href', 
+			'https://git.streamboard.tv/common/oscam/-/wikis/pages/configuration/oscam.' + oscamconf + '#' + param);
 		$('.wiki-popup-content').html('<div class="wiki-loading">Loading...</div>');
 
 		var offset = $link.offset();
-		var leftPos = offset.left + $link.outerWidth() + 10;
-		if (leftPos + 420 > $(window).width()) {
-			leftPos = $(window).width() - 420;
+		wikiLastLinkOffset = offset.left + $link.outerWidth();
+		var leftPos;
+		if (wikiSavedLeft) {
+			leftPos = parseInt(wikiSavedLeft);
+		} else {
+			leftPos = offset.left + $link.outerWidth() + 10;
+			if (leftPos + 420 > $(window).width()) {
+				leftPos = $(window).width() - 420;
+			}
 		}
 		$popup.css({
 			top: offset.top - 10,
-			left: leftPos
+			left: leftPos,
+			width: wikiUserResized && wikiSavedWidth ? parseInt(wikiSavedWidth) : wikiDefaultWidth,
+			height: wikiUserResized && wikiSavedHeight ? parseInt(wikiSavedHeight) : 'auto',
+			'max-width': $(window).width() - 20,
+			'max-height': $(window).height() - 20
 		}).fadeIn(200);
+
+		/* Update last size for resize detection */
+		setTimeout(function() {
+			wikiLastWidth = $popup.width();
+			wikiLastHeight = $popup.height();
+		}, 250);
 
 		$.ajax({
 			url: 'wiki.json',
