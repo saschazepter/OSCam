@@ -333,6 +333,7 @@ update_deps() {
 	disabled_all $(get_opts readers) $(get_opts card_readers) && disable_opt WITH_CARDREADER >/dev/null
 	disabled WEBIF && disable_opt WEBIF_LIVELOG >/dev/null
 	disabled WEBIF && disable_opt WEBIF_JQUERY >/dev/null
+	disabled WEBIF && disable_opt WEBIF_WIKI >/dev/null
 	enabled MODULE_CCCSHARE && enable_opt MODULE_CCCAM >/dev/null
 	enabled_any CARDREADER_DB2COM CARDREADER_MP35 CARDREADER_SC8IN1 CARDREADER_STINGER && enable_opt CARDREADER_PHOENIX >/dev/null
 	enabled CS_CACHEEX_AIO && enable_opt CS_CACHEEX >/dev/null
@@ -500,6 +501,7 @@ menu_addons() {
 		WEBIF				"Web Interface"									$(check_test "WEBIF") \
 		WEBIF_LIVELOG		"LiveLog"										$(check_test "WEBIF_LIVELOG") \
 		WEBIF_JQUERY		"Jquery onboard (if disabled webload)"			$(check_test "WEBIF_JQUERY") \
+		WEBIF_WIKI			"Inline Wiki Help"								$(check_test "WEBIF_WIKI") \
 		WITH_COMPRESS_WEBIF	"Compress webpages"								$(check_test "WITH_COMPRESS_WEBIF") \
 		WITH_SSL			"OpenSSL support"								$(check_test "WITH_SSL") \
 		HAVE_DVBAPI			"DVB API"										$(check_test "HAVE_DVBAPI") \
