@@ -36,6 +36,10 @@
 #include "module-gbox-cards.h"
 #endif
 
+#ifdef WEBIF_WIKI
+#include "webif/pages_wiki.h"
+#endif
+
 extern const struct s_cardreader *cardreaders[];
 extern char cs_confdir[];
 extern uint32_t ecmcwcache_size;
@@ -8406,6 +8410,35 @@ static char *send_oscam_cacheex(struct templatevars * vars, struct uriparams * p
 }
 #endif
 
+#ifdef WEBIF_WIKI
+static char *send_oscam_wiki(struct templatevars *vars, struct uriparams *params)
+{
+	const char *config = getParam(params, "config");
+	const char *param = getParam(params, "param");
+
+	if(!config || !param || !config[0] || !param[0])
+	{
+		return tpl_getTpl(vars, "WIKIERROR");
+	}
+
+	const char *text = wiki_get_help(config, param);
+
+	if(text)
+	{
+		tpl_addVar(vars, TPLADD, "WIKIPARAM", param);
+		tpl_addVar(vars, TPLADD, "WIKICONFIG", config);
+		tpl_addVar(vars, TPLADD, "WIKITEXT", json_encode(vars, text));
+		return tpl_getTpl(vars, "WIKIJSON");
+	}
+	else
+	{
+		tpl_addVar(vars, TPLADD, "WIKIPARAM", param);
+		tpl_addVar(vars, TPLADD, "WIKICONFIG", config);
+		return tpl_getTpl(vars, "WIKINOTFOUND");
+	}
+}
+#endif
+
 static char *send_oscam_api(struct templatevars * vars, FILE * f, struct uriparams * params, int8_t *keepalive, int8_t apicall, char *extraheader)
 {
 	if(strcmp(getParam(params, "part"), "status") == 0)
@@ -9183,6 +9216,9 @@ static int32_t process_request(FILE * f, IN_ADDR_T in)
 			"/ghttp.html",
 			"/logpoll.html",
 			"/jquery.js",
+#ifdef WEBIF_WIKI
+			"/wiki.json",
+#endif
 		};
 
 		int32_t pagescnt = sizeof(pages) / sizeof(char *); // Calculate the amount of items in array
@@ -9608,6 +9644,11 @@ static int32_t process_request(FILE * f, IN_ADDR_T in)
 				break;
 			//case 30: jquery.js
 #endif
+#ifdef WEBIF_WIKI
+			case 31:
+				result = send_oscam_wiki(vars, &params);
+				break;
+#endif
 			default:
 				result = send_oscam_status(vars, &params, 0);
 				break;
@@ -9624,6 +9665,10 @@ static int32_t process_request(FILE * f, IN_ADDR_T in)
 					{ send_headers(f, 200, "OK", extraheader, "image/svg+xml", 0, cs_strlen(result), NULL, 0); }
 				else if(pgidx == 24)
 					{ send_headers(f, 200, "OK", extraheader, "text/javascript", 0, cs_strlen(result), NULL, 0); }
+#ifdef WEBIF_WIKI
+				else if(pgidx == 31)
+					{ send_headers(f, 200, "OK", extraheader, "application/json", 0, cs_strlen(result), NULL, 0); }
+#endif
 				else
 					{ send_headers(f, 200, "OK", extraheader, "text/html", 0, cs_strlen(result), NULL, 0); }
 				webif_write(result, f);
