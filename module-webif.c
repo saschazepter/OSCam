@@ -9423,6 +9423,11 @@ static int32_t process_request(FILE * f, IN_ADDR_T in)
 			tpl_addVar(vars, TPLADD, "SCM_URL", SCM_URL);
 			tpl_addVar(vars, TPLADD, "WIKI_URL", WIKI_URL);
 			tpl_addVar(vars, TPLADD, "BOARD_URL", BOARD_URL);
+#ifdef WEBIF_WIKI
+			tpl_addVar(vars, TPLADD, "WIKIINTERNALVAR", "\t\tvar wikiInternal = true;");
+#else
+			tpl_addVar(vars, TPLADD, "WIKIINTERNALVAR", "");
+#endif
 			tpl_addVar(vars, TPLADD, "CS_VERSION", CS_VERSION);
 			tpl_addVar(vars, TPLADD, "CS_GIT_COMMIT", CS_GIT_COMMIT);
 			tpl_addVar(vars, TPLADD, "CS_TARGET", CS_TARGET);
