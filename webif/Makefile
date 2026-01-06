@@ -45,7 +45,7 @@ pages_wiki.c: wiki_gen
 
 wiki_gen: Makefile wiki_gen.c
 	$(SAY) "HOSTCC	webif/$@"
-	$(Q)$(HOSTCC) $(HOSTCFLAGS) wiki_gen.c -o $@
+	$(Q)$(HOSTCC) $(HOSTCFLAGS) ../minilzo/minilzo.c wiki_gen.c -o $@
 
 clean:
 	@-for FILE in pages_gen wiki_gen pages.dep pages.bin pages.bin.compressed pages.h pages.c pages_wiki.h pages_wiki.c is_defined.txt; do \

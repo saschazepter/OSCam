@@ -9830,6 +9830,9 @@ static void *http_server(void *UNUSED(d))
 	/* Prepare base64 decoding array */
 	b64prepare();
 	webif_tpls_prepare();
+#ifdef WEBIF_WIKI
+	webif_wiki_prepare();
+#endif
 
 	tpl_checkDiskRevisions();
 
