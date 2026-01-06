@@ -29,19 +29,10 @@
 #define MAX_TEXT_LEN 4096
 #define MAX_LINE_LEN 1024
 #define MAX_FLAG_LEN 64
-#define MAX_CONFIG_MAPPINGS 128
 
-/*
- * Dynamic mapping from config file to compile flag
- * Built at runtime from pages_index.txt
- */
-struct config_mapping {
-	char config[MAX_CONFIG_LEN];
-	char flag[MAX_FLAG_LEN];
-};
-
-static struct config_mapping config_flags[MAX_CONFIG_MAPPINGS];
-static int config_flags_count = 0;
+/* is_defined.txt content - loaded at runtime */
+static char *is_defined_content = NULL;
+static size_t is_defined_len = 0;
 
 /* Safe string copy - always null-terminates */
 static void safe_strncpy(char *dst, const char *src, size_t size)
@@ -57,7 +48,7 @@ static void safe_strncpy(char *dst, const char *src, size_t size)
 }
 
 static char *wiki_dir = "../wiki/pages/configuration";
-static char *pages_index_file = "pages_index.txt";
+static char *is_defined_file = "is_defined.txt";
 static char *output_wiki_c = "pages_wiki.c";
 static char *output_wiki_h = "pages_wiki.h";
 
@@ -67,7 +58,6 @@ struct wiki_entry
 	char config[MAX_CONFIG_LEN];    /* config file, e.g. "conf", "server", "user" */
 	char text[MAX_TEXT_LEN];        /* help text */
 	int text_len;
-	char flag[MAX_FLAG_LEN];        /* compile flag or empty if always included */
 #ifdef USE_COMPRESSION
 	uint32_t param_ofs;
 	uint32_t config_ofs;
@@ -83,6 +73,11 @@ struct wiki_data
 
 static struct wiki_data wiki;
 static FILE *output_file;
+
+/* Statistics */
+static unsigned int stats_total = 0;
+static unsigned int stats_included = 0;
+static unsigned int stats_skipped = 0;
 
 __attribute__ ((noreturn)) static void die(const char *s, ...)
 {
@@ -104,196 +99,96 @@ static FILE *xfopen(char *filename, char *mode)
 	return fh;
 }
 
-/*
- * Extract config name from template path
- * e.g. "config/dvbapi.html" -> "dvbapi"
- *      "config/global.html" -> "conf" (special case)
- *      "readerconfig/readerconfig.html" -> "server"
- *      "user_edit/user_edit.html" -> "user"
- */
-static void template_to_config(const char *template_path, char *config, size_t config_size)
+/* Read file into memory */
+static void readfile(const char *filename, char **data, size_t *data_len)
 {
-	config[0] = '\0';
-
-	/* Check for config/ prefix */
-	if(strncmp(template_path, "config/", 7) == 0)
-	{
-		const char *filename = template_path + 7;
-
-		/* Special mappings */
-		if(strncmp(filename, "global", 6) == 0)
-		{
-			safe_strncpy(config, "conf", config_size);
-			return;
-		}
-		if(strncmp(filename, "loadbalancer", 12) == 0)
-		{
-			safe_strncpy(config, "conf", config_size);
-			return;
-		}
-		if(strncmp(filename, "cache", 5) == 0)
-		{
-			safe_strncpy(config, "conf", config_size);
-			return;
-		}
-		if(strncmp(filename, "webif", 5) == 0)
-		{
-			safe_strncpy(config, "conf", config_size);
-			return;
-		}
-
-		/* Extract name before .html */
-		size_t i = 0;
-		while(filename[i] && filename[i] != '.' && i < config_size - 1)
-		{
-			config[i] = filename[i];
-			i++;
-		}
-		config[i] = '\0';
-	}
-	else if(strncmp(template_path, "readerconfig/", 13) == 0)
-	{
-		safe_strncpy(config, "server", config_size);
-	}
-	else if(strncmp(template_path, "user_edit/", 10) == 0 ||
-			strncmp(template_path, "userconfig/", 11) == 0)
-	{
-		safe_strncpy(config, "user", config_size);
-	}
-}
-
-/*
- * Parse pages_index.txt to build config->flag mapping
- * Format: TEMPLATE_NAME  FILENAME  DEPENDENCY1,DEPENDENCYx
- */
-static void parse_pages_index(const char *filepath)
-{
-	FILE *f = fopen(filepath, "r");
+	FILE *f = fopen(filename, "rb");
 	if(!f)
 	{
-		fprintf(stderr, "Warning: Cannot open %s: %s\n", filepath, strerror(errno));
-		fprintf(stderr, "         Config->Flag mapping will be empty, all entries will be included.\n");
+		*data = NULL;
+		*data_len = 0;
 		return;
 	}
 
-	char line[MAX_LINE_LEN];
-	while(fgets(line, sizeof(line), f))
+	fseek(f, 0, SEEK_END);
+	*data_len = ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	*data = malloc(*data_len + 1);
+	if(!*data)
 	{
-		/* Skip comments and empty lines */
-		char *p = line;
-		while(isspace((unsigned char)*p)) p++;
-		if(*p == '#' || *p == '\0' || *p == '\n')
-			{ continue; }
-
-		/* Parse: TEMPLATE_NAME  FILENAME  DEPENDENCY */
-		char template_name[128] = "";
-		char filename[256] = "";
-		char dependency[128] = "";
-
-		int field = 0;
-		char *token_start = p;
-		bool in_token = true;
-
-		while(*p)
-		{
-			if(*p == ' ' || *p == '\t' || *p == '\n')
-			{
-				if(in_token)
-				{
-					*p = '\0';
-					switch(field)
-					{
-						case 0: safe_strncpy(template_name, token_start, sizeof(template_name)); break;
-						case 1: safe_strncpy(filename, token_start, sizeof(filename)); break;
-						case 2: safe_strncpy(dependency, token_start, sizeof(dependency)); break;
-					}
-					field++;
-					in_token = false;
-				}
-			}
-			else if(!in_token)
-			{
-				token_start = p;
-				in_token = true;
-			}
-			p++;
-		}
-
-		/* Handle last token if line doesn't end with whitespace */
-		if(in_token && field < 3)
-		{
-			/* Remove trailing newline */
-			char *nl = strchr(token_start, '\n');
-			if(nl) *nl = '\0';
-			switch(field)
-			{
-				case 0: safe_strncpy(template_name, token_start, sizeof(template_name)); break;
-				case 1: safe_strncpy(filename, token_start, sizeof(filename)); break;
-				case 2: safe_strncpy(dependency, token_start, sizeof(dependency)); break;
-			}
-		}
-
-		/* Skip entries without dependency (always included) */
-		if(dependency[0] == '\0')
-			{ continue; }
-
-		/* Convert template path to config name */
-		char config[MAX_CONFIG_LEN];
-		template_to_config(filename, config, sizeof(config));
-
-		if(config[0] == '\0')
-			{ continue; }
-
-		/* Check if we already have this config */
-		bool found = false;
-		for(int i = 0; i < config_flags_count; i++)
-		{
-			if(strcmp(config_flags[i].config, config) == 0)
-			{
-				found = true;
-				/* If existing entry has no flag but new one does, update it */
-				if(config_flags[i].flag[0] == '\0' && dependency[0] != '\0')
-				{
-					/* Use first flag if multiple (comma-separated) */
-					char *comma = strchr(dependency, ',');
-					if(comma) *comma = '\0';
-					safe_strncpy(config_flags[i].flag, dependency, MAX_FLAG_LEN);
-				}
-				break;
-			}
-		}
-
-		if(!found && config_flags_count < MAX_CONFIG_MAPPINGS)
-		{
-			safe_strncpy(config_flags[config_flags_count].config, config, MAX_CONFIG_LEN);
-			/* Use first flag if multiple (comma-separated) */
-			char dep_copy[128];
-			safe_strncpy(dep_copy, dependency, sizeof(dep_copy));
-			char *comma = strchr(dep_copy, ',');
-			if(comma) *comma = '\0';
-			safe_strncpy(config_flags[config_flags_count].flag, dep_copy, MAX_FLAG_LEN);
-			config_flags_count++;
-		}
+		fclose(f);
+		*data_len = 0;
+		return;
 	}
 
-	fclose(f);
+	if(fread(*data, 1, *data_len, f) != *data_len)
+	{
+		free(*data);
+		*data = NULL;
+		*data_len = 0;
+		fclose(f);
+		return;
+	}
 
-	printf("GEN\tLoaded %d config->flag mappings from %s\n", config_flags_count, filepath);
+	(*data)[*data_len] = '\0';
+	fclose(f);
 }
 
-/* Get compile flag for config name */
-static const char *get_flag_for_config(const char *config)
+/* Check if a flag is defined in is_defined.txt */
+static bool is_flag_defined(const char *flag)
 {
-	for(int i = 0; i < config_flags_count; i++)
+	if(!is_defined_content || !flag || !flag[0])
+		{ return false; }
+
+	/* Search for flag as whole word (line by line) */
+	const char *p = is_defined_content;
+	size_t flag_len = strlen(flag);
+
+	while(*p)
 	{
-		if(strcmp(config_flags[i].config, config) == 0)
-		{
-			if(config_flags[i].flag[0] != '\0')
-				{ return config_flags[i].flag; }
-			return NULL;
-		}
+		/* Skip leading whitespace */
+		while(*p && isspace((unsigned char)*p))
+			{ p++; }
+
+		if(!*p)
+			{ break; }
+
+		/* Find end of line */
+		const char *line_start = p;
+		while(*p && *p != '\n' && *p != '\r')
+			{ p++; }
+
+		size_t line_len = p - line_start;
+
+		/* Compare (trimmed) */
+		while(line_len > 0 && isspace((unsigned char)line_start[line_len - 1]))
+			{ line_len--; }
+
+		if(line_len == flag_len && strncmp(line_start, flag, flag_len) == 0)
+			{ return true; }
+
+		/* Skip newline */
+		while(*p && (*p == '\n' || *p == '\r'))
+			{ p++; }
 	}
-	return NULL;
+
+	return false;
+}
+
+/* Check if entry should be included based on flag and is_defined.txt */
+static bool should_include_entry(const char *flag)
+{
+	/* No flag = always include */
+	if(!flag || !flag[0])
+		{ return true; }
+
+	/* No is_defined.txt = include all (no filtering) */
+	if(!is_defined_content)
+		{ return true; }
+
+	/* Check if flag is defined */
+	return is_flag_defined(flag);
 }
 
 /* Extract config name from filename, e.g. "oscam.conf.md" -> "conf" */
@@ -369,9 +264,14 @@ static void escape_for_c(const char *src, char *dst, size_t dst_size)
 	dst[j] = '\0';
 }
 
-/* Check if line is a parameter heading (### param_name) */
+/*
+ * Check if line is a parameter heading (### param_name)
+ * Returns true if it's a parameter heading, extracts param_name
+ */
 static bool is_param_heading(const char *line, char *param_name, size_t param_size)
 {
+	param_name[0] = '\0';
+
 	/* Skip leading whitespace */
 	while(isspace((unsigned char)*line))
 		{ line++; }
@@ -394,7 +294,37 @@ static bool is_param_heading(const char *line, char *param_name, size_t param_si
 	}
 	param_name[i] = '\0';
 
-	return i > 0;
+	if(i == 0)
+		{ return false; }
+
+	return true;
+}
+
+/*
+ * Extract flag from text if it contains "**(requires `FLAG` compilation flag)**"
+ * Returns true if flag was found, extracts the flag name
+ */
+static bool extract_flag_from_text(const char *text, char *flag, size_t flag_size)
+{
+	flag[0] = '\0';
+
+	/* Search for "(requires `" pattern */
+	const char *pattern = "(requires `";
+	const char *p = strstr(text, pattern);
+	if(!p)
+		{ return false; }
+
+	p += strlen(pattern);
+
+	/* Extract flag name until closing backtick */
+	size_t i = 0;
+	while(*p && *p != '`' && i < flag_size - 1)
+	{
+		flag[i++] = *p++;
+	}
+	flag[i] = '\0';
+
+	return (i > 0 && *p == '`');
 }
 
 /* Check if line is a section separator (---) */
@@ -437,6 +367,49 @@ static bool is_section_heading(const char *line)
 	return false;
 }
 
+/* Add wiki entry if it should be included */
+static void add_wiki_entry(const char *param, const char *config, const char *text)
+{
+	char flag[MAX_FLAG_LEN];
+
+	stats_total++;
+
+	/* Extract flag from text content */
+	extract_flag_from_text(text, flag, sizeof(flag));
+
+	if(!should_include_entry(flag))
+	{
+		stats_skipped++;
+		return;
+	}
+
+	if(wiki.num >= MAX_WIKI_ENTRIES)
+	{
+		fprintf(stderr, "Warning: Too many wiki entries, skipping %s.%s\n", config, param);
+		return;
+	}
+
+	struct wiki_entry *e = &wiki.entries[wiki.num];
+	safe_strncpy(e->param, param, MAX_PARAM_LEN);
+	safe_strncpy(e->config, config, MAX_CONFIG_LEN);
+
+	char *text_copy = strdup(text);
+	if(text_copy)
+	{
+		char *trimmed = trim(text_copy);
+		escape_for_c(trimmed, e->text, MAX_TEXT_LEN);
+		free(text_copy);
+	}
+	else
+	{
+		e->text[0] = '\0';
+	}
+
+	e->text_len = strlen(e->text);
+	wiki.num++;
+	stats_included++;
+}
+
 /* Parse a single markdown file */
 static void parse_wiki_file(const char *filepath)
 {
@@ -449,7 +422,6 @@ static void parse_wiki_file(const char *filepath)
 
 	char config[MAX_CONFIG_LEN];
 	extract_config_name(filepath, config, sizeof(config));
-	const char *flag = get_flag_for_config(config);
 
 	char line[MAX_LINE_LEN];
 	char current_param[MAX_PARAM_LEN] = "";
@@ -466,21 +438,8 @@ static void parse_wiki_file(const char *filepath)
 			/* Save previous parameter if exists */
 			if(in_param && current_param[0] && text_pos > 0)
 			{
-				if(wiki.num < MAX_WIKI_ENTRIES)
-				{
-					struct wiki_entry *e = &wiki.entries[wiki.num];
-					safe_strncpy(e->param, current_param, MAX_PARAM_LEN);
-					safe_strncpy(e->config, config, MAX_CONFIG_LEN);
-					current_text[text_pos] = '\0';
-					char *trimmed = trim(current_text);
-					escape_for_c(trimmed, e->text, MAX_TEXT_LEN);
-					e->text_len = strlen(e->text);
-					if(flag)
-						{ safe_strncpy(e->flag, flag, MAX_FLAG_LEN); }
-					else
-						{ e->flag[0] = '\0'; }
-					wiki.num++;
-				}
+				current_text[text_pos] = '\0';
+				add_wiki_entry(current_param, config, current_text);
 			}
 
 			/* Start new parameter */
@@ -497,21 +456,8 @@ static void parse_wiki_file(const char *filepath)
 				/* Save current parameter */
 				if(current_param[0] && text_pos > 0)
 				{
-					if(wiki.num < MAX_WIKI_ENTRIES)
-					{
-						struct wiki_entry *e = &wiki.entries[wiki.num];
-						safe_strncpy(e->param, current_param, MAX_PARAM_LEN);
-						safe_strncpy(e->config, config, MAX_CONFIG_LEN);
-						current_text[text_pos] = '\0';
-						char *trimmed = trim(current_text);
-						escape_for_c(trimmed, e->text, MAX_TEXT_LEN);
-						e->text_len = strlen(e->text);
-						if(flag)
-							{ safe_strncpy(e->flag, flag, MAX_FLAG_LEN); }
-						else
-							{ e->flag[0] = '\0'; }
-						wiki.num++;
-					}
+					current_text[text_pos] = '\0';
+					add_wiki_entry(current_param, config, current_text);
 				}
 				in_param = false;
 				current_param[0] = '\0';
@@ -533,21 +479,8 @@ static void parse_wiki_file(const char *filepath)
 	/* Save last parameter if file ends without separator */
 	if(in_param && current_param[0] && text_pos > 0)
 	{
-		if(wiki.num < MAX_WIKI_ENTRIES)
-		{
-			struct wiki_entry *e = &wiki.entries[wiki.num];
-			safe_strncpy(e->param, current_param, MAX_PARAM_LEN);
-			safe_strncpy(e->config, config, MAX_CONFIG_LEN);
-			current_text[text_pos] = '\0';
-			char *trimmed = trim(current_text);
-			escape_for_c(trimmed, e->text, MAX_TEXT_LEN);
-			e->text_len = strlen(e->text);
-			if(flag)
-				{ safe_strncpy(e->flag, flag, MAX_FLAG_LEN); }
-			else
-				{ e->flag[0] = '\0'; }
-			wiki.num++;
-		}
+		current_text[text_pos] = '\0';
+		add_wiki_entry(current_param, config, current_text);
 	}
 
 	fclose(f);
@@ -563,6 +496,7 @@ static void scan_wiki_directory(const char *dirpath)
 		return;
 	}
 
+	unsigned int file_count = 0;
 	struct dirent *entry;
 	while((entry = readdir(dir)) != NULL)
 	{
@@ -579,11 +513,13 @@ static void scan_wiki_directory(const char *dirpath)
 		char filepath[512];
 		snprintf(filepath, sizeof(filepath), "%s/%s", dirpath, entry->d_name);
 
-		printf("WIKI\tParsing %s\n", entry->d_name);
 		parse_wiki_file(filepath);
+		file_count++;
 	}
 
 	closedir(dir);
+
+	printf("WIKI\tParsed %u markdown files in %s\n", file_count, dirpath);
 }
 
 /* Generate pages_wiki.h */
@@ -655,69 +591,10 @@ static void dump_cbinary(char *var_name, uint8_t *buf, size_t buf_len, size_t ob
 }
 #endif
 
-/* Print wiki entry with optional #ifdef guards */
-static void print_wiki_entry(int idx)
-{
-	static char current_flag[MAX_FLAG_LEN] = "";
-	struct wiki_entry *e = &wiki.entries[idx];
-	const char *next_flag = (idx + 1 < (int)wiki.num) ? wiki.entries[idx + 1].flag : "";
-
-	/* Open #ifdef if flag changes */
-	if(e->flag[0] && strcmp(e->flag, current_flag) != 0)
-	{
-		if(current_flag[0])
-			{ fprintf(output_file, "#endif\n"); }
-		fprintf(output_file, "#ifdef %s\n", e->flag);
-	}
-	else if(!e->flag[0] && current_flag[0])
-	{
-		fprintf(output_file, "#endif\n");
-	}
-	safe_strncpy(current_flag, e->flag, MAX_FLAG_LEN);
-
-#ifdef USE_COMPRESSION
-	fprintf(output_file, "\t{ .param_ofs=%5u, .config_ofs=%5u, .text_ofs=%5u }, /* %s.%s */\n",
-			e->param_ofs, e->config_ofs, e->text_ofs, e->config, e->param);
-#else
-	fprintf(output_file, "\t{ .param = \"%s\", .config = \"%s\", .text = \"%s\" },\n",
-			e->param, e->config, e->text);
-#endif
-
-	/* Close #ifdef if next entry has different flag */
-	if(idx + 1 >= (int)wiki.num && current_flag[0])
-	{
-		fprintf(output_file, "#endif\n");
-		current_flag[0] = '\0';
-	}
-	else if(strcmp(next_flag, current_flag) != 0 && current_flag[0])
-	{
-		fprintf(output_file, "#endif\n");
-		current_flag[0] = '\0';
-	}
-}
-
-/* Sort entries by flag for better #ifdef grouping */
-static int compare_entries(const void *a, const void *b)
-{
-	const struct wiki_entry *ea = (const struct wiki_entry *)a;
-	const struct wiki_entry *eb = (const struct wiki_entry *)b;
-
-	/* Empty flags (always included) come first */
-	if(ea->flag[0] == '\0' && eb->flag[0] != '\0') return -1;
-	if(ea->flag[0] != '\0' && eb->flag[0] == '\0') return 1;
-	if(ea->flag[0] == '\0' && eb->flag[0] == '\0') return 0;
-
-	/* Sort by flag name */
-	return strcmp(ea->flag, eb->flag);
-}
-
 /* Generate pages_wiki.c */
 static void generate_source(void)
 {
 	unsigned int i;
-
-	/* Sort entries by flag for cleaner #ifdef grouping */
-	qsort(wiki.entries, wiki.num, sizeof(struct wiki_entry), compare_entries);
 
 	output_file = xfopen(output_wiki_c, "w");
 
@@ -807,11 +684,18 @@ static void generate_source(void)
 	free(data);
 #endif
 
-	/* Generate wiki entries array */
+	/* Generate wiki entries array - all entries are unconditional (filtering done at gen time) */
 	fprintf(output_file, "static const struct wiki_entry wiki_entries[] = {\n");
 	for(i = 0; i < wiki.num; i++)
 	{
-		print_wiki_entry(i);
+		struct wiki_entry *e = &wiki.entries[i];
+#ifdef USE_COMPRESSION
+		fprintf(output_file, "\t{ .param_ofs=%5u, .config_ofs=%5u, .text_ofs=%5u }, /* %s.%s */\n",
+				e->param_ofs, e->config_ofs, e->text_ofs, e->config, e->param);
+#else
+		fprintf(output_file, "\t{ .param = \"%s\", .config = \"%s\", .text = \"%s\" },\n",
+				e->param, e->config, e->text);
+#endif
 	}
 	fprintf(output_file, "};\n");
 	fprintf(output_file, "\n");
@@ -932,11 +816,9 @@ int main(int argc, char *argv[])
 	if(argc > 1)
 		{ wiki_dir = argv[1]; }
 
-	/* Parse pages_index.txt to build config->flag mapping */
-	printf("GEN\tReading %s for config->flag mapping\n", pages_index_file);
-	parse_pages_index(pages_index_file);
+	/* Load is_defined.txt for filtering */
+	readfile(is_defined_file, &is_defined_content, &is_defined_len);
 
-	printf("WIKI\tScanning %s\n", wiki_dir);
 	scan_wiki_directory(wiki_dir);
 
 	if(wiki.num == 0)
@@ -945,18 +827,8 @@ int main(int argc, char *argv[])
 	}
 	else
 	{
-		/* Count unconditional vs conditional entries */
-		unsigned int unconditional = 0;
-		unsigned int conditional = 0;
-		for(unsigned int i = 0; i < wiki.num; i++)
-		{
-			if(wiki.entries[i].flag[0] == '\0')
-				{ unconditional++; }
-			else
-				{ conditional++; }
-		}
-		printf("GEN\tFound %u parameter entries (%u unconditional, %u conditional)\n",
-				wiki.num, unconditional, conditional);
+		printf("WIKI\tProcessed %u entries: %u included, %u skipped (disabled in config)\n",
+				stats_total, stats_included, stats_skipped);
 	}
 
 	printf("GEN\t%s\n", output_wiki_h);
@@ -964,6 +836,9 @@ int main(int argc, char *argv[])
 
 	printf("GEN\t%s\n", output_wiki_c);
 	generate_source();
+
+	if(is_defined_content)
+		{ free(is_defined_content); }
 
 	return 0;
 }
