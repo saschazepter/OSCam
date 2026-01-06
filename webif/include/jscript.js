@@ -2530,6 +2530,8 @@ var Base64={_keyStr:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456
 
 /*
  * OSCam WebIf Wiki Help System
+ * If wikiInternal is true (set by server when WEBIF_WIKI is compiled in),
+ * show local wiki popup. Otherwise, open external wiki directly (old behavior).
  */
 var wikiPopupHtml = '<div id="wikiPopup" class="wiki-popup">' +
 	'<div class="wiki-popup-header">' +
@@ -2551,6 +2553,13 @@ var wikiUserResized = !!(wikiSavedWidth || wikiSavedHeight);
 $(function() {
 	if (typeof oscamconf === 'undefined') return;
 
+	/* Check if internal wiki is enabled (WEBIF_WIKI compiled in) */
+	if (typeof wikiInternal === 'undefined' || wikiInternal !== true) {
+		/* No internal wiki - external wiki links are handled in document.ready above */
+		return;
+	}
+
+	/* Internal wiki enabled - setup popup and override click handler */
 	$('body').append(wikiPopupHtml);
 
 	$('.wiki-popup-close').click(function() {

@@ -33,7 +33,7 @@ pages_gen: Makefile pages_gen.c
 	$(Q)$(HOSTCC) $(HOSTCFLAGS) ../minilzo/minilzo.c pages_gen.c -o $@
 
 # Wiki help generation (only if WEBIF_WIKI is enabled and wiki submodule exists)
-pages_wiki.c: wiki_gen
+pages_wiki.c: wiki_gen ../config.h
 	$(SAY) "GEN	webif/$@"
 	$(Q)if [ -d "../wiki/pages/configuration" ]; then \
 		./wiki_gen ../wiki/pages/configuration; \
