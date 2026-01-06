@@ -21,6 +21,9 @@
 #include "module-stat.h"
 #include "module-webif.h"
 #include "module-webif-tpl.h"
+#ifdef WEBIF_WIKI
+#include "webif/pages_wiki.h"
+#endif
 #include "module-cw-cycle-check.h"
 #include "module-streamrelay.h"
 #include "oscam-chk.h"
@@ -1998,6 +2001,9 @@ int32_t main(int32_t argc, char *argv[])
 #endif
 	cacheex_free_hitcache();
 	webif_tpls_free();
+#if defined(WEBIF) && defined(WEBIF_WIKI)
+	webif_wiki_free();
+#endif
 	init_free_userdb(cfg.account);
 	cfg.account = NULL;
 	init_free_sidtab();
