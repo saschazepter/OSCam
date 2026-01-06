@@ -334,6 +334,7 @@ update_deps() {
 	disabled WEBIF && disable_opt WEBIF_LIVELOG >/dev/null
 	disabled WEBIF && disable_opt WEBIF_JQUERY >/dev/null
 	disabled WEBIF && disable_opt WEBIF_WIKI >/dev/null
+	have_flag USE_COMPRESS && disable_opt WITH_COMPRESS_WEBIF >/dev/null
 	enabled MODULE_CCCSHARE && enable_opt MODULE_CCCAM >/dev/null
 	enabled_any CARDREADER_DB2COM CARDREADER_MP35 CARDREADER_SC8IN1 CARDREADER_STINGER && enable_opt CARDREADER_PHOENIX >/dev/null
 	enabled CS_CACHEEX_AIO && enable_opt CS_CACHEEX >/dev/null
