@@ -60,6 +60,7 @@ struct wiki_entry
 	char section[MAX_SECTION_LEN];  /* section name, e.g. "dvbapi", "anticasc" */
 	char text[MAX_TEXT_LEN];        /* help text */
 	int text_len;
+	int8_t status;                  /* 0=ok, 1=review, 2=missing */
 #ifdef USE_COMPRESSION
 	uint32_t param_ofs;
 	uint32_t config_ofs;
@@ -330,6 +331,19 @@ static bool extract_flag_from_text(const char *text, char *flag, size_t flag_siz
 	return (i > 0 && *p == '`');
 }
 
+/*
+ * Determine documentation status from text content
+ * Returns: 0=ok, 1=review, 2=missing
+ */
+static int8_t get_doc_status(const char *text)
+{
+	if(strstr(text, "NEEDS REVIEW"))
+		{ return 1; }
+	if(strstr(text, "MISSING DOCUMENTATION") || strstr(text, "Missing documentation"))
+		{ return 2; }
+	return 0;
+}
+
 /* Check if line is a section separator (---) */
 static bool is_separator(const char *line)
 {
@@ -419,6 +433,7 @@ static void add_wiki_entry(const char *param, const char *config, const char *se
 	safe_strncpy(e->param, param, MAX_PARAM_LEN);
 	safe_strncpy(e->config, config, MAX_CONFIG_LEN);
 	safe_strncpy(e->section, section ? section : "", MAX_SECTION_LEN);
+	e->status = get_doc_status(text);
 
 	char *text_copy = strdup(text);
 	if(text_copy)
@@ -590,11 +605,13 @@ static void generate_header(void)
 	fprintf(output_file, "\tuint32_t config_ofs;\n");
 	fprintf(output_file, "\tuint32_t section_ofs;\n");
 	fprintf(output_file, "\tuint32_t text_ofs;\n");
+	fprintf(output_file, "\tint8_t status;\n");
 	fprintf(output_file, "};\n");
 	fprintf(output_file, "\n");
 	fprintf(output_file, "int32_t wiki_count(void);\n");
 	fprintf(output_file, "const struct wiki_entry *wiki_get_entries(void);\n");
 	fprintf(output_file, "const char *wiki_get_help(const char *config, const char *section, const char *param);\n");
+	fprintf(output_file, "int8_t wiki_get_status(const char *config, const char *section, const char *param);\n");
 	fprintf(output_file, "void wiki_get_data(const char **data, size_t *data_len, size_t *data_olen);\n");
 	fprintf(output_file, "void webif_wiki_prepare(void);\n");
 	fprintf(output_file, "void webif_wiki_free(void);\n");
@@ -604,11 +621,13 @@ static void generate_header(void)
 	fprintf(output_file, "\tconst char *config;\n");
 	fprintf(output_file, "\tconst char *section;\n");
 	fprintf(output_file, "\tconst char *text;\n");
+	fprintf(output_file, "\tint8_t status;\n");
 	fprintf(output_file, "};\n");
 	fprintf(output_file, "\n");
 	fprintf(output_file, "int32_t wiki_count(void);\n");
 	fprintf(output_file, "const struct wiki_entry *wiki_get_entries(void);\n");
 	fprintf(output_file, "const char *wiki_get_help(const char *config, const char *section, const char *param);\n");
+	fprintf(output_file, "int8_t wiki_get_status(const char *config, const char *section, const char *param);\n");
 	fprintf(output_file, "void webif_wiki_prepare(void);\n");
 	fprintf(output_file, "void webif_wiki_free(void);\n");
 #endif
@@ -743,11 +762,11 @@ static void generate_source(void)
 	{
 		struct wiki_entry *e = &wiki.entries[i];
 #ifdef USE_COMPRESSION
-		fprintf(output_file, "\t{ .param_ofs=%5u, .config_ofs=%5u, .section_ofs=%5u, .text_ofs=%5u }, /* %s.%s.%s */\n",
-				e->param_ofs, e->config_ofs, e->section_ofs, e->text_ofs, e->config, e->section, e->param);
+		fprintf(output_file, "\t{ .param_ofs=%5u, .config_ofs=%5u, .section_ofs=%5u, .text_ofs=%5u, .status=%d }, /* %s.%s.%s */\n",
+				e->param_ofs, e->config_ofs, e->section_ofs, e->text_ofs, e->status, e->config, e->section, e->param);
 #else
-		fprintf(output_file, "\t{ .param = \"%s\", .config = \"%s\", .section = \"%s\", .text = \"%s\" },\n",
-				e->param, e->config, e->section, e->text);
+		fprintf(output_file, "\t{ .param = \"%s\", .config = \"%s\", .section = \"%s\", .text = \"%s\", .status = %d },\n",
+				e->param, e->config, e->section, e->text, e->status);
 #endif
 	}
 	fprintf(output_file, "};\n");
@@ -835,6 +854,29 @@ static void generate_source(void)
 	fprintf(output_file, "\t}\n");
 	fprintf(output_file, "\treturn fallback;\n");
 	fprintf(output_file, "}\n");
+	fprintf(output_file, "\n");
+
+	/* Generate wiki_get_status function */
+	fprintf(output_file, "int8_t wiki_get_status(const char *config, const char *section, const char *param)\n");
+	fprintf(output_file, "{\n");
+	fprintf(output_file, "\tif(!wiki_data_decompressed) return -1;\n");
+	fprintf(output_file, "\tint32_t i, count = wiki_count();\n");
+	fprintf(output_file, "\tint8_t fallback = -1;\n");
+	fprintf(output_file, "\tfor(i = 0; i < count; i++)\n");
+	fprintf(output_file, "\t{\n");
+	fprintf(output_file, "\t\tconst char *e_config = wiki_data_decompressed + wiki_entries[i].config_ofs;\n");
+	fprintf(output_file, "\t\tconst char *e_section = wiki_data_decompressed + wiki_entries[i].section_ofs;\n");
+	fprintf(output_file, "\t\tconst char *e_param = wiki_data_decompressed + wiki_entries[i].param_ofs;\n");
+	fprintf(output_file, "\t\tif(strcmp(e_config, config) == 0 && strcmp(e_param, param) == 0)\n");
+	fprintf(output_file, "\t\t{\n");
+	fprintf(output_file, "\t\t\tif(section && section[0] && strcmp(e_section, section) == 0)\n");
+	fprintf(output_file, "\t\t\t\treturn wiki_entries[i].status;\n");
+	fprintf(output_file, "\t\t\tif(fallback < 0)\n");
+	fprintf(output_file, "\t\t\t\tfallback = wiki_entries[i].status;\n");
+	fprintf(output_file, "\t\t}\n");
+	fprintf(output_file, "\t}\n");
+	fprintf(output_file, "\treturn fallback;\n");
+	fprintf(output_file, "}\n");
 #else
 	fprintf(output_file, "void webif_wiki_prepare(void)\n");
 	fprintf(output_file, "{\n");
@@ -862,6 +904,27 @@ static void generate_source(void)
 	fprintf(output_file, "\t\t\t\treturn wiki_entries[i].text;\n");
 	fprintf(output_file, "\t\t\tif(!fallback)\n");
 	fprintf(output_file, "\t\t\t\tfallback = wiki_entries[i].text;\n");
+	fprintf(output_file, "\t\t}\n");
+	fprintf(output_file, "\t}\n");
+	fprintf(output_file, "\treturn fallback;\n");
+	fprintf(output_file, "}\n");
+	fprintf(output_file, "\n");
+
+	/* Generate wiki_get_status function */
+	fprintf(output_file, "int8_t wiki_get_status(const char *config, const char *section, const char *param)\n");
+	fprintf(output_file, "{\n");
+	fprintf(output_file, "\tint32_t i;\n");
+	fprintf(output_file, "\tint32_t count = wiki_count();\n");
+	fprintf(output_file, "\tint8_t fallback = -1;\n");
+	fprintf(output_file, "\tfor(i = 0; i < count; i++)\n");
+	fprintf(output_file, "\t{\n");
+	fprintf(output_file, "\t\tif(strcmp(wiki_entries[i].config, config) == 0 &&\n");
+	fprintf(output_file, "\t\t   strcmp(wiki_entries[i].param, param) == 0)\n");
+	fprintf(output_file, "\t\t{\n");
+	fprintf(output_file, "\t\t\tif(section && section[0] && strcmp(wiki_entries[i].section, section) == 0)\n");
+	fprintf(output_file, "\t\t\t\treturn wiki_entries[i].status;\n");
+	fprintf(output_file, "\t\t\tif(fallback < 0)\n");
+	fprintf(output_file, "\t\t\t\tfallback = wiki_entries[i].status;\n");
 	fprintf(output_file, "\t\t}\n");
 	fprintf(output_file, "\t}\n");
 	fprintf(output_file, "\treturn fallback;\n");

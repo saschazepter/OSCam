@@ -8415,6 +8415,80 @@ static char *send_oscam_wiki(struct templatevars *vars, struct uriparams *params
 		return tpl_getTpl(vars, "WIKINOTFOUND");
 	}
 }
+
+static char *send_oscam_wiki_status(struct templatevars *vars, struct uriparams *params)
+{
+	const char *config = getParam(params, "config");
+	const char *section = getParam(params, "section");
+
+	if(!config || !config[0])
+	{
+		return tpl_getTpl(vars, "WIKIERROR");
+	}
+
+	/* Build JSON object with status for all params in this config */
+	char json_buf[8192];
+	int pos = 0;
+	int32_t i, count = wiki_count();
+	bool first = true;
+
+	pos += snprintf(json_buf + pos, sizeof(json_buf) - pos, "{");
+
+#ifdef COMPRESSED_WIKI
+	/* For compressed wiki, we iterate through entries but access via decompressed data */
+	const struct wiki_entry *entries = wiki_get_entries();
+	extern char *wiki_data_decompressed; /* Access decompressed data */
+
+	if(wiki_data_decompressed)
+	{
+		for(i = 0; i < count && pos < (int)sizeof(json_buf) - 100; i++)
+		{
+			const char *e_config = wiki_data_decompressed + entries[i].config_ofs;
+			const char *e_param = wiki_data_decompressed + entries[i].param_ofs;
+
+			if(strcmp(e_config, config) != 0)
+				{ continue; }
+
+			/* Section filter is optional - include all params from this config */
+			if(!first)
+				{ pos += snprintf(json_buf + pos, sizeof(json_buf) - pos, ","); }
+			first = false;
+
+			const char *status_str = "ok";
+			if(entries[i].status == 1) status_str = "review";
+			else if(entries[i].status == 2) status_str = "missing";
+
+			pos += snprintf(json_buf + pos, sizeof(json_buf) - pos, "\"%s\":\"%s\"",
+				e_param, status_str);
+		}
+	}
+#else
+	const struct wiki_entry *entries = wiki_get_entries();
+	(void)section; /* Section filter removed - include all params from config */
+	for(i = 0; i < count && pos < (int)sizeof(json_buf) - 100; i++)
+	{
+		if(strcmp(entries[i].config, config) != 0)
+			{ continue; }
+
+		/* Section filter is optional - include all params from this config */
+		if(!first)
+			{ pos += snprintf(json_buf + pos, sizeof(json_buf) - pos, ","); }
+		first = false;
+
+		const char *status_str = "ok";
+		if(entries[i].status == 1) status_str = "review";
+		else if(entries[i].status == 2) status_str = "missing";
+
+		pos += snprintf(json_buf + pos, sizeof(json_buf) - pos, "\"%s\":\"%s\"",
+			entries[i].param, status_str);
+	}
+#endif
+
+	pos += snprintf(json_buf + pos, sizeof(json_buf) - pos, "}");
+
+	tpl_addVar(vars, TPLADD, "WIKISTATUS", json_buf);
+	return tpl_getTpl(vars, "WIKISTATUSJSON");
+}
 #endif
 
 static char *send_oscam_api(struct templatevars * vars, FILE * f, struct uriparams * params, int8_t *keepalive, int8_t apicall, char *extraheader)
@@ -9194,6 +9268,7 @@ static int32_t process_request(FILE * f, IN_ADDR_T in)
 			"/jquery.js",
 #ifdef WEBIF_WIKI
 			"/wiki.json",
+			"/wiki_status.json",
 #endif
 		};
 
@@ -9628,6 +9703,9 @@ static int32_t process_request(FILE * f, IN_ADDR_T in)
 #ifdef WEBIF_WIKI
 			case 31:
 				result = send_oscam_wiki(vars, &params);
+				break;
+			case 32:
+				result = send_oscam_wiki_status(vars, &params);
 				break;
 #endif
 			default:
