@@ -2674,20 +2674,22 @@ $(function() {
 		e.preventDefault();
 		e.stopPropagation();
 
-		var param;
-		if ($(this).data('p')) {
-			param = $(this).data('p');
-		} else {
-			param = $(this).parent().next().find('input,select,textarea').attr('name');
-		}
+		/* Get real input name for internal wiki lookup */
+		var inputName = $(this).parent().next().find('input,select,textarea').attr('name');
 
-		if (!param) return;
+		/* Get param for external wiki link (use data-p override if present) */
+		var externalParam = $(this).data('p') || inputName;
+
+		if (!inputName) return;
+
+		/* Extract section from form's hidden part input */
+		var section = $('input[name="part"]').val() || '';
 
 		var $link = $(this);
 		var $popup = $('#wikiPopup');
 
-		$('.wiki-popup-title').text(param).attr('href', 
-			'https://git.streamboard.tv/common/oscam/-/wikis/pages/configuration/oscam.' + oscamconf + '#' + param);
+		$('.wiki-popup-title').text(inputName).attr('href', 
+			'https://git.streamboard.tv/common/oscam/-/wikis/pages/configuration/oscam.' + oscamconf + '#' + externalParam);
 		$('.wiki-popup-content').html('<div class="wiki-loading">Loading...</div>');
 
 		var offset = $link.offset();
@@ -2719,7 +2721,7 @@ $(function() {
 		$.ajax({
 			url: 'wiki.json',
 			type: 'GET',
-			data: { config: oscamconf, param: param },
+			data: { config: oscamconf, section: section, param: inputName },
 			dataType: 'json',
 			success: function(data) {
 				if (data && data.text) {
@@ -2729,7 +2731,7 @@ $(function() {
 					$('.wiki-popup-content').html(
 						'<div class="wiki-nohelp">No help available for this parameter.<br><br>' +
 						'<a href="https://git.streamboard.tv/common/oscam/-/wikis/pages/configuration/oscam.' +
-						oscamconf + '#' + param + '" target="_blank">View Wiki &rarr;</a></div>'
+						oscamconf + '#' + externalParam + '" target="_blank">View Wiki &rarr;</a></div>'
 					);
 				}
 			},
@@ -2737,7 +2739,7 @@ $(function() {
 				$('.wiki-popup-content').html(
 					'<div class="wiki-error">Failed to load help.<br><br>' +
 					'<a href="https://git.streamboard.tv/common/oscam/-/wikis/pages/configuration/oscam.' +
-					oscamconf + '#' + param + '" target="_blank">View Wiki &rarr;</a></div>'
+					oscamconf + '#' + externalParam + '" target="_blank">View Wiki &rarr;</a></div>'
 				);
 			}
 		});
