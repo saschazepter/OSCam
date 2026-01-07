@@ -26,6 +26,7 @@
 #define MAX_WIKI_ENTRIES 1024
 #define MAX_PARAM_LEN 64
 #define MAX_CONFIG_LEN 32
+#define MAX_SECTION_LEN 32
 #define MAX_TEXT_LEN 4096
 #define MAX_LINE_LEN 1024
 #define MAX_FLAG_LEN 64
@@ -56,11 +57,13 @@ struct wiki_entry
 {
 	char param[MAX_PARAM_LEN];      /* parameter name, e.g. "serverip" */
 	char config[MAX_CONFIG_LEN];    /* config file, e.g. "conf", "server", "user" */
+	char section[MAX_SECTION_LEN];  /* section name, e.g. "dvbapi", "anticasc" */
 	char text[MAX_TEXT_LEN];        /* help text */
 	int text_len;
 #ifdef USE_COMPRESSION
 	uint32_t param_ofs;
 	uint32_t config_ofs;
+	uint32_t section_ofs;
 	uint32_t text_ofs;
 #endif
 };
@@ -353,22 +356,45 @@ static bool is_separator(const char *line)
 	return dashes >= 3;
 }
 
-/* Check if line is a section heading (## Section) - not parameter */
-static bool is_section_heading(const char *line)
+/* Check if line is a section heading (## [section] Section) - not parameter
+ * If it is, extract the section name (e.g. "dvbapi" from "## [dvbapi] Section")
+ * Returns true if it's a section heading
+ */
+static bool is_section_heading(const char *line, char *section_name, size_t section_size)
 {
+	if(section_name && section_size > 0)
+		{ section_name[0] = '\0'; }
+
 	/* Skip leading whitespace */
 	while(isspace((unsigned char)*line))
 		{ line++; }
 
 	/* ## but not ### */
-	if(line[0] == '#' && line[1] == '#' && line[2] != '#')
-		{ return true; }
+	if(!(line[0] == '#' && line[1] == '#' && line[2] != '#'))
+		{ return false; }
 
-	return false;
+	/* Skip ## and whitespace */
+	line += 2;
+	while(isspace((unsigned char)*line))
+		{ line++; }
+
+	/* Check for [section] pattern */
+	if(*line == '[' && section_name && section_size > 0)
+	{
+		line++;
+		size_t i = 0;
+		while(*line && *line != ']' && i < section_size - 1)
+		{
+			section_name[i++] = *line++;
+		}
+		section_name[i] = '\0';
+	}
+
+	return true;
 }
 
 /* Add wiki entry if it should be included */
-static void add_wiki_entry(const char *param, const char *config, const char *text)
+static void add_wiki_entry(const char *param, const char *config, const char *section, const char *text)
 {
 	char flag[MAX_FLAG_LEN];
 
@@ -385,13 +411,14 @@ static void add_wiki_entry(const char *param, const char *config, const char *te
 
 	if(wiki.num >= MAX_WIKI_ENTRIES)
 	{
-		fprintf(stderr, "Warning: Too many wiki entries, skipping %s.%s\n", config, param);
+		fprintf(stderr, "Warning: Too many wiki entries, skipping %s.%s.%s\n", config, section, param);
 		return;
 	}
 
 	struct wiki_entry *e = &wiki.entries[wiki.num];
 	safe_strncpy(e->param, param, MAX_PARAM_LEN);
 	safe_strncpy(e->config, config, MAX_CONFIG_LEN);
+	safe_strncpy(e->section, section ? section : "", MAX_SECTION_LEN);
 
 	char *text_copy = strdup(text);
 	if(text_copy)
@@ -425,6 +452,7 @@ static void parse_wiki_file(const char *filepath)
 
 	char line[MAX_LINE_LEN];
 	char current_param[MAX_PARAM_LEN] = "";
+	char current_section[MAX_SECTION_LEN] = "";
 	char current_text[MAX_TEXT_LEN] = "";
 	int text_pos = 0;
 	bool in_param = false;
@@ -432,6 +460,7 @@ static void parse_wiki_file(const char *filepath)
 	while(fgets(line, sizeof(line), f))
 	{
 		char param_name[MAX_PARAM_LEN];
+		char section_name[MAX_SECTION_LEN];
 
 		if(is_param_heading(line, param_name, sizeof(param_name)))
 		{
@@ -439,7 +468,7 @@ static void parse_wiki_file(const char *filepath)
 			if(in_param && current_param[0] && text_pos > 0)
 			{
 				current_text[text_pos] = '\0';
-				add_wiki_entry(current_param, config, current_text);
+				add_wiki_entry(current_param, config, current_section, current_text);
 			}
 
 			/* Start new parameter */
@@ -448,16 +477,34 @@ static void parse_wiki_file(const char *filepath)
 			current_text[0] = '\0';
 			in_param = true;
 		}
+		else if(is_section_heading(line, section_name, sizeof(section_name)))
+		{
+			/* Save current parameter before section change */
+			if(in_param && current_param[0] && text_pos > 0)
+			{
+				current_text[text_pos] = '\0';
+				add_wiki_entry(current_param, config, current_section, current_text);
+			}
+			in_param = false;
+			current_param[0] = '\0';
+			text_pos = 0;
+
+			/* Update current section if extracted */
+			if(section_name[0])
+			{
+				safe_strncpy(current_section, section_name, MAX_SECTION_LEN);
+			}
+		}
 		else if(in_param)
 		{
-			/* Check for end of parameter section */
-			if(is_separator(line) || is_section_heading(line))
+			/* Check for end of parameter section (separator) */
+			if(is_separator(line))
 			{
 				/* Save current parameter */
 				if(current_param[0] && text_pos > 0)
 				{
 					current_text[text_pos] = '\0';
-					add_wiki_entry(current_param, config, current_text);
+					add_wiki_entry(current_param, config, current_section, current_text);
 				}
 				in_param = false;
 				current_param[0] = '\0';
@@ -480,7 +527,7 @@ static void parse_wiki_file(const char *filepath)
 	if(in_param && current_param[0] && text_pos > 0)
 	{
 		current_text[text_pos] = '\0';
-		add_wiki_entry(current_param, config, current_text);
+		add_wiki_entry(current_param, config, current_section, current_text);
 	}
 
 	fclose(f);
@@ -541,12 +588,13 @@ static void generate_header(void)
 	fprintf(output_file, "struct wiki_entry {\n");
 	fprintf(output_file, "\tuint32_t param_ofs;\n");
 	fprintf(output_file, "\tuint32_t config_ofs;\n");
+	fprintf(output_file, "\tuint32_t section_ofs;\n");
 	fprintf(output_file, "\tuint32_t text_ofs;\n");
 	fprintf(output_file, "};\n");
 	fprintf(output_file, "\n");
 	fprintf(output_file, "int32_t wiki_count(void);\n");
 	fprintf(output_file, "const struct wiki_entry *wiki_get_entries(void);\n");
-	fprintf(output_file, "const char *wiki_get_help(const char *config, const char *param);\n");
+	fprintf(output_file, "const char *wiki_get_help(const char *config, const char *section, const char *param);\n");
 	fprintf(output_file, "void wiki_get_data(const char **data, size_t *data_len, size_t *data_olen);\n");
 	fprintf(output_file, "void webif_wiki_prepare(void);\n");
 	fprintf(output_file, "void webif_wiki_free(void);\n");
@@ -554,12 +602,13 @@ static void generate_header(void)
 	fprintf(output_file, "struct wiki_entry {\n");
 	fprintf(output_file, "\tconst char *param;\n");
 	fprintf(output_file, "\tconst char *config;\n");
+	fprintf(output_file, "\tconst char *section;\n");
 	fprintf(output_file, "\tconst char *text;\n");
 	fprintf(output_file, "};\n");
 	fprintf(output_file, "\n");
 	fprintf(output_file, "int32_t wiki_count(void);\n");
 	fprintf(output_file, "const struct wiki_entry *wiki_get_entries(void);\n");
-	fprintf(output_file, "const char *wiki_get_help(const char *config, const char *param);\n");
+	fprintf(output_file, "const char *wiki_get_help(const char *config, const char *section, const char *param);\n");
 	fprintf(output_file, "void webif_wiki_prepare(void);\n");
 	fprintf(output_file, "void webif_wiki_free(void);\n");
 #endif
@@ -629,6 +678,9 @@ static void generate_source(void)
 		e->config_ofs = cur_pos;
 		cur_pos += strlen(e->config) + 1;
 		align_up(cur_pos, sizeof(void *));
+		e->section_ofs = cur_pos;
+		cur_pos += strlen(e->section) + 1;
+		align_up(cur_pos, sizeof(void *));
 		e->text_ofs = cur_pos;
 		cur_pos += strlen(e->text) + 1;
 		align_up(cur_pos, sizeof(void *));
@@ -646,6 +698,7 @@ static void generate_source(void)
 		struct wiki_entry *e = &wiki.entries[i];
 		memcpy(data + e->param_ofs, e->param, strlen(e->param));
 		memcpy(data + e->config_ofs, e->config, strlen(e->config));
+		memcpy(data + e->section_ofs, e->section, strlen(e->section));
 		memcpy(data + e->text_ofs, e->text, strlen(e->text));
 	}
 
@@ -690,11 +743,11 @@ static void generate_source(void)
 	{
 		struct wiki_entry *e = &wiki.entries[i];
 #ifdef USE_COMPRESSION
-		fprintf(output_file, "\t{ .param_ofs=%5u, .config_ofs=%5u, .text_ofs=%5u }, /* %s.%s */\n",
-				e->param_ofs, e->config_ofs, e->text_ofs, e->config, e->param);
+		fprintf(output_file, "\t{ .param_ofs=%5u, .config_ofs=%5u, .section_ofs=%5u, .text_ofs=%5u }, /* %s.%s.%s */\n",
+				e->param_ofs, e->config_ofs, e->section_ofs, e->text_ofs, e->config, e->section, e->param);
 #else
-		fprintf(output_file, "\t{ .param = \"%s\", .config = \"%s\", .text = \"%s\" },\n",
-				e->param, e->config, e->text);
+		fprintf(output_file, "\t{ .param = \"%s\", .config = \"%s\", .section = \"%s\", .text = \"%s\" },\n",
+				e->param, e->config, e->section, e->text);
 #endif
 	}
 	fprintf(output_file, "};\n");
@@ -762,18 +815,25 @@ static void generate_source(void)
 	fprintf(output_file, "}\n");
 	fprintf(output_file, "\n");
 
-	fprintf(output_file, "const char *wiki_get_help(const char *config, const char *param)\n");
+	fprintf(output_file, "const char *wiki_get_help(const char *config, const char *section, const char *param)\n");
 	fprintf(output_file, "{\n");
 	fprintf(output_file, "\tif(!wiki_data_decompressed) return NULL;\n");
 	fprintf(output_file, "\tint32_t i, count = wiki_count();\n");
+	fprintf(output_file, "\tconst char *fallback = NULL;\n");
 	fprintf(output_file, "\tfor(i = 0; i < count; i++)\n");
 	fprintf(output_file, "\t{\n");
 	fprintf(output_file, "\t\tconst char *e_config = wiki_data_decompressed + wiki_entries[i].config_ofs;\n");
+	fprintf(output_file, "\t\tconst char *e_section = wiki_data_decompressed + wiki_entries[i].section_ofs;\n");
 	fprintf(output_file, "\t\tconst char *e_param = wiki_data_decompressed + wiki_entries[i].param_ofs;\n");
 	fprintf(output_file, "\t\tif(strcmp(e_config, config) == 0 && strcmp(e_param, param) == 0)\n");
-	fprintf(output_file, "\t\t\treturn wiki_data_decompressed + wiki_entries[i].text_ofs;\n");
+	fprintf(output_file, "\t\t{\n");
+	fprintf(output_file, "\t\t\tif(section && section[0] && strcmp(e_section, section) == 0)\n");
+	fprintf(output_file, "\t\t\t\treturn wiki_data_decompressed + wiki_entries[i].text_ofs;\n");
+	fprintf(output_file, "\t\t\tif(!fallback)\n");
+	fprintf(output_file, "\t\t\t\tfallback = wiki_data_decompressed + wiki_entries[i].text_ofs;\n");
+	fprintf(output_file, "\t\t}\n");
 	fprintf(output_file, "\t}\n");
-	fprintf(output_file, "\treturn NULL;\n");
+	fprintf(output_file, "\treturn fallback;\n");
 	fprintf(output_file, "}\n");
 #else
 	fprintf(output_file, "void webif_wiki_prepare(void)\n");
@@ -788,19 +848,23 @@ static void generate_source(void)
 	fprintf(output_file, "}\n");
 	fprintf(output_file, "\n");
 
-	fprintf(output_file, "const char *wiki_get_help(const char *config, const char *param)\n");
+	fprintf(output_file, "const char *wiki_get_help(const char *config, const char *section, const char *param)\n");
 	fprintf(output_file, "{\n");
 	fprintf(output_file, "\tint32_t i;\n");
 	fprintf(output_file, "\tint32_t count = wiki_count();\n");
+	fprintf(output_file, "\tconst char *fallback = NULL;\n");
 	fprintf(output_file, "\tfor(i = 0; i < count; i++)\n");
 	fprintf(output_file, "\t{\n");
 	fprintf(output_file, "\t\tif(strcmp(wiki_entries[i].config, config) == 0 &&\n");
 	fprintf(output_file, "\t\t   strcmp(wiki_entries[i].param, param) == 0)\n");
 	fprintf(output_file, "\t\t{\n");
-	fprintf(output_file, "\t\t\treturn wiki_entries[i].text;\n");
+	fprintf(output_file, "\t\t\tif(section && section[0] && strcmp(wiki_entries[i].section, section) == 0)\n");
+	fprintf(output_file, "\t\t\t\treturn wiki_entries[i].text;\n");
+	fprintf(output_file, "\t\t\tif(!fallback)\n");
+	fprintf(output_file, "\t\t\t\tfallback = wiki_entries[i].text;\n");
 	fprintf(output_file, "\t\t}\n");
 	fprintf(output_file, "\t}\n");
-	fprintf(output_file, "\treturn NULL;\n");
+	fprintf(output_file, "\treturn fallback;\n");
 	fprintf(output_file, "}\n");
 #endif
 

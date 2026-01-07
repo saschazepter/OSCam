@@ -8391,6 +8391,7 @@ static char *send_oscam_cacheex(struct templatevars * vars, struct uriparams * p
 static char *send_oscam_wiki(struct templatevars *vars, struct uriparams *params)
 {
 	const char *config = getParam(params, "config");
+	const char *section = getParam(params, "section");
 	const char *param = getParam(params, "param");
 
 	if(!config || !param || !config[0] || !param[0])
@@ -8398,7 +8399,7 @@ static char *send_oscam_wiki(struct templatevars *vars, struct uriparams *params
 		return tpl_getTpl(vars, "WIKIERROR");
 	}
 
-	const char *text = wiki_get_help(config, param);
+	const char *text = wiki_get_help(config, section, param);
 
 	if(text)
 	{
