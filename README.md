@@ -55,7 +55,7 @@ You should have received a copy of the GNU General Public License along with
 this program. If not, see <https://www.gnu.org/licenses/>.
 
 For the full text of the license, please see the
-[COPYING](https://git.streamboard.tv/common/oscam/-/blob/eaab5437282f2d5558be5c3903705f9e99926798/COPYING)
+[COPYING](https://git.streamboard.tv/common/oscam/-/blob/master/COPYING)
 file in the OSCam repository.
 
 ## Contributing
