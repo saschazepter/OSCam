@@ -1144,7 +1144,7 @@ only screen and (min-device-width : 320px) and (max-device-width : 568px) and (o
 #wikiPopup {
 	display:none;
 	position:absolute;
-	z-index:1000;
+	z-index:10;
 	width:400px;
 	background-color:#FFF;
 	border:2px solid #AAA;
@@ -1259,4 +1259,27 @@ only screen and (min-device-width : 320px) and (max-device-width : 568px) and (o
 .wiki-nohelp a:hover,
 .wiki-error a:hover {
 	color:#FF9E5F
+}
+/* Wiki status icons - keep inline on hover */
+.wiki-status-icon {
+	margin-right:2px;
+	display:none !important
+}
+.wiki-status-icon.visible {
+	display:inline !important
+}
+a:hover .wiki-status-icon {
+	position:static !important;
+	top:auto !important;
+	right:auto !important;
+	padding:0 !important;
+	background-color:transparent !important;
+	border:none !important
+}
+/* Wiki active link highlight */
+a.wiki-active {
+	background-color:#ffffcc !important;
+	outline:2px solid #ffcc00;
+	position:relative;
+	z-index:2
 }
