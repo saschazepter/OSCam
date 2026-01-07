@@ -339,3 +339,4 @@ USERNOICON                    userconfig/userconfig_usernoicon.html
 WIKIJSON                      wiki/wiki.json                                              WEBIF_WIKI
 WIKIERROR                     wiki/wikierror.json                                         WEBIF_WIKI
 WIKINOTFOUND                  wiki/wikinotfound.json                                      WEBIF_WIKI
+WIKISTATUSJSON                wiki/wikistatus.json                                        WEBIF_WIKI

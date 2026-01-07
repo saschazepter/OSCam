@@ -2549,6 +2549,69 @@ var wikiSavedHeight = localStorage.getItem('wikiPopupHeight');
 var wikiDefaultWidth = 400;
 var wikiLastLinkOffset = 0;
 var wikiUserResized = !!(wikiSavedWidth || wikiSavedHeight);
+var wikiCurrentLink = null;
+var wikiConnectorLine = null;
+
+/* Draw connector line between link and popup */
+function updateWikiConnector() {
+	if (!wikiCurrentLink || !$('#wikiPopup').is(':visible')) {
+		if (wikiConnectorLine) {
+			wikiConnectorLine.remove();
+			wikiConnectorLine = null;
+		}
+		return;
+	}
+
+	var $link = wikiCurrentLink;
+	var $popup = $('#wikiPopup');
+
+	/* Calculate positions */
+	var linkOffset = $link.offset();
+	var linkRight = linkOffset.left + $link.outerWidth();
+	var linkCenterY = linkOffset.top + $link.outerHeight() / 2;
+
+	var popupOffset = $popup.offset();
+	var popupLeft = popupOffset.left;
+	var popupCenterY = popupOffset.top + 20; /* Connect to header area */
+
+	/* Create or update SVG line */
+	if (!wikiConnectorLine) {
+		wikiConnectorLine = $('<svg class="wiki-connector"><line/></svg>');
+		$('body').append(wikiConnectorLine);
+	}
+
+	/* Position SVG to cover the area between link and popup */
+	var minX = Math.min(linkRight, popupLeft) - 5;
+	var maxX = Math.max(linkRight, popupLeft) + 5;
+	var minY = Math.min(linkCenterY, popupCenterY) - 5;
+	var maxY = Math.max(linkCenterY, popupCenterY) + 5;
+
+	wikiConnectorLine.css({
+		position: 'absolute',
+		left: minX,
+		top: minY,
+		width: maxX - minX,
+		height: maxY - minY,
+		pointerEvents: 'none',
+		zIndex: 1
+	});
+
+	wikiConnectorLine.find('line').attr({
+		x1: linkRight - minX,
+		y1: linkCenterY - minY,
+		x2: popupLeft - minX,
+		y2: popupCenterY - minY,
+		stroke: '#ffcc00',
+		'stroke-width': 2
+	});
+}
+
+function removeWikiConnector() {
+	if (wikiConnectorLine) {
+		wikiConnectorLine.remove();
+		wikiConnectorLine = null;
+	}
+}
 
 $(function() {
 	if (typeof oscamconf === 'undefined') return;
@@ -2564,6 +2627,11 @@ $(function() {
 
 	$('.wiki-popup-close').click(function() {
 		$('#wikiPopup').fadeOut(200);
+		removeWikiConnector();
+		if (wikiCurrentLink) {
+			wikiCurrentLink.removeClass('wiki-active');
+			wikiCurrentLink = null;
+		}
 	});
 
 	$('.wiki-popup-reset').click(function() {
@@ -2575,23 +2643,82 @@ $(function() {
 		wikiSavedHeight = null;
 		wikiUserResized = false;
 		var $popup = $('#wikiPopup');
-		var defaultLeft = wikiLastLinkOffset + 10;
-		if (defaultLeft + 420 > $(window).width()) {
-			defaultLeft = $(window).width() - 420;
+		/* Recalculate position based on current link */
+		if (wikiCurrentLink) {
+			var offset = wikiCurrentLink.offset();
+			wikiLastLinkOffset = offset.left + wikiCurrentLink.outerWidth();
+			var defaultLeft = wikiLastLinkOffset + 10;
+			if (defaultLeft + 420 > $(window).width()) {
+				defaultLeft = $(window).width() - 420;
+			}
+			$popup.css({ width: wikiDefaultWidth, height: 'auto', left: defaultLeft, top: offset.top - 10 });
+		} else {
+			var defaultLeft = wikiLastLinkOffset + 10;
+			if (defaultLeft + 420 > $(window).width()) {
+				defaultLeft = $(window).width() - 420;
+			}
+			$popup.css({ width: wikiDefaultWidth, height: 'auto', left: defaultLeft });
 		}
-		$popup.css({ width: wikiDefaultWidth, height: 'auto', left: defaultLeft });
+		setTimeout(updateWikiConnector, 50);
 	});
 
 	$(document).click(function(e) {
 		if (!$(e.target).closest('#wikiPopup').length &&
 		    !$(e.target).closest('form table a').length) {
 			$('#wikiPopup').fadeOut(200);
+			removeWikiConnector();
+			if (wikiCurrentLink) {
+				wikiCurrentLink.removeClass('wiki-active');
+				wikiCurrentLink = null;
+			}
 		}
 	});
 
 	$(document).keydown(function(e) {
 		if (e.keyCode === 27) {
 			$('#wikiPopup').fadeOut(200);
+			removeWikiConnector();
+			if (wikiCurrentLink) {
+				wikiCurrentLink.removeClass('wiki-active');
+				wikiCurrentLink = null;
+			}
+		}
+		/* Arrow keys to navigate between parameters when popup is open */
+		if ((e.keyCode === 38 || e.keyCode === 40) && $('#wikiPopup').is(':visible') && wikiCurrentLink) {
+			var $allLinks = $('form table a').filter(function() {
+				return !$(this).attr('href') && $(this).text().trim();
+			});
+			var currentIndex = $allLinks.index(wikiCurrentLink);
+			var newIndex;
+			if (e.keyCode === 38) {
+				/* Arrow up - previous parameter */
+				if (currentIndex > 0) {
+					e.preventDefault();
+					newIndex = currentIndex - 1;
+					var $newLink = $allLinks.eq(newIndex);
+					$newLink.click();
+					/* Scroll into view if needed */
+					var linkTop = $newLink.offset().top;
+					var scrollTop = $(window).scrollTop();
+					if (linkTop < scrollTop + 50) {
+						$('html, body').animate({ scrollTop: linkTop - 100 }, 150);
+					}
+				}
+			} else {
+				/* Arrow down - next parameter */
+				if (currentIndex < $allLinks.length - 1) {
+					e.preventDefault();
+					newIndex = currentIndex + 1;
+					var $newLink = $allLinks.eq(newIndex);
+					$newLink.click();
+					/* Scroll into view if needed */
+					var linkBottom = $newLink.offset().top + $newLink.outerHeight();
+					var windowBottom = $(window).scrollTop() + $(window).height();
+					if (linkBottom > windowBottom - 50) {
+						$('html, body').animate({ scrollTop: $newLink.offset().top - $(window).height() + 150 }, 150);
+					}
+				}
+			}
 		}
 	});
 
@@ -2625,6 +2752,7 @@ $(function() {
 		newLeft = Math.max(0, Math.min(newLeft, $(window).width() - 420));
 		newTop = Math.max(0, newTop);
 		$('#wikiPopup').css({ left: newLeft, top: newTop });
+		updateWikiConnector();
 		e.preventDefault();
 	});
 
@@ -2643,6 +2771,7 @@ $(function() {
 		newLeft = Math.max(0, Math.min(newLeft, $(window).width() - 420));
 		newTop = Math.max(0, newTop);
 		$('#wikiPopup').css({ left: newLeft, top: newTop });
+		updateWikiConnector();
 	});
 
 	$(document).on('mouseup', function() {
@@ -2674,8 +2803,40 @@ $(function() {
 		e.preventDefault();
 		e.stopPropagation();
 
+		/* Remove highlight from previous link */
+		if (wikiCurrentLink) {
+			wikiCurrentLink.removeClass('wiki-active');
+		}
+
+		/* Store current link for keyboard navigation and highlight it */
+		wikiCurrentLink = $(this);
+		wikiCurrentLink.addClass('wiki-active');
+
 		/* Get real input name for internal wiki lookup */
-		var inputName = $(this).parent().next().find('input,select,textarea').attr('name');
+		var $cell = $(this).parent();
+		var inputName = null;
+
+		/* Try 1: Input in next cell (standard layout) */
+		var $input = $cell.next().find('input,select,textarea').first();
+
+		/* Try 2: Input in same cell */
+		if (!$input.length) {
+			$input = $cell.find('input,select,textarea').first();
+		}
+
+		/* Try 3: For TH headers (like services), look in same column of next row */
+		if (!$input.length && $cell.is('th')) {
+			var cellIndex = $cell.index();
+			var $nextRow = $cell.closest('tr').next('tr');
+			if ($nextRow.length) {
+				var $correspondingCell = $nextRow.find('td, th').eq(cellIndex);
+				$input = $correspondingCell.find('input,select,textarea').first();
+			}
+		}
+
+		if ($input.length) {
+			inputName = $input.attr('name');
+		}
 
 		/* Get param for external wiki link (use data-p override if present) */
 		var externalParam = $(this).data('p') || inputName;
@@ -2688,7 +2849,7 @@ $(function() {
 		var $link = $(this);
 		var $popup = $('#wikiPopup');
 
-		$('.wiki-popup-title').text(inputName).attr('href', 
+		$('.wiki-popup-title').text(inputName).attr('href',
 			'https://git.streamboard.tv/common/oscam/-/wikis/pages/configuration/oscam.' + oscamconf + '#' + externalParam);
 		$('.wiki-popup-content').html('<div class="wiki-loading">Loading...</div>');
 
@@ -2711,6 +2872,9 @@ $(function() {
 			'max-width': $(window).width() - 20,
 			'max-height': $(window).height() - 20
 		}).fadeIn(200);
+
+		/* Draw connector line */
+		setTimeout(updateWikiConnector, 50);
 
 		/* Update last size for resize detection */
 		setTimeout(function() {
@@ -2761,3 +2925,104 @@ function formatWikiText(text) {
 
 	return '<div class="wiki-text">' + text + '</div>';
 }
+
+/* Wiki documentation status toggle - shows icons for missing/review/ok documentation */
+$(document).ready(function() {
+	if (typeof oscamconf === 'undefined' || typeof wikiInternal === 'undefined' || wikiInternal !== true) {
+		return;
+	}
+
+	var wikiStatusLoaded = false;
+	var wikiStatusVisible = false;
+
+	/* Support different table classes: config, configreader, configuser, configservices, writeemm */
+	var $allTables = $('table.config, table.configreader, table.configuser, table.configservices, table.writeemm');
+	if (!$allTables.length) return;
+
+	/* Only make the FIRST table header clickable */
+	var $firstHeader = $allTables.find('th[colspan]').first();
+	if (!$firstHeader.length) return;
+
+	$firstHeader.css('cursor', 'pointer').attr('title', 'Click to toggle documentation status icons');
+
+	$firstHeader.click(function() {
+		if (!wikiStatusLoaded) {
+			/* Load status for all parameters */
+			$.ajax({
+				url: 'wiki_status.json',
+				type: 'GET',
+				data: { config: oscamconf },
+				dataType: 'json',
+				success: function(data) {
+					if (data) {
+						/* Method 1: Find all <A> tags that are parameter labels */
+						$allTables.find('a').each(function() {
+							var $a = $(this);
+
+							/* Skip if already has icon */
+							if ($a.find('.wiki-status-icon').length) return;
+
+							/* Skip links with href (real links, not labels) */
+							if ($a.attr('href')) return;
+
+							/* Skip if no text */
+							var labelText = $a.text().trim();
+							if (!labelText) return;
+
+							/* Find associated input name */
+							var paramName = null;
+							var $cell = $a.closest('td, th');
+
+							/* Try 1: Input in same cell */
+							var $input = $cell.find('input,select,textarea').first();
+
+							/* Try 2: Input in next cell */
+							if (!$input.length) {
+								$input = $cell.next('td, th').find('input,select,textarea').first();
+							}
+
+							/* Try 3: For TH headers, look in same column of next row */
+							if (!$input.length && $cell.is('th')) {
+								var cellIndex = $cell.index();
+								var $nextRow = $cell.closest('tr').next('tr');
+								if ($nextRow.length) {
+									var $correspondingCell = $nextRow.find('td, th').eq(cellIndex);
+									$input = $correspondingCell.find('input,select,textarea').first();
+								}
+							}
+
+							if ($input.length) {
+								paramName = $input.attr('name');
+							}
+
+							if (!paramName) return;
+
+							var status = data[paramName];
+							var icon = '';
+							var tooltip = '';
+							if (status === 'missing') { icon = '❗ '; tooltip = 'Documentation missing'; }
+							else if (status === 'review') { icon = '⚠️ '; tooltip = 'Documentation needs review'; }
+							else if (status === 'ok') { icon = '✅ '; tooltip = 'Documentation complete'; }
+
+							if (icon) {
+								$a.prepend('<span class="wiki-status-icon" title="' + tooltip + '">' + icon + '</span>');
+							}
+						});
+
+						wikiStatusLoaded = true;
+						wikiStatusVisible = true;
+						$('.wiki-status-icon').addClass('visible');
+					}
+				}
+			});
+		} else {
+			/* Toggle visibility for ALL icons */
+			wikiStatusVisible = !wikiStatusVisible;
+			if (wikiStatusVisible) {
+				$('.wiki-status-icon').addClass('visible');
+			} else {
+				$('.wiki-status-icon').removeClass('visible');
+			}
+		}
+	});
+});
