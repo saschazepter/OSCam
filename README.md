@@ -2,7 +2,7 @@
 
 [![GitLab Last Commit](https://img.shields.io/gitlab/last-commit/11?gitlab_url=https%3A%2F%2Fgit.streamboard.tv&style=for-the-badge)](https://git.streamboard.tv/common/oscam/-/commits/master)
 [![GitLab Tag](https://img.shields.io/gitlab/v/tag/11?gitlab_url=https%3A%2F%2Fgit.streamboard.tv&style=for-the-badge)](https://git.streamboard.tv/common/oscam/-/tags)
-[![GitLab License](https://img.shields.io/gitlab/license/11?gitlab_url=https%3A%2F%2Fgit.streamboard.tv&style=for-the-badge)](https://git.streamboard.tv/common/oscam/-/blob/eaab5437282f2d5558be5c3903705f9e99926798/COPYING)
+[![GitLab License](https://img.shields.io/gitlab/license/11?gitlab_url=https%3A%2F%2Fgit.streamboard.tv&style=for-the-badge)](https://git.streamboard.tv/common/oscam/-/blob/master/COPYING)
 
 ## Quick links
 
