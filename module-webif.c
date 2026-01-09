@@ -2000,7 +2000,6 @@ static char *send_oscam_reader(struct templatevars *vars, struct uriparams *para
 	int32_t disabled_readers = 0;
 	int32_t active_readers = 0;
 	int32_t connected_readers = 0;
-	int32_t reader_index = 1;
 
 	ll_iter_reset(&itr); //going to iterate all configured readers
 	while((rdr = ll_iter_next(&itr)))
@@ -2032,7 +2031,6 @@ static char *send_oscam_reader(struct templatevars *vars, struct uriparams *para
 			}
 #endif
 			total_readers += 1;
-			tpl_printf(vars, TPLADD, "READERNUM", "%d", reader_index);
 
 			// used for API and WebIf
 			tpl_addVar(vars, TPLADD, "READERNAME", xml_encode(vars, rdr->label));
@@ -2324,7 +2322,6 @@ static char *send_oscam_reader(struct templatevars *vars, struct uriparams *para
 				free(new_proto);
 			}
 #endif
-			reader_index++;
 		}
 	}
 
@@ -4615,7 +4612,6 @@ static char *send_oscam_user_config(struct templatevars *vars, struct uriparams 
 	int32_t casc_users2 = 0;
 	int32_t n_request = 0;
 	int existing_insert = 0;
-	int32_t user_index = 1;
 
 	for(account = cfg.account; (account); account = account->next)
 	{
@@ -4636,7 +4632,6 @@ static char *send_oscam_user_config(struct templatevars *vars, struct uriparams 
 	{
 		//clear for next client
 		total_users++;
-		tpl_printf(vars, TPLADD, "USERNUM", "%d", user_index);
 		isactive = 1;
 
 		status = "offline";
@@ -4987,7 +4982,6 @@ static char *send_oscam_user_config(struct templatevars *vars, struct uriparams 
 			}
 			++clientcount;
 		}
-		user_index++;
 	}
 
 	tpl_printf(vars, TPLADD, "TOTAL_USERS", "%d", total_users);
