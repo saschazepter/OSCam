@@ -613,6 +613,7 @@ static void generate_header(void)
 	fprintf(output_file, "const char *wiki_get_help(const char *config, const char *section, const char *param);\n");
 	fprintf(output_file, "int8_t wiki_get_status(const char *config, const char *section, const char *param);\n");
 	fprintf(output_file, "void wiki_get_data(const char **data, size_t *data_len, size_t *data_olen);\n");
+	fprintf(output_file, "char *wiki_get_decompressed_data(void);\n");
 	fprintf(output_file, "void webif_wiki_prepare(void);\n");
 	fprintf(output_file, "void webif_wiki_free(void);\n");
 #else
@@ -739,7 +740,7 @@ static void generate_source(void)
 	int r = lzo1x_1_compress(data, in_len, out, &out_len, wrkmem);
 	if(r == LZO_E_OK)
 	{
-		printf("GEN\tCompressed %lu bytes into %lu bytes. %ld saved (%.1f%%)\n",
+		printf("GEN\tCompressed %lu wiki entry bytes into %lu bytes. %ld saved bytes (%.1f%%).\n",
 				(unsigned long)in_len, (unsigned long)out_len,
 				(long)in_len - (long)out_len, 100.0 - ((float)out_len / in_len) * 100);
 	}
@@ -831,6 +832,12 @@ static void generate_source(void)
 	fprintf(output_file, "\t\tfree(wiki_data_decompressed);\n");
 	fprintf(output_file, "\t\twiki_data_decompressed = NULL;\n");
 	fprintf(output_file, "\t}\n");
+	fprintf(output_file, "}\n");
+	fprintf(output_file, "\n");
+
+	fprintf(output_file, "char *wiki_get_decompressed_data(void)\n");
+	fprintf(output_file, "{\n");
+	fprintf(output_file, "\treturn wiki_data_decompressed;\n");
 	fprintf(output_file, "}\n");
 	fprintf(output_file, "\n");
 
