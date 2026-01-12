@@ -8419,7 +8419,6 @@ static char *send_oscam_wiki(struct templatevars *vars, struct uriparams *params
 static char *send_oscam_wiki_status(struct templatevars *vars, struct uriparams *params)
 {
 	const char *config = getParam(params, "config");
-	const char *section = getParam(params, "section");
 
 	if(!config || !config[0])
 	{
@@ -8437,14 +8436,14 @@ static char *send_oscam_wiki_status(struct templatevars *vars, struct uriparams 
 #ifdef COMPRESSED_WIKI
 	/* For compressed wiki, we iterate through entries but access via decompressed data */
 	const struct wiki_entry *entries = wiki_get_entries();
-	extern char *wiki_data_decompressed; /* Access decompressed data */
+	char *wiki_data = wiki_get_decompressed_data();
 
-	if(wiki_data_decompressed)
+	if(wiki_data)
 	{
 		for(i = 0; i < count && pos < (int)sizeof(json_buf) - 100; i++)
 		{
-			const char *e_config = wiki_data_decompressed + entries[i].config_ofs;
-			const char *e_param = wiki_data_decompressed + entries[i].param_ofs;
+			const char *e_config = wiki_data + entries[i].config_ofs;
+			const char *e_param = wiki_data + entries[i].param_ofs;
 
 			if(strcmp(e_config, config) != 0)
 				{ continue; }
@@ -8464,7 +8463,6 @@ static char *send_oscam_wiki_status(struct templatevars *vars, struct uriparams 
 	}
 #else
 	const struct wiki_entry *entries = wiki_get_entries();
-	(void)section; /* Section filter removed - include all params from config */
 	for(i = 0; i < count && pos < (int)sizeof(json_buf) - 100; i++)
 	{
 		if(strcmp(entries[i].config, config) != 0)
