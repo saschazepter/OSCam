@@ -38,16 +38,29 @@ endif
 
 CONF_DIR = /usr/local/etc
 
+LIB_PTHREAD = -lpthread
+LIB_DL = -ldl
+
+LIB_RT :=
+ifeq ($(uname_S),Linux)
+	ifeq "$(shell ./config.sh --enabled CLOCKFIX)" "Y"
+		LIB_RT := -lrt
+	endif
+endif
+ifeq ($(uname_S),FreeBSD)
+	LIB_DL :=
+endif
+
 ifeq "$(shell ./config.sh --enabled MODULE_STREAMRELAY)" "Y"
 	override USE_LIBDVBCSA=1
 	ifeq "$(notdir ${LIBDVBCSA_LIB})" "libdvbcsa.a"
 		override CFLAGS += -DSTATIC_LIBDVBCSA=1
 	else
-		override CFLAGS += -DSTATIC_LIBDVBCSA=0 -ldl
+		override CFLAGS += -DSTATIC_LIBDVBCSA=0
 	endif
 endif
 
-override STD_LIBS := -lpthread
+override STD_LIBS := $(LIB_PTHREAD) $(LIB_DL) $(LIB_RT)
 override STD_DEFS := -D'CS_VERSION="$(VER)"'
 override STD_DEFS += -D'CS_GIT_COMMIT="$(GIT_SHA)"'
 override STD_DEFS += -D'CS_BUILD_DATE="$(BUILD_DATE)"'
