@@ -41,10 +41,11 @@ int oscam_hash(oscam_hash_alg alg, const unsigned char *d1, size_t l1, const uns
 #ifdef WITH_LIB_SHA1
 	{
 		SHA_CTX ctx;
-		if (SHA1_Init(&ctx) != 0) return -1;
-		if (d1 && l1) if (SHA1_Update(&ctx, d1, l1) != 0) return -1;
-		if (d2 && l2) if (SHA1_Update(&ctx, d2, l2) != 0) return -1;
-		if (SHA1_Final(out, &ctx) != 0) return -1;
+		/* SHA functions return 1 on success (OpenSSL convention) */
+		if (SHA1_Init(&ctx) != 1) return -1;
+		if (d1 && l1) if (SHA1_Update(&ctx, d1, l1) != 1) return -1;
+		if (d2 && l2) if (SHA1_Update(&ctx, d2, l2) != 1) return -1;
+		if (SHA1_Final(out, &ctx) != 1) return -1;
 		return 0;
 	}
 #else
@@ -55,10 +56,11 @@ int oscam_hash(oscam_hash_alg alg, const unsigned char *d1, size_t l1, const uns
 #ifdef WITH_LIB_SHA256
 	{
 		SHA256_CTX ctx;
-		if (SHA256_Init(&ctx) != 0) return -1;
-		if (d1 && l1) if (SHA256_Update(&ctx, d1, l1) != 0) return -1;
-		if (d2 && l2) if (SHA256_Update(&ctx, d2, l2) != 0) return -1;
-		if (SHA256_Final(out, &ctx) != 0) return -1;
+		/* SHA functions return 1 on success (OpenSSL convention) */
+		if (SHA256_Init(&ctx) != 1) return -1;
+		if (d1 && l1) if (SHA256_Update(&ctx, d1, l1) != 1) return -1;
+		if (d2 && l2) if (SHA256_Update(&ctx, d2, l2) != 1) return -1;
+		if (SHA256_Final(out, &ctx) != 1) return -1;
 		return 0;
 	}
 #else
@@ -380,16 +382,20 @@ unsigned char *SHA1(const unsigned char *d, size_t n, unsigned char *md)
 	return md;
 }
 
+/*
+ * Return values follow OpenSSL convention: 1 = success, 0 = failure
+ * MbedTLS returns 0 on success, so we invert the logic.
+ */
 int SHA1_Init(SHA_CTX *c)
 {
 	mbed_sha1 *S = SHA1_S(c);
 	mbedtls_sha1_init(&S->ctx);
-	return mbedtls_sha1_starts(&S->ctx);
+	return (mbedtls_sha1_starts(&S->ctx) == 0) ? 1 : 0;
 }
 
 int SHA1_Update(SHA_CTX *c, const void *data, size_t len)
 {
-	return mbedtls_sha1_update(&SHA1_S(c)->ctx, data, len);
+	return (mbedtls_sha1_update(&SHA1_S(c)->ctx, data, len) == 0) ? 1 : 0;
 }
 
 int SHA1_Final(unsigned char *md, SHA_CTX *c)
@@ -397,7 +403,7 @@ int SHA1_Final(unsigned char *md, SHA_CTX *c)
 	mbed_sha1 *S = SHA1_S(c);
 	int ret = mbedtls_sha1_finish(&S->ctx, md);
 	mbedtls_sha1_free(&S->ctx);
-	return ret;
+	return (ret == 0) ? 1 : 0;
 }
 #endif/* WITH_LIB_SHA1 */
 
@@ -408,22 +414,28 @@ int SHA1_Final(unsigned char *md, SHA_CTX *c)
 typedef struct { mbedtls_sha256_context ctx; } mbed_sha256;
 static inline mbed_sha256 *SHA256_S(SHA256_CTX *c) { return (mbed_sha256 *)c; }
 
-int SHA256_Init(SHA256_CTX *c) {
+/*
+ * Return values follow OpenSSL convention: 1 = success, 0 = failure
+ * MbedTLS returns 0 on success, so we invert the logic.
+ */
+int SHA256_Init(SHA256_CTX *c)
+{
 	mbed_sha256 *S = SHA256_S(c);
 	mbedtls_sha256_init(&S->ctx);
-	return mbedtls_sha256_starts(&S->ctx, 0);
+	return (mbedtls_sha256_starts(&S->ctx, 0) == 0) ? 1 : 0;
 }
 
-int SHA256_Update(SHA256_CTX *c, const void *d, size_t l) {
-	return mbedtls_sha256_update(&SHA256_S(c)->ctx, d, l);
+int SHA256_Update(SHA256_CTX *c, const void *d, size_t l)
+{
+	return (mbedtls_sha256_update(&SHA256_S(c)->ctx, d, l) == 0) ? 1 : 0;
 }
 
 int SHA256_Final(unsigned char *md, SHA256_CTX *c)
 {
-    mbed_sha256 *S = SHA256_S(c);
-    int rc = mbedtls_sha256_finish(&S->ctx, md);
-    mbedtls_sha256_free(&S->ctx);
-    return rc;
+	mbed_sha256 *S = SHA256_S(c);
+	int rc = mbedtls_sha256_finish(&S->ctx, md);
+	mbedtls_sha256_free(&S->ctx);
+	return (rc == 0) ? 1 : 0;
 }
 
 void SHA256_Free(SHA256_CTX *c)
@@ -697,6 +709,7 @@ void parse_aes_keys(struct s_reader *rdr, char *value)
 	aes_clear_entries(&savelist);
 }
 
+/* Helper function to find AES entry in list */
 static AES_ENTRY *aes_list_find(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t keyid)
 {
 	for (AES_ENTRY *cur = list; cur; cur = cur->next) {
@@ -708,15 +721,13 @@ static AES_ENTRY *aes_list_find(AES_ENTRY *list, uint16_t caid, uint32_t provid,
 	return NULL;
 }
 
+/* Now uses aes_list_find() helper instead of duplicating the search logic */
 int32_t aes_decrypt_from_list(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t keyid,
 							  uint8_t *buf, int32_t n)
 {
-	AES_ENTRY *cur;
-	for (cur = list; cur; cur = cur->next)
-		if (cur->caid == caid && cur->ident == provid && cur->keyid == keyid) break;
+	AES_ENTRY *cur = aes_list_find(list, caid, provid, keyid);
 
 	if (!cur) {
-		cs_log("AES Decrypt key %d not found for %04X@%06X (aka V %06X E%X ...)", keyid, caid, provid, provid, keyid);
 		return 0;
 	}
 	if (!cur->key) return 1;
@@ -769,6 +780,7 @@ void BN_free(BIGNUM *bn)
 
 int BN_num_bytes(const BIGNUM *bn)
 {
+	if (!bn) return 0;
 	return (int)mbedtls_mpi_size(bn);
 }
 
@@ -782,6 +794,7 @@ BIGNUM *BN_bin2bn(const unsigned char *in, int len, BIGNUM *bn)
 
 int BN_bn2bin(const BIGNUM *bn, unsigned char *out)
 {
+	if (!bn || !out) return 0;
 	size_t olen = mbedtls_mpi_size(bn);
 	mbedtls_mpi_write_binary(bn, out, olen);
 	return (int)olen;
@@ -853,6 +866,8 @@ unsigned long BN_get_word(const BIGNUM *a)
 {
 	uint64_t val = 0;
 	unsigned char buf[8] = {0};
+
+	if (!a) return 0;
 
 	size_t nbytes = mbedtls_mpi_size(a);
 	if (nbytes > sizeof(buf))
