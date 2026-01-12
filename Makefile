@@ -38,29 +38,16 @@ endif
 
 CONF_DIR = /usr/local/etc
 
-LIB_PTHREAD = -lpthread
-LIB_DL = -ldl
-
-LIB_RT :=
-ifeq ($(uname_S),Linux)
-	ifeq "$(shell ./config.sh --enabled CLOCKFIX)" "Y"
-		LIB_RT := -lrt
-	endif
-endif
-ifeq ($(uname_S),FreeBSD)
-	LIB_DL :=
-endif
-
 ifeq "$(shell ./config.sh --enabled MODULE_STREAMRELAY)" "Y"
 	override USE_LIBDVBCSA=1
 	ifeq "$(notdir ${LIBDVBCSA_LIB})" "libdvbcsa.a"
 		override CFLAGS += -DSTATIC_LIBDVBCSA=1
 	else
-		override CFLAGS += -DSTATIC_LIBDVBCSA=0
+		override CFLAGS += -DSTATIC_LIBDVBCSA=0 -ldl
 	endif
 endif
 
-override STD_LIBS := -lm $(LIB_PTHREAD) $(LIB_DL) $(LIB_RT)
+override STD_LIBS := -lpthread
 override STD_DEFS := -D'CS_VERSION="$(VER)"'
 override STD_DEFS += -D'CS_GIT_COMMIT="$(GIT_SHA)"'
 override STD_DEFS += -D'CS_BUILD_DATE="$(BUILD_DATE)"'
@@ -192,11 +179,8 @@ DEFAULT_AZBOX_LIB = -Lextapi/openxcas -lOpenXCASAPI
 DEFAULT_LIBCRYPTO_LIB = -lcrypto
 DEFAULT_SSL_LIB = -lssl
 DEFAULT_LIBDVBCSA_LIB = -ldvbcsa
-ifeq ($(uname_S),Linux)
-	DEFAULT_LIBUSB_LIB = -lusb-1.0 -lrt
-else
-	DEFAULT_LIBUSB_LIB = -lusb-1.0
-endif
+DEFAULT_LIBUSB_LIB = -lusb-1.0
+
 # Since FreeBSD 8 (released in 2010) they are using their own
 # libusb that is API compatible to libusb but with different soname
 ifeq ($(uname_S),FreeBSD)
