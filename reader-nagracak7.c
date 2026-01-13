@@ -343,7 +343,7 @@ static int32_t ParseDataType(struct s_reader *reader, uint8_t dt, uint8_t *cta_r
 				}
 				else
 				{
-					expire_date = b2i(0x04, cta_res + 22); 
+					expire_date = b2i(0x04, cta_res + 22);
 				}
 			}
 
