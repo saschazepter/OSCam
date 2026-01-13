@@ -108,7 +108,7 @@ static void garbage_collector(void)
 
 	while(garbage_collector_active)
 	{
-		time_t deltime = time(NULL) - 26; // 2 * max_timeout + 6
+		time_t deltime = time(NULL) - MAX(26, 2 * cfg.ctimeout / 1000 + 6);
 		cs_writelock(__func__, &garbage_lock);
 
 		for(i = 0; i < HASH_BUCKETS; ++i)
