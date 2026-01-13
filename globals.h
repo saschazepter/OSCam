@@ -1676,7 +1676,7 @@ struct s_reader										// contains device info, reader info and card info
 	uint8_t			stbid[8];
 	uint8_t			stbid_length;
 #endif
-#ifdef WITH_CARDREADER
+#if defined(READER_NAGRA) || defined(READER_NAGRA_MERLIN)
 	int8_t			cak7_mode;
 	uint8_t			cak7type;
 #endif
