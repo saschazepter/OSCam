@@ -6,7 +6,7 @@
 #include "oscam-string.h"
 #include "oscam-time.h"
 
-#define HASH_BUCKETS 250
+#define HASH_BUCKETS 128
 
 struct cs_garbage
 {
@@ -22,7 +22,7 @@ struct cs_garbage
 static int32_t counter = 0;
 static pthread_mutex_t add_lock;
 static struct cs_garbage *garbage_first[HASH_BUCKETS];
-static CS_MUTEX_LOCK garbage_lock[HASH_BUCKETS];
+static CS_MUTEX_LOCK garbage_lock;
 static pthread_t garbage_thread;
 static int32_t garbage_collector_active;
 static int32_t garbage_debug;
@@ -69,7 +69,7 @@ void add_garbage(void *data)
 	garbage->line = line;
 #endif
 
-	cs_writelock(__func__, &garbage_lock[bucket]);
+	cs_writelock(__func__, &garbage_lock);
 
 #ifdef WITH_DEBUG
 	if(garbage_debug == 2)
@@ -82,7 +82,7 @@ void add_garbage(void *data)
 				cs_log("Found a try to add garbage twice. Not adding the element to garbage list...");
 				cs_log("Current garbage addition: %s, line %d.", file, line);
 				cs_log("Original garbage addition: %s, line %d.", garbagecheck->file, garbagecheck->line);
-				cs_writeunlock(__func__, &garbage_lock[bucket]);
+				cs_writeunlock(__func__, &garbage_lock);
 				NULLFREE(garbage);
 				return;
 			}
@@ -94,7 +94,7 @@ void add_garbage(void *data)
 	garbage->next = garbage_first[bucket];
 	garbage_first[bucket] = garbage;
 
-	cs_writeunlock(__func__, &garbage_lock[bucket]);
+	cs_writeunlock(__func__, &garbage_lock);
 }
 
 static pthread_cond_t sleep_cond;
@@ -102,29 +102,21 @@ static pthread_mutex_t sleep_cond_mutex;
 
 static void garbage_collector(void)
 {
-	int32_t i,j;
+	int32_t i;
 	struct cs_garbage *garbage, *next, *prev, *first;
 	set_thread_name(__func__);
-	int32_t timeout_time = 2 * cfg.ctimeout / 1000 + 6;
 
 	while(garbage_collector_active)
 	{
-		time_t deltime = time(NULL) - timeout_time;
+		time_t deltime = time(NULL) - 26; // 2 * max_timeout + 6
+		cs_writelock(__func__, &garbage_lock);
 
 		for(i = 0; i < HASH_BUCKETS; ++i)
 		{
-			j = 0;
-			cs_writelock(__func__, &garbage_lock[i]);
 			first = garbage_first[i];
 
-			for(garbage = first, prev = NULL; garbage; prev = garbage, garbage = garbage->next, j++)
+			for(garbage = first, prev = NULL; garbage; prev = garbage, garbage = garbage->next)
 			{
-				if(j == 2)
- 				{
-					j++;
-					cs_writeunlock(__func__, &garbage_lock[i]);
-				}
-
 				if(garbage->time < deltime) // all following elements are too new
 				{
 					if(prev)
@@ -139,8 +131,6 @@ static void garbage_collector(void)
 				}
 			}
 
-			cs_writeunlock(__func__, &garbage_lock[i]);
-
 			// list has been taken out before so we don't need a lock here anymore!
 			while(garbage)
 			{
@@ -150,6 +140,7 @@ static void garbage_collector(void)
 				garbage = next;
 			}
 		}
+		cs_writeunlock(__func__, &garbage_lock);
 		sleepms_on_cond(__func__, &sleep_cond_mutex, &sleep_cond, 500);
 	}
 	pthread_exit(NULL);
@@ -158,22 +149,17 @@ static void garbage_collector(void)
 void start_garbage_collector(int32_t debug)
 {
 	garbage_debug = debug;
-	int32_t i;
 
 	SAFE_MUTEX_INIT(&add_lock, NULL);
 
-	for(i = 0; i < HASH_BUCKETS; ++i)
-	{
-		cs_lock_create(__func__, &garbage_lock[i], "garbage_lock", 9000);
+	cs_lock_create(__func__, &garbage_lock, "garbage_lock", 9000);
+	memset(garbage_first, 0, sizeof(garbage_first));
 
-		garbage_first[i] = NULL;
-	}
 	cs_pthread_cond_init(__func__, &sleep_cond_mutex, &sleep_cond);
 
 	garbage_collector_active = 1;
 
-	int32_t ret = start_thread("garbage", (void *)&garbage_collector, NULL, &garbage_thread, 0, 1);
-	if(ret)
+	if (start_thread("garbage", (void *)&garbage_collector, NULL, &garbage_thread, 0, 1))
 	{
 		cs_exit(1);
 	}
@@ -191,8 +177,7 @@ void stop_garbage_collector(void)
 		SAFE_COND_SIGNAL(&sleep_cond);
 		SAFE_THREAD_JOIN(garbage_thread, NULL);
 
-		for(i = 0; i < HASH_BUCKETS; ++i)
-			{ cs_writelock(__func__, &garbage_lock[i]); }
+		cs_writelock(__func__, &garbage_lock);
 
 		for(i = 0; i < HASH_BUCKETS; ++i)
 		{
@@ -205,11 +190,8 @@ void stop_garbage_collector(void)
 			}
 		}
 
-		for(i = 0; i < HASH_BUCKETS; ++i)
-		{
-			cs_writeunlock(__func__, &garbage_lock[i]);
-			cs_lock_destroy(__func__, &garbage_lock[i]);
-		}
+		cs_writeunlock(__func__, &garbage_lock);
+		cs_lock_destroy(__func__, &garbage_lock);
 
 		pthread_mutex_destroy(&add_lock);
 		pthread_cond_destroy(&sleep_cond);
