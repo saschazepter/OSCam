@@ -51,6 +51,10 @@ ifeq ($(uname_S),FreeBSD)
 	LIB_DL :=
 endif
 
+ifneq ($(uname_S),Darwin)
+	LIB_RT = -lrt
+endif
+
 ifeq "$(shell ./config.sh --enabled MODULE_STREAMRELAY)" "Y"
 	override USE_LIBDVBCSA=1
 	ifeq "$(notdir ${LIBDVBCSA_LIB})" "libdvbcsa.a"
@@ -264,6 +268,7 @@ ifneq ($(strip $(shell ./config.sh --show-enabled libraries)),)
 		override CFLAGS += -I. -I$(MBEDTLS_DIR)/include
 		override CFLAGS  += -DMBEDTLS_NO_PLATFORM_ENTROPY -DMBEDTLS_NO_DEFAULT_ENTROPY_SOURCES
 		override CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
+		override LDFLAGS += $(LIB_RT)
 		IS_MBEDTLS_FILE = $(or $(findstring $(MBEDTLS_DIR)/,$<),$(findstring mbedtls/,$(CFLAGS)))
 	endif
 endif
