@@ -1688,7 +1688,7 @@ struct s_reader										// contains device info, reader info and card info
 	int8_t			nagra_read;						// read nagra ncmed records: 0 Disabled (default), 1 read all records, 2 read valid records only
 	int8_t			detect_seca_nagra_tunneled_card;
 #endif
-#if defined(READER_NAGRA) || defined(READER_IRDETO)
+#ifdef READER_IRDETO
 	int8_t			force_irdeto;
 #endif
 #ifdef WITH_CARDREADER
