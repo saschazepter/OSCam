@@ -2913,6 +2913,9 @@ $(function() {
 function formatWikiText(text) {
 	if (!text) return '';
 
+	/* Convert escaped newlines to real newlines first */
+	text = text.replace(/\\n/g, '\n');
+
 	text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 	text = text.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="wiki-code">$2</pre>');
 	text = text.replace(/```([\s\S]*?)```/g, '<pre class="wiki-code">$1</pre>');
