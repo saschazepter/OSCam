@@ -186,7 +186,7 @@ DEFAULT_AZBOX_LIB = -Lextapi/openxcas -lOpenXCASAPI
 DEFAULT_LIBCRYPTO_LIB = -lcrypto
 DEFAULT_SSL_LIB = -lssl
 DEFAULT_LIBDVBCSA_LIB = -ldvbcsa
-DEFAULT_LIBUSB_LIB = -lusb-1.0
+DEFAULT_LIBUSB_LIB = -lusb-1.0 -lrt
 
 # Since FreeBSD 8 (released in 2010) they are using their own
 # libusb that is API compatible to libusb but with different soname
