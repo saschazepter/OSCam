@@ -452,6 +452,7 @@ char *mk_t_aeskeys(struct s_reader *rdr)
 	return (value);
 }
 #endif
+#endif
 
 /*
  * Creates a string ready to write as a token into config or WebIf for the Newcamd Port. You must free the returned value through free_mk_t().
