@@ -48,7 +48,7 @@ wiki_gen: Makefile wiki_gen.c
 	$(Q)$(HOSTCC) $(HOSTCFLAGS) ../minilzo/minilzo.c wiki_gen.c -o $@
 
 clean:
-	@-for FILE in pages_gen wiki_gen pages.dep pages.bin pages.bin.compressed pages.h pages.c pages_wiki.h pages_wiki.c is_defined.txt; do \
+	@-for FILE in pages_gen pages.dep pages.bin pages.bin.compressed pages.h pages.c wiki_gen pages_wiki.h pages_wiki.c is_defined.txt; do \
 		if [ -f $$FILE ]; then echo "RM	webif/$$FILE"; fi; \
 		rm -rf $$FILE; \
 	done

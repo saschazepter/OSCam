@@ -502,7 +502,7 @@ menu_addons() {
 		WEBIF				"Web Interface"									$(check_test "WEBIF") \
 		WEBIF_LIVELOG		"LiveLog"										$(check_test "WEBIF_LIVELOG") \
 		WEBIF_JQUERY		"Jquery onboard (if disabled webload)"			$(check_test "WEBIF_JQUERY") \
-		WEBIF_WIKI			"Inline Wiki Help"								$(check_test "WEBIF_WIKI") \
+		WEBIF_WIKI			"Embedded wiki help system"						$(check_test "WEBIF_WIKI") \
 		WITH_COMPRESS_WEBIF	"Compress webpages"								$(check_test "WITH_COMPRESS_WEBIF") \
 		WITH_SSL			"OpenSSL support"								$(check_test "WITH_SSL") \
 		HAVE_DVBAPI			"DVB API"										$(check_test "HAVE_DVBAPI") \

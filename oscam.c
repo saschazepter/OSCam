@@ -421,7 +421,7 @@ static void write_versionfile(bool use_stdout)
 	write_conf(WEBIF, "Web interface support");
 	write_conf(WEBIF_LIVELOG, "LiveLog support");
 	write_conf(WEBIF_JQUERY, "jQuery support intern");
-	write_conf(WEBIF_WIKI, "Wiki support intern");
+	write_conf(WEBIF_WIKI, "Embedded wiki help system");
 	write_conf(WITH_COMPRESS_WEBIF, "Compressed pages");
 	write_conf(WITH_SSL, "SSL support");
 	write_conf(HAVE_DVBAPI, "DVB API support");
