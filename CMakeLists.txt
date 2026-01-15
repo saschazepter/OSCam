@@ -251,18 +251,24 @@ if (GIT)
 	)
 
 	if (GIT_RET EQUAL 0 AND GIT_INSIDE_WORK_TREE STREQUAL "true")
-		# Single command handles both init and update:
-		# --init: initializes missing submodules
-		# --remote: updates submodules with 'branch' in .gitmodules to latest
-		#           (pinned submodules without 'branch' stay at their commit)
 		message(STATUS "Updating git submodules...")
+		# mbedtls: pinned submodule - use --init only (no --remote)
 		execute_process(
-			COMMAND "${GIT}" submodule update --init --remote
+			COMMAND "${GIT}" submodule update --init mbedtls
 			WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-			RESULT_VARIABLE UPDATE_RESULT
+			RESULT_VARIABLE MBEDTLS_RESULT
 		)
-		if (NOT UPDATE_RESULT EQUAL 0)
-			message(WARNING "Warning: failed to update submodules. Using existing versions.")
+		if (NOT MBEDTLS_RESULT EQUAL 0)
+			message(WARNING "Warning: failed to update mbedtls submodule. Using existing version.")
+		endif()
+		# wiki: tracking branch - use --init --remote to get latest
+		execute_process(
+			COMMAND "${GIT}" submodule update --init --remote wiki
+			WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+			RESULT_VARIABLE WIKI_RESULT
+		)
+		if (NOT WIKI_RESULT EQUAL 0)
+			message(WARNING "Warning: failed to update wiki submodule. Using existing version.")
 		endif()
 	else()
 		message(WARNING "Skipping git submodule update (not a git repository).")

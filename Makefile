@@ -661,8 +661,11 @@ distclean: clean
 submodules:
 	@if $(GIT) rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
 		echo "Updating git submodules..."; \
-		$(GIT) submodule update --init --remote || { \
-			echo "Warning: failed to update submodules. Using existing versions."; \
+		$(GIT) submodule update --init mbedtls || { \
+			echo "Warning: failed to update mbedtls submodule. Using existing version."; \
+		}; \
+		$(GIT) submodule update --init --remote wiki || { \
+			echo "Warning: failed to update wiki submodule. Using existing version."; \
 		}; \
 	else \
 		echo "Skipping git submodule update (not a git repository)."; \
