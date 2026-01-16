@@ -294,7 +294,7 @@ int32_t init_sidtab(void)
 		if((token[0] == '[') && (token[l - 1] == ']'))
 		{
 			token[l - 1] = 0;
-			if(nr > MAX_SIDBITS)
+			if(nr >= MAX_SIDBITS)
 			{
 				fprintf(stderr, "Warning: Service No.%d - '%s' ignored. Max allowed Services %d\n", nr, strtolower(token + 1), MAX_SIDBITS);
 				nr++;
