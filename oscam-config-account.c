@@ -343,7 +343,7 @@ static void account_tuntab_fn(const char *token, char *value, void *setting, FIL
 
 void group_fn(const char *token, char *value, void *setting, FILE *f)
 {
-	uint64_t *grp = setting;
+	group_t *grp = setting;
 	if(value)
 	{
 		char *ptr1, *saveptr1 = NULL;
@@ -352,8 +352,8 @@ void group_fn(const char *token, char *value, void *setting, FILE *f)
 		{
 			int32_t g;
 			g = atoi(ptr1);
-			if(g > 0 && g < 65)
-				{ *grp |= (((uint64_t)1) << (g - 1)); }
+			if(g > 0 && g <= GROUP_BITS)
+				{ *grp |= (((group_t)1) << (g - 1)); }
 		}
 		return;
 	}

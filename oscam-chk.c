@@ -212,7 +212,7 @@ int32_t chk_srvid(struct s_client *cl, ECM_REQUEST *er)
 		rc = 1;
 	}
 
-	for(nr = 0, sidtab = cfg.sidtab; sidtab; sidtab = sidtab->next, nr++)
+	for(nr = 0, sidtab = cfg.sidtab; sidtab && nr < MAX_SIDBITS; sidtab = sidtab->next, nr++)
 	{
 		if(sidtab->num_caid | sidtab->num_provid | sidtab->num_srvid)
 		{
@@ -234,7 +234,7 @@ int32_t has_srvid(struct s_client *cl, ECM_REQUEST *er)
 	int32_t nr;
 	SIDTAB *sidtab;
 
-	for(nr = 0, sidtab = cfg.sidtab; sidtab; sidtab = sidtab->next, nr++)
+	for(nr = 0, sidtab = cfg.sidtab; sidtab && nr < MAX_SIDBITS; sidtab = sidtab->next, nr++)
 	{
 		if(sidtab->num_srvid)
 		{
@@ -253,7 +253,7 @@ int32_t has_lb_srvid(struct s_client *cl, ECM_REQUEST *er)
 	int32_t nr;
 	SIDTAB *sidtab;
 
-	for(nr = 0, sidtab = cfg.sidtab; sidtab; sidtab = sidtab->next, nr++)
+	for(nr = 0, sidtab = cfg.sidtab; sidtab && nr < MAX_SIDBITS; sidtab = sidtab->next, nr++)
 	{
 		if((cl->lb_sidtabs.ok & ((SIDTABBITS)1 << nr)) && (chk_srvid_match(er, sidtab)))
 			{ return 1; }
@@ -291,7 +291,7 @@ int32_t chk_srvid_by_caid_prov(struct s_client *cl, uint16_t caid, uint32_t prov
 		rc = 1;
 	}
 
-	for(nr = 0, sidtab = cfg.sidtab; sidtab; sidtab = sidtab->next, nr++)
+	for(nr = 0, sidtab = cfg.sidtab; sidtab && nr < MAX_SIDBITS; sidtab = sidtab->next, nr++)
 	{
 		if(sidtab->num_caid | sidtab->num_provid)
 		{
@@ -318,7 +318,7 @@ int32_t chk_srvid_by_caid_prov_rdr(struct s_reader *rdr, uint16_t caid, uint32_t
 		rc = 1;
 	}
 
-	for(nr = 0, sidtab = cfg.sidtab; sidtab; sidtab = sidtab->next, nr++)
+	for(nr = 0, sidtab = cfg.sidtab; sidtab && nr < MAX_SIDBITS; sidtab = sidtab->next, nr++)
 	{
 		if(sidtab->num_caid | sidtab->num_provid)
 		{
