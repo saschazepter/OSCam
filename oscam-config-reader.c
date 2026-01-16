@@ -1052,6 +1052,27 @@ void reader_fixups_fn(void *var)
 		if(rdr->typ == R_CAMD35)
 			{ rdr->keepalive = 0; } // with NO-cacheex, and UDP, keepalive is not required!
 	}
+
+	// Allocate/reallocate parallel_slots if maxparallel changed
+	if(rdr->maxparallel > 0)
+	{
+		// Free old slots if they exist (size might have changed on config reload)
+		if(rdr->parallel_slots)
+			{ NULLFREE(rdr->parallel_slots); }
+
+		if(!cs_malloc(&rdr->parallel_slots, rdr->maxparallel * sizeof(struct s_parallel_slot)))
+			{ rdr->maxparallel = 0; }  // disable on allocation failure
+		else
+			{ cs_lock_create(__func__, &rdr->parallel_lock, "parallel_lock", 5000); }
+
+		rdr->parallel_full = 0;  // reset full flag on config change
+	}
+	else if(rdr->parallel_slots)
+	{
+		// maxparallel was disabled, free the slots
+		NULLFREE(rdr->parallel_slots);
+		rdr->parallel_full = 0;
+	}
 }
 
 #define OFS(X) offsetof(struct s_reader, X)
@@ -1285,6 +1306,8 @@ static const struct config_list reader_opts[] =
 	DEF_OPT_FUNC("ratelimittime"                  , 0,                                    ratelimittime_fn),
 	DEF_OPT_FUNC("srvidholdtime"                  , 0,                                    srvidholdtime_fn),
 	DEF_OPT_FUNC("cooldown"                       , 0,                                    cooldown_fn),
+	DEF_OPT_INT32("maxparallel"                   , OFS(maxparallel),                     0),
+	DEF_OPT_INT32("paralleltimeout"               , OFS(paralleltimeout),                 1000),
 	DEF_OPT_FUNC("cooldowndelay"                  , 0,                                    cooldowndelay_fn),
 	DEF_OPT_FUNC("cooldowntime"                   , 0,                                    cooldowntime_fn),
 #ifdef READER_VIACCESS
@@ -1489,6 +1512,9 @@ int32_t init_readerdb(void)
 void free_reader(struct s_reader *rdr)
 {
 	NULLFREE(rdr->emmfile);
+	if(rdr->parallel_slots)
+		{ cs_lock_destroy(__func__, &rdr->parallel_lock); }
+	NULLFREE(rdr->parallel_slots);
 
 	ecm_whitelist_clear(&rdr->ecm_whitelist);
 	ecm_hdr_whitelist_clear(&rdr->ecm_hdr_whitelist);
