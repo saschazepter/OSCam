@@ -3003,6 +3003,9 @@ static char *send_oscam_reader_config(struct templatevars *vars, struct uriparam
 		tpl_printf(vars, TPLADD, "COOLDOWNDELAY", "%d", rdr->cooldown[0]);
 		tpl_printf(vars, TPLADD, "COOLDOWNTIME", "%d", rdr->cooldown[1]);
 	}
+	// Max parallel services
+	tpl_printf(vars, TPLADD, "MAXPARALLEL", "%d", rdr->maxparallel);
+	tpl_printf(vars, TPLADD, "PARALLELTIMEOUT", "%d", rdr->paralleltimeout);
 #ifdef WITH_CARDREADER
 	// Frequencies
 	tpl_printf(vars, TPLADD, "MHZ", "%d", rdr->mhz);

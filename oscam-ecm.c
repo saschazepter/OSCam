@@ -141,6 +141,200 @@ void ecm_cache_cleanup(bool force)
 }
 #endif
 
+/**
+ * maxparallel - Count active services on reader (internal, caller must hold lock)
+ * Removes expired slots and returns count of active services
+ * MUST be called with parallel_lock held
+ */
+static int32_t reader_count_active_services_nolock(struct s_reader *rdr, struct timeb *now)
+{
+	if(!rdr || rdr->maxparallel <= 0)
+		return 0;
+
+	int32_t count = 0;
+
+	for(int i = 0; i < rdr->maxparallel; i++)
+	{
+		if(rdr->parallel_slots[i].srvid == 0)
+			continue;
+
+		int64_t gone = comp_timeb(now, &rdr->parallel_slots[i].last_ecm);
+		int32_t timeout = rdr->parallel_slots[i].ecm_interval + rdr->paralleltimeout;
+
+		// Default timeout if no interval measured yet (10 seconds)
+		if(rdr->parallel_slots[i].ecm_interval == 0)
+			timeout = 10000 + rdr->paralleltimeout;
+
+		if(gone > timeout)
+		{
+			// Slot expired, clear it
+			cs_log_dbg(D_LB, "reader %s: service %04X expired (no ECM for %"PRId64" ms, timeout %d ms)",
+				rdr->label, rdr->parallel_slots[i].srvid, gone, timeout);
+			rdr->parallel_slots[i].srvid = 0;
+			rdr->parallel_slots[i].ecm_interval = 0;
+		}
+		else
+		{
+			count++;
+		}
+	}
+
+	return count;
+}
+
+/**
+ * maxparallel - Check if reader has capacity for a service (does NOT reserve slot)
+ * Used during ECM request to filter out full readers.
+ * Returns: 1 = has capacity or already tracking this service, 0 = at capacity for new services
+ */
+static int8_t reader_has_capacity(struct s_reader *rdr, uint16_t srvid)
+{
+	if(!rdr || rdr->maxparallel <= 0)
+		return 1;  // 0 = unlimited, always OK
+
+	cs_readlock(__func__, &rdr->parallel_lock);
+
+	struct timeb now;
+	cs_ftime(&now);
+
+	// Check if already tracking this service
+	for(int i = 0; i < rdr->maxparallel; i++)
+	{
+		if(rdr->parallel_slots[i].srvid == srvid)
+		{
+			// Already tracking - check if not expired
+			int64_t gone = comp_timeb(&now, &rdr->parallel_slots[i].last_ecm);
+			int32_t timeout = rdr->parallel_slots[i].ecm_interval + rdr->paralleltimeout;
+			if(rdr->parallel_slots[i].ecm_interval == 0)
+				timeout = 10000 + rdr->paralleltimeout;
+
+			if(gone <= timeout)
+			{
+				cs_readunlock(__func__, &rdr->parallel_lock);
+				return 1;  // Already have this service
+			}
+		}
+	}
+
+	// Count active (non-expired) services
+	int32_t active = 0;
+	for(int i = 0; i < rdr->maxparallel; i++)
+	{
+		if(rdr->parallel_slots[i].srvid == 0)
+			continue;
+
+		int64_t gone = comp_timeb(&now, &rdr->parallel_slots[i].last_ecm);
+		int32_t timeout = rdr->parallel_slots[i].ecm_interval + rdr->paralleltimeout;
+		if(rdr->parallel_slots[i].ecm_interval == 0)
+			timeout = 10000 + rdr->paralleltimeout;
+
+		if(gone <= timeout)
+			active++;
+	}
+
+	cs_readunlock(__func__, &rdr->parallel_lock);
+
+	return (active < rdr->maxparallel) ? 1 : 0;
+}
+
+/**
+ * maxparallel - Register a service on a reader (called when CW is found)
+ * This actually reserves/updates the slot for this service.
+ * Returns: 1 = registered, 0 = failed (should not happen if capacity was checked)
+ */
+static int8_t reader_register_service(struct s_reader *rdr, uint16_t srvid)
+{
+	if(!rdr || rdr->maxparallel <= 0)
+		return 1;  // unlimited, always OK
+
+	cs_writelock(__func__, &rdr->parallel_lock);
+
+	struct timeb now;
+	cs_ftime(&now);
+
+	// Clean up expired slots first
+	(void)reader_count_active_services_nolock(rdr, &now);
+
+	// Find existing slot or empty slot
+	int32_t existing_slot = -1;
+	int32_t empty_slot = -1;
+
+	for(int i = 0; i < rdr->maxparallel; i++)
+	{
+		if(rdr->parallel_slots[i].srvid == srvid)
+		{
+			existing_slot = i;
+			break;
+		}
+		if(empty_slot < 0 && rdr->parallel_slots[i].srvid == 0)
+			empty_slot = i;
+	}
+
+	int32_t slot;
+	int8_t is_new;
+
+	if(existing_slot >= 0)
+	{
+		// Already tracking this service - update timestamp
+		slot = existing_slot;
+		is_new = 0;
+
+		// Measure interval
+		int64_t interval = comp_timeb(&now, &rdr->parallel_slots[slot].last_ecm);
+		if(interval > 0 && interval < 30000)  // Sanity: < 30 seconds
+		{
+			if(rdr->parallel_slots[slot].ecm_interval == 0)
+				rdr->parallel_slots[slot].ecm_interval = (int32_t)interval;
+			else
+				rdr->parallel_slots[slot].ecm_interval = (rdr->parallel_slots[slot].ecm_interval + (int32_t)interval) / 2;
+		}
+	}
+	else if(empty_slot >= 0)
+	{
+		// New service - use empty slot
+		slot = empty_slot;
+		is_new = 1;
+		rdr->parallel_slots[slot].srvid = srvid;
+		rdr->parallel_slots[slot].ecm_interval = 0;
+	}
+	else
+	{
+		// No slot available - this can happen in race conditions, just log and continue
+		cs_writeunlock(__func__, &rdr->parallel_lock);
+		cs_log_dbg(D_LB, "reader %s: no slot available for service %04X (race condition)", rdr->label, srvid);
+		return 0;
+	}
+
+	rdr->parallel_slots[slot].last_ecm = now;
+
+	// Log status change
+	int32_t new_active = reader_count_active_services_nolock(rdr, &now);
+	if(is_new)
+	{
+		cs_log_dbg(D_LB, "reader %s: registered service %04X in slot %d (%d/%d active)",
+			rdr->label, srvid, slot, new_active, rdr->maxparallel);
+
+		// Log "now full" only once per state change
+		if(new_active >= rdr->maxparallel && !rdr->parallel_full)
+		{
+			rdr->parallel_full = 1;
+			cs_log("reader %s: now full (%d/%d active services)",
+				rdr->label, new_active, rdr->maxparallel);
+		}
+	}
+
+	// Reset full flag when capacity becomes available
+	if(new_active < rdr->maxparallel && rdr->parallel_full)
+	{
+		rdr->parallel_full = 0;
+		cs_log_dbg(D_LB, "reader %s: capacity available (%d/%d active services)",
+			rdr->label, new_active, rdr->maxparallel);
+	}
+
+	cs_writeunlock(__func__, &rdr->parallel_lock);
+	return 1;
+}
+
 void fallback_timeout(ECM_REQUEST *er)
 {
 	if(er->rc >= E_UNHANDLED && er->stage < 4)
@@ -1407,6 +1601,15 @@ void request_cw_from_readers(ECM_REQUEST *er, uint8_t stop_stage)
 				cs_log_dbg(D_TRACE | D_CSP, "request_cw stage=%d to reader %s ecm hash=%s", er->stage, rdr ? rdr->label : "", ecmd5);
 			}
 #endif
+			// maxparallel: check if reader has capacity (slot is reserved later when CW found)
+			if(rdr->maxparallel > 0 && !reader_has_capacity(rdr, er->srvid))
+			{
+				cs_log_dbg(D_LB, "reader %s skipped for %s srvid %04X (maxparallel %d reached)",
+					rdr->label, check_client(er->client) ? er->client->account->usr : "-",
+					er->srvid, rdr->maxparallel);
+				continue;
+			}
+
 			ea->status |= REQUEST_SENT;
 			cs_ftime(&ea->time_request_sent);
 
@@ -1561,6 +1764,10 @@ void chk_dcw(struct s_ecm_answer *ea)
 	switch(ea->rc)
 	{
 	case E_FOUND:
+		// maxparallel: register this service on the winning reader
+		if(eardr->maxparallel > 0)
+			{ reader_register_service(eardr, ert->srvid); }
+
 		memcpy(ert->cw, ea->cw, 16);
 		ert->cw_ex = ea->cw_ex;
 		ert->rcEx = 0;

@@ -378,6 +378,22 @@ DESCRIPTIONS
 
 	  ratelimitecm and ratelimitseconds are required
 
+       maxparallel = count
+	  maximum number of parallel active services allowed for this reader,
+	  0 = unlimited (default). Useful for limiting load on readers with
+	  slot restrictions. When the limit is reached, the reader is
+	  temporarily skipped and other readers are tried. A service slot
+	  expires when no ECM is received within the measured ECM interval
+	  plus the paralleltimeout buffer.
+
+	   example: maxparallel = 2
+
+       paralleltimeout = milliseconds
+	  timeout buffer in milliseconds added to the measured ECM interval
+	  to determine when a service slot expires, default: 1000
+
+	   example: paralleltimeout = 1500
+
        blocknano = nano[,nano]...|all
 	  list of EMM-nanos to block (in hex w/o 0x) or all EMM-nanos, valid for physical readers only, default:none
 

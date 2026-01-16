@@ -1431,6 +1431,14 @@ struct ecmrl
 };
 #define MAXECMRATELIMIT 20
 
+// maxparallel service tracking
+struct s_parallel_slot
+{
+	uint16_t		srvid;				// service ID
+	struct timeb	last_ecm;			// time of last ECM for this service
+	int32_t			ecm_interval;		// measured interval between ECMs in ms
+};
+
 #ifdef MODULE_SERIAL
 struct ecmtw
 {
@@ -1899,6 +1907,11 @@ struct s_reader										// contains device info, reader info and card info
 	float			ecmshealthnok;
 	float			ecmshealthtout;
 	int32_t			cooldown[2];
+	int32_t			maxparallel;						// max parallel active services, 0 = unlimited (default)
+	int32_t			paralleltimeout;					// timeout buffer in ms after expected ECM (default: 1000)
+	struct s_parallel_slot	*parallel_slots;			// active service tracking (dynamically allocated)
+	CS_MUTEX_LOCK	parallel_lock;						// lock for parallel_slots access
+	int8_t			parallel_full;						// flag: 1 if reader is at capacity limit
 	int8_t			cooldownstate;
 	struct timeb	cooldowntime;
 	struct ecmrl	rlecmh[MAXECMRATELIMIT];
