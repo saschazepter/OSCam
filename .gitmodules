@@ -9,4 +9,4 @@
 	path = mbedtls
 	url = https://github.com/Mbed-TLS/mbedtls.git
 	shallow = true
-	depends = WITH_MBEDTLS
+	depends = USE_MBEDTLS
