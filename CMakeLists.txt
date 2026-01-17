@@ -417,6 +417,7 @@ if (SECURITY_BACKEND STREQUAL "MBEDTLS")
 			if ("${WITH_LIB_AES}" STREQUAL "Y")
 				list(APPEND MBEDTLS_SRC_CRYPTO
 					"${MBEDTLS_DIR}/library/aes.c"
+					"${MBEDTLS_DIR}/library/aesce.c"
 					"${MBEDTLS_DIR}/library/aesni.c"
 				)
 			endif()
