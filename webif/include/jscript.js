@@ -961,10 +961,10 @@ function updateLogpage(data) {
 			var hiddenline = 0;
 			if (newcolor) {
 				if (newcolor.hidden != '1') {
-					if (newcolor.color && newcolor.color != '') {
+					if (newcolor.color && newcolor.color != '' && newcolor.color.charAt(0) == '#') {
 						newline.css('background-color', newcolor.color);
 					}
-					if (newcolor.fcolor && newcolor.fcolor != '') {
+					if (newcolor.fcolor && newcolor.fcolor != '' && newcolor.fcolor.charAt(0) == '#') {
 						newline.css('color', newcolor.fcolor);
 					}
 					$("#livelogdata").append(newline);
@@ -1677,9 +1677,11 @@ $(document).ready(function () {
 					var pattern = localStorage['regex' + i];
 					var color = localStorage['color' + i];
 					var fcolor = localStorage['fcolor' + i];
+					if (color == 'false' || color == 'undefined') color = '';
+					if (fcolor == 'false' || fcolor == 'undefined') fcolor = '';
 					$('#regex' + i).val(pattern ? pattern : '');
-					$('#color' + i).val(color ? color : $('.colorPicker_def_color').css('color'));
-					$('#fcolor' + i).val(fcolor ? fcolor : $('.colorPicker_def_fcolor').css('color'));
+					$('#color' + i).val(color && color.charAt(0) == '#' ? color : $('.colorPicker_def_color').css('color'));
+					$('#fcolor' + i).val(fcolor && fcolor.charAt(0) == '#' ? fcolor : $('.colorPicker_def_fcolor').css('color'));
 					$('#color' + i).colorPicker();
 					$('#fcolor' + i).colorPicker();
 					$('#whitelisted' + i).prop('checked', localStorage['whitelisted' + i] == '1' ? true : false);
