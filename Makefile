@@ -659,7 +659,7 @@ distclean: clean
 	@-$(MAKE) --no-print-directory --quiet -C webif clean
 
 submodules:
-	@./config.sh --submodule
+	@./config.sh --use-flags "$(USE_FLAGS)" --submodule
 
 README.build:
 	@echo "Extracting 'make help' into $@ file."
