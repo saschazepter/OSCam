@@ -128,7 +128,7 @@ int   oscam_mbedtls_snprintf(char *buf, size_t buflen, const char *fmt, ...);
 #define MBEDTLS_X509_CREATE_C
 
 /* ============================================================================
- *  TLS / SSL (TLS 1.2 + 1.3 only)
+ *  TLS / SSL (TLS 1.2 only, TLS 1.3 requires PSA which is disabled)
  * ========================================================================== */
 #define MBEDTLS_SSL_TLS_C
 #define MBEDTLS_SSL_SRV_C
