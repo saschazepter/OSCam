@@ -7,7 +7,6 @@
 #ifdef WITH_MBEDTLS
 /* MbedTLS backend only build of oscam-crypto */
 
-
 /* ===========================================================
  * MbedTLS backend
  * =========================================================== */
@@ -26,6 +25,39 @@
 #endif
 #if defined(WITH_SSL) || defined(WITH_LIB_SHA256)
 #include "mbedtls/sha256.h"
+#endif
+
+/* ----------------------------------------------------------------------
+ * Compile-time size checks for opaque buffers
+ * Ensures our wrapper structs are large enough for MbedTLS contexts.
+ * Uses negative array size trick for C89/C99 compatibility.
+ * ---------------------------------------------------------------------- */
+#define OSCAM_STATIC_ASSERT(cond, name) \
+	typedef char static_assert_##name[(cond) ? 1 : -1]
+
+#if defined(WITH_LIB_DES) || defined(WITH_LIB_MDC2)
+OSCAM_STATIC_ASSERT(sizeof(mbedtls_des_context) <= 160,
+	des_key_schedule_too_small);
+#endif
+
+#if defined(WITH_LIB_SHA1)
+OSCAM_STATIC_ASSERT(sizeof(mbedtls_sha1_context) <= 128,
+	SHA_CTX_too_small);
+#endif
+
+#if defined(WITH_LIB_SHA256)
+OSCAM_STATIC_ASSERT(sizeof(mbedtls_sha256_context) <= 256,
+	SHA256_CTX_too_small);
+#endif
+
+#if defined(WITH_LIB_AES)
+OSCAM_STATIC_ASSERT(sizeof(mbedtls_aes_context) <= 512,
+	AES_KEY_too_small);
+#endif
+
+#if defined(WITH_LIB_MD5)
+OSCAM_STATIC_ASSERT(sizeof(mbedtls_md5_context) <= 128,
+	MD5_CTX_too_small);
 #endif
 
 /* ----------------------------------------------------------------------
@@ -859,7 +891,8 @@ BIGNUM *BN_copy(BIGNUM *to, const BIGNUM *from)
 
 int BN_set_word(BIGNUM *a, unsigned long w)
 {
-	return mbedtls_mpi_lset(a, (mbedtls_mpi_sint)w);
+	/* OpenSSL returns 1 on success, MbedTLS returns 0 on success */
+	return (mbedtls_mpi_lset(a, (mbedtls_mpi_sint)w) == 0) ? 1 : 0;
 }
 
 unsigned long BN_get_word(const BIGNUM *a)
