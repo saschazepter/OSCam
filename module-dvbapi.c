@@ -3322,7 +3322,7 @@ void dvbapi_resort_ecmpids(int32_t demux_id)
 		}
 		else // ecmpids with no matching readers are disabled and matching sidtabbits have now highest status
 		{
-			for(nr = 0, sidtab = cfg.sidtab; sidtab; sidtab = sidtab->next, nr++)
+			for(nr = 0, sidtab = cfg.sidtab; sidtab && nr < MAX_SIDBITS; sidtab = sidtab->next, nr++)
 			{
 				if(sidtab->num_caid | sidtab->num_provid | sidtab->num_srvid)
 				{
