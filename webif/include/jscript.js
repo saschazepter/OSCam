@@ -961,10 +961,10 @@ function updateLogpage(data) {
 			var hiddenline = 0;
 			if (newcolor) {
 				if (newcolor.hidden != '1') {
-					if (newcolor.color && newcolor.color != '') {
+					if (newcolor.color && newcolor.color != '' && newcolor.color.charAt(0) == '#') {
 						newline.css('background-color', newcolor.color);
 					}
-					if (newcolor.fcolor && newcolor.fcolor != '') {
+					if (newcolor.fcolor && newcolor.fcolor != '' && newcolor.fcolor.charAt(0) == '#') {
 						newline.css('color', newcolor.fcolor);
 					}
 					$("#livelogdata").append(newline);

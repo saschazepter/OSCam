@@ -583,18 +583,42 @@ div.footer {
 	border-top:3px solid #CCC
 }
 div.footer .top_link {
-	padding-left:12px;
-	position:absolute;
-	font-weight:bold;
-	bottom:5px;
-	left:7px;
-	z-index:0
+	position:fixed;
+	bottom:10px;
+	right:10px;
+	z-index:9999;
+	background:linear-gradient(to bottom,#DDD 0%,#BBB 50%,#AAA 100%);
+	border-radius:3px;
+	padding:5px 10px;
+	font-weight:bold
 }
-div.footer .top_link a:before {
-	content:"▲";
-	font-weight:normal;
-	position:absolute;
-	left:1px
+div.footer .top_link a {
+	color:#000
+}
+div.footer .top_link a:hover {
+	color:#F00
+}
+div.footer .top_link a:after {
+	content:" \25B2"
+}
+LI.bottom_link {
+	position:fixed;
+	top:10px;
+	right:10px;
+	z-index:9999;
+	background:linear-gradient(to bottom,#DDD 0%,#BBB 50%,#AAA 100%);
+	border-radius:3px;
+	padding:5px 10px;
+	font-weight:bold
+}
+LI.bottom_link a {
+	color:#000
+}
+LI.bottom_link a:hover {
+	color:#F00
+}
+LI.bottom_link a:after {
+	content:" \25BC"
 }
 div.footer li {
 	margin:5px
