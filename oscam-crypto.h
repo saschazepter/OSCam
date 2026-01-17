@@ -340,7 +340,7 @@ typedef struct {
 	unsigned int Iv[4];
 	unsigned char Nr;
 	unsigned char Mode;
-	unsigned char opaque[256];
+	unsigned char opaque[512];  /* Must fit mbedtls_aes_context (larger with HW accel) */
 } AesCtx;
 
 int AesCtxIni(AesCtx *c, const unsigned char *iv, const unsigned char *key, int keylen, int mode);
@@ -354,7 +354,7 @@ int AesDecrypt(AesCtx *c, const unsigned char *input, unsigned char *output, int
 #define AES_BLOCK_SIZE 16
 
 struct AES_KEY {
-	unsigned char opaque[256];
+	unsigned char opaque[512];  /* Must fit mbedtls_aes_context (larger with HW accel) */
 };
 
 int AES_set_encrypt_key(const unsigned char *userKey, const int bits, AES_KEY *key);
