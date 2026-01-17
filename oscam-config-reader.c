@@ -2,7 +2,6 @@
 
 #include "globals.h"
 #include "module-stat.h"
-#include "oscam-aes.h"
 #include "oscam-array.h"
 #include "oscam-conf.h"
 #include "oscam-conf-chk.h"
@@ -706,6 +705,7 @@ void ftab_fn(const char *token, char *value, void *setting, long ftab_type, FILE
 static void aeskeys_fn(const char *token, char *value, void *setting, FILE *f)
 {
 	struct s_reader *rdr = setting;
+#ifdef WITH_LIB_AES
 	if(value)
 	{
 		parse_aes_keys(rdr, value);
@@ -715,6 +715,9 @@ static void aeskeys_fn(const char *token, char *value, void *setting, FILE *f)
 	if(cs_strlen(value) > 0 || cfg.http_full_cfg)
 		{ fprintf_conf(f, token, "%s\n", value); }
 	free_mk_t(value);
+#else
+	(void)token; (void)value; (void)rdr; (void)f;
+#endif
 }
 #endif
 
@@ -1528,9 +1531,11 @@ void free_reader(struct s_reader *rdr)
 	ll_destroy_data(&rdr->blockemmbylen);
 
 	ll_destroy_data(&rdr->emmstat);
-#ifdef READER_VIACCESS
+
+#ifdef WITH_LIB_AES
 	aes_clear_entries(&rdr->aes_list);
 #endif
+
 	config_list_gc_values(reader_opts, rdr);
 	add_garbage(rdr);
 }
