@@ -956,16 +956,17 @@ do
 		# If no name given, process all submodules
 		if [ -z "$name" ]; then
 			for sm in `grep '^\[submodule "' .gitmodules | sed 's/.*"\(.*\)".*/\1/'`; do
-				$0 --submodule "$sm"
+				$0 --use-flags "$USE_FLAGS" --submodule "$sm"
 			done
 			exit 0
 		fi
 		# Extract submodule section from .gitmodules
 		section=`sed -n "/\[submodule \"$name\"\]/,/^\[/p" .gitmodules | grep ' = '`
-		# Check if submodule is needed based on depends config option
+		# Check if submodule is needed based on depends config option or use flag
 		depends=`echo "$section" | grep 'depends = ' | sed 's/.*depends = //'`
 		if [ -n "$depends" ]; then
-			enabled $depends || exit 0
+			# Check config.h option first, then USE_FLAGS
+			enabled $depends || have_flag "$depends" || exit 0
 		fi
 		if [ "`git rev-parse --show-toplevel 2>/dev/null`" = "`pwd`" ]; then
 			if echo "$section" | grep -q 'branch = '; then
