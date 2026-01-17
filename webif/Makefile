@@ -31,6 +31,8 @@ pages.c: pages_gen ../config.h
 pages_gen: Makefile pages_gen.c
 	$(SAY) "HOSTCC	webif/$@"
 	$(Q)$(HOSTCC) $(HOSTCFLAGS) ../minilzo/minilzo.c pages_gen.c -o $@
+	$(Q)sed 's/^\s+//g' -i pages_gen.c
+	$(Q)sed 's/^"\s+/"/g' -i pages_gen.c
 
 # Wiki help generation (only if WEBIF_WIKI is enabled and wiki submodule exists)
 pages_wiki.c: wiki_gen ../config.h
