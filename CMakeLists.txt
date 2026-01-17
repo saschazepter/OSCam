@@ -239,7 +239,7 @@ add_definitions ("-DCS_CONFDIR=\"${CS_CONFDIR}\"")
 #----------------------- git submodule support ------------------------------
 
 execute_process(
-	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --submodule
+	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --use-flags "USE_${SECURITY_BACKEND}" --submodule
 	WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
