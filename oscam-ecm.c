@@ -1,6 +1,7 @@
 #define MODULE_LOG_PREFIX "ecm"
 
 #include "globals.h"
+#include <math.h>
 #include "cscrypt/md5.h"
 #include "module-anticasc.h"
 #include "module-cacheex.h"
@@ -142,105 +143,314 @@ void ecm_cache_cleanup(bool force)
 #endif
 
 /**
- * maxparallel - Count active services on reader (internal, caller must hold lock)
- * Removes expired slots and returns count of active services
- * MUST be called with parallel_lock held
+ * maxparallel - Helper: Calculate provisional slots array size
+ * Formula: round(maxparallel * parallelfactor)
+ * parallelfactor <= 0 means no provisional slots (zapping disabled)
  */
-static int32_t reader_count_active_services_nolock(struct s_reader *rdr, struct timeb *now)
+static inline int32_t get_prov_size(struct s_reader *rdr)
+{
+	// parallelfactor <= 0 means no provisional slots (disabled or not configured)
+	if(rdr->parallelfactor <= 0.0f)
+		return 0;
+	int32_t size = (int32_t)(rdr->maxparallel * rdr->parallelfactor + 0.5f);
+	return (size < 1) ? 1 : size;
+}
+
+/**
+ * maxparallel - Helper: Check if slot is expired
+ * Returns timeout threshold in ms, 0 if no timeout check needed
+ */
+static int32_t get_slot_timeout(struct s_parallel_slot *slot, int32_t paralleltimeout)
+{
+	if(slot->ecm_interval > 0)
+		return slot->ecm_interval + paralleltimeout;
+	else
+		return 10000 + paralleltimeout;  // Default 10s if no interval measured
+}
+
+/**
+ * maxparallel - Helper: Clear a slot
+ */
+static void clear_slot(struct s_parallel_slot *slot)
+{
+	slot->srvid = 0;
+	slot->ecm_interval = 0;
+	memset(&slot->last_ecm, 0, sizeof(struct timeb));
+}
+
+/**
+ * maxparallel - Cleanup expired slots in both arrays and promote provisionals
+ * - Removes expired slots from parallel_slots (normal) and parallel_slots_prov (provisional)
+ * - Upgrades provisionals to normal when space becomes available (FIFO)
+ * - Does NOT kick provisionals (that's done separately when normal services send ECMs)
+ * MUST be called with parallel_lock held
+ * Returns: count of active normal slots after cleanup
+ */
+static int32_t reader_cleanup_slots_nolock(struct s_reader *rdr, struct timeb *now)
 {
 	if(!rdr || rdr->maxparallel <= 0)
 		return 0;
 
-	int32_t count = 0;
+	int32_t normal_count = 0;
+	int32_t prov_count = 0;
+	int32_t normal_empty = -1;  // First empty slot in normal array
 
+	// Pass 1: Clean expired slots in normal array, count active
 	for(int i = 0; i < rdr->maxparallel; i++)
 	{
 		if(rdr->parallel_slots[i].srvid == 0)
+		{
+			if(normal_empty < 0)
+				normal_empty = i;
 			continue;
+		}
 
 		int64_t gone = comp_timeb(now, &rdr->parallel_slots[i].last_ecm);
-		int32_t timeout = rdr->parallel_slots[i].ecm_interval + rdr->paralleltimeout;
-
-		// Default timeout if no interval measured yet (10 seconds)
-		if(rdr->parallel_slots[i].ecm_interval == 0)
-			timeout = 10000 + rdr->paralleltimeout;
+		int32_t timeout = get_slot_timeout(&rdr->parallel_slots[i], rdr->paralleltimeout);
 
 		if(gone > timeout)
 		{
-			// Slot expired, clear it
-			cs_log_dbg(D_LB, "reader %s: service %04X expired (no ECM for %"PRId64" ms, timeout %d ms)",
+			cs_log_dbg(D_READER, "reader %s: service %04X expired (no ECM for %"PRId64" ms, timeout %d ms)",
 				rdr->label, rdr->parallel_slots[i].srvid, gone, timeout);
-			rdr->parallel_slots[i].srvid = 0;
-			rdr->parallel_slots[i].ecm_interval = 0;
+			clear_slot(&rdr->parallel_slots[i]);
+			if(normal_empty < 0)
+				normal_empty = i;
 		}
 		else
 		{
-			count++;
+			normal_count++;
 		}
 	}
 
-	return count;
+	// Pass 2: Clean expired slots in provisional array, count active
+	int32_t prov_size = get_prov_size(rdr);
+	for(int i = 0; i < prov_size; i++)
+	{
+		if(rdr->parallel_slots_prov[i].srvid == 0)
+			continue;
+
+		int64_t gone = comp_timeb(now, &rdr->parallel_slots_prov[i].last_ecm);
+		int32_t timeout = get_slot_timeout(&rdr->parallel_slots_prov[i], rdr->paralleltimeout);
+
+		if(gone > timeout)
+		{
+			cs_log_dbg(D_READER, "reader %s: provisional service %04X expired (no ECM for %"PRId64" ms, timeout %d ms)",
+				rdr->label, rdr->parallel_slots_prov[i].srvid, gone, timeout);
+			clear_slot(&rdr->parallel_slots_prov[i]);
+		}
+		else
+		{
+			prov_count++;
+		}
+	}
+
+	// Pass 3: Upgrade provisionals to normal if space available (FIFO)
+	// This handles the zapping case: old service expired, new one can be promoted
+	while(normal_count < rdr->maxparallel && prov_count > 0)
+	{
+		// Find oldest provisional (largest age = first to arrive = FIFO upgrade)
+		int32_t oldest_idx = -1;
+		int64_t oldest_time = -1;
+
+		for(int i = 0; i < prov_size; i++)
+		{
+			if(rdr->parallel_slots_prov[i].srvid != 0)
+			{
+				int64_t age = comp_timeb(now, &rdr->parallel_slots_prov[i].last_ecm);
+				if(oldest_idx < 0 || age > oldest_time)
+				{
+					oldest_idx = i;
+					oldest_time = age;
+				}
+			}
+		}
+
+		if(oldest_idx < 0)
+			break;
+
+		// Find empty slot in normal array
+		if(normal_empty < 0)
+		{
+			for(int i = 0; i < rdr->maxparallel; i++)
+			{
+				if(rdr->parallel_slots[i].srvid == 0)
+				{
+					normal_empty = i;
+					break;
+				}
+			}
+		}
+
+		if(normal_empty < 0)
+			break;  // Should not happen, but safety check
+
+		// Move provisional to normal
+		rdr->parallel_slots[normal_empty] = rdr->parallel_slots_prov[oldest_idx];
+		clear_slot(&rdr->parallel_slots_prov[oldest_idx]);
+
+		cs_log_dbg(D_READER, "reader %s: service %04X promoted from provisional to normal (slot %d)",
+			rdr->label, rdr->parallel_slots[normal_empty].srvid, normal_empty);
+
+		normal_count++;
+		prov_count--;
+		normal_empty = -1;  // Need to find next empty slot
+	}
+
+	return normal_count;
+}
+
+/**
+ * maxparallel - Kick provisional services when normal array is full (FIFO)
+ * Called only when a NORMAL service receives an ECM, proving it's still active.
+ * Kicks the OLDEST provisional first (first in, first out)
+ * This is fair: first to request overload is first to be denied.
+ * MUST be called with parallel_lock held
+ */
+static void reader_kick_provisionals_nolock(struct s_reader *rdr, struct timeb *now)
+{
+	if(!rdr || rdr->maxparallel <= 0)
+		return;
+
+	// Count normal and provisional
+	int32_t normal_count = 0;
+	int32_t prov_count = 0;
+	int32_t prov_size = get_prov_size(rdr);
+
+	for(int i = 0; i < rdr->maxparallel; i++)
+	{
+		if(rdr->parallel_slots[i].srvid != 0)
+			normal_count++;
+	}
+	for(int i = 0; i < prov_size; i++)
+	{
+		if(rdr->parallel_slots_prov[i].srvid != 0)
+			prov_count++;
+	}
+
+	// Kick provisionals if normal array is full (FIFO - oldest kicked first)
+	while(normal_count >= rdr->maxparallel && prov_count > 0)
+	{
+		// Find oldest provisional (largest age = first to arrive = kick first)
+		int32_t oldest_idx = -1;
+		int64_t oldest_time = -1;
+
+		for(int i = 0; i < prov_size; i++)
+		{
+			if(rdr->parallel_slots_prov[i].srvid != 0)
+			{
+				int64_t age = comp_timeb(now, &rdr->parallel_slots_prov[i].last_ecm);
+				if(oldest_idx < 0 || age > oldest_time)
+				{
+					oldest_idx = i;
+					oldest_time = age;
+				}
+			}
+		}
+
+		if(oldest_idx < 0)
+			break;
+
+		cs_log("reader %s: kicked provisional service %04X (%.3f sec old, normal services still active)",
+			rdr->label, rdr->parallel_slots_prov[oldest_idx].srvid, (float)oldest_time / 1000);
+		clear_slot(&rdr->parallel_slots_prov[oldest_idx]);
+		prov_count--;
+	}
 }
 
 /**
  * maxparallel - Check if reader has capacity for a service (does NOT reserve slot)
- * Used during ECM request to filter out full readers.
- * Returns: 1 = has capacity or already tracking this service, 0 = at capacity for new services
+ * Used during ECM request to decide if reader should be tried.
+ * Returns: 1 = has capacity (or service already registered), 0 = full (skip reader)
  */
 static int8_t reader_has_capacity(struct s_reader *rdr, uint16_t srvid)
 {
 	if(!rdr || rdr->maxparallel <= 0)
-		return 1;  // 0 = unlimited, always OK
+		return 1;  // unlimited
 
 	cs_readlock(__func__, &rdr->parallel_lock);
 
 	struct timeb now;
 	cs_ftime(&now);
 
-	// Check if already tracking this service
+	int32_t prov_size = get_prov_size(rdr);
+	int8_t result = 0;
+
+	// Check if service already registered in normal array
 	for(int i = 0; i < rdr->maxparallel; i++)
 	{
 		if(rdr->parallel_slots[i].srvid == srvid)
 		{
-			// Already tracking - check if not expired
-			int64_t gone = comp_timeb(&now, &rdr->parallel_slots[i].last_ecm);
-			int32_t timeout = rdr->parallel_slots[i].ecm_interval + rdr->paralleltimeout;
-			if(rdr->parallel_slots[i].ecm_interval == 0)
-				timeout = 10000 + rdr->paralleltimeout;
-
-			if(gone <= timeout)
-			{
-				cs_readunlock(__func__, &rdr->parallel_lock);
-				return 1;  // Already have this service
-			}
+			result = 1;
+			goto done;
 		}
 	}
 
-	// Count active (non-expired) services
-	int32_t active = 0;
-	for(int i = 0; i < rdr->maxparallel; i++)
+	// Check if service already registered in provisional array
+	for(int i = 0; i < prov_size; i++)
 	{
-		if(rdr->parallel_slots[i].srvid == 0)
-			continue;
-
-		int64_t gone = comp_timeb(&now, &rdr->parallel_slots[i].last_ecm);
-		int32_t timeout = rdr->parallel_slots[i].ecm_interval + rdr->paralleltimeout;
-		if(rdr->parallel_slots[i].ecm_interval == 0)
-			timeout = 10000 + rdr->paralleltimeout;
-
-		if(gone <= timeout)
-			active++;
+		if(rdr->parallel_slots_prov[i].srvid == srvid)
+		{
+			result = 1;
+			goto done;
+		}
 	}
 
-	cs_readunlock(__func__, &rdr->parallel_lock);
+	// Count active normal slots (with expiry check)
+	int32_t normal_count = 0;
+	for(int i = 0; i < rdr->maxparallel; i++)
+	{
+		if(rdr->parallel_slots[i].srvid != 0)
+		{
+			int64_t gone = comp_timeb(&now, &rdr->parallel_slots[i].last_ecm);
+			int32_t timeout = get_slot_timeout(&rdr->parallel_slots[i], rdr->paralleltimeout);
+			if(gone <= timeout)
+				normal_count++;
+		}
+	}
 
-	return (active < rdr->maxparallel) ? 1 : 0;
+	// Space in normal array?
+	if(normal_count < rdr->maxparallel)
+	{
+		result = 1;
+		goto done;
+	}
+
+	// Space in provisional array?
+	if(prov_size > 0)
+	{
+		int32_t prov_count = 0;
+		for(int i = 0; i < prov_size; i++)
+		{
+			if(rdr->parallel_slots_prov[i].srvid != 0)
+			{
+				int64_t gone = comp_timeb(&now, &rdr->parallel_slots_prov[i].last_ecm);
+				int32_t timeout = get_slot_timeout(&rdr->parallel_slots_prov[i], rdr->paralleltimeout);
+				if(gone <= timeout)
+					prov_count++;
+			}
+		}
+		if(prov_count < prov_size)
+		{
+			result = 1;
+			goto done;
+		}
+	}
+
+	// No capacity available
+	result = 0;
+
+done:
+	cs_readunlock(__func__, &rdr->parallel_lock);
+	return result;
 }
 
 /**
  * maxparallel - Register a service on a reader (called when CW is found)
- * This actually reserves/updates the slot for this service.
- * Returns: 1 = registered, 0 = failed (should not happen if capacity was checked)
+ * Uses dual-array architecture:
+ * - parallel_slots: normal services (the limit)
+ * - parallel_slots_prov: provisional services during zapping
+ * New services go to normal if space available, otherwise provisional.
+ * Returns: 1 = registered, 0 = failed
  */
 static int8_t reader_register_service(struct s_reader *rdr, uint16_t srvid)
 {
@@ -252,83 +462,157 @@ static int8_t reader_register_service(struct s_reader *rdr, uint16_t srvid)
 	struct timeb now;
 	cs_ftime(&now);
 
-	// Clean up expired slots first
-	(void)reader_count_active_services_nolock(rdr, &now);
+	// Cleanup expired slots and handle promotions/kicks
+	int32_t normal_count = reader_cleanup_slots_nolock(rdr, &now);
 
-	// Find existing slot or empty slot
-	int32_t existing_slot = -1;
-	int32_t empty_slot = -1;
+	// Count provisionals
+	int32_t prov_size = get_prov_size(rdr);
+	int32_t prov_count = 0;
+	for(int i = 0; i < prov_size; i++)
+	{
+		if(rdr->parallel_slots_prov[i].srvid != 0)
+			prov_count++;
+	}
 
+	// Search for existing slot in both arrays
+	int32_t existing_normal = -1;
+	int32_t existing_prov = -1;
+	int32_t empty_normal = -1;
+	int32_t empty_prov = -1;
+
+	// Search normal array
 	for(int i = 0; i < rdr->maxparallel; i++)
 	{
 		if(rdr->parallel_slots[i].srvid == srvid)
-		{
-			existing_slot = i;
-			break;
-		}
-		if(empty_slot < 0 && rdr->parallel_slots[i].srvid == 0)
-			empty_slot = i;
+			existing_normal = i;
+		else if(empty_normal < 0 && rdr->parallel_slots[i].srvid == 0)
+			empty_normal = i;
 	}
 
-	int32_t slot;
-	int8_t is_new;
-
-	if(existing_slot >= 0)
+	// Search provisional array
+	for(int i = 0; i < prov_size; i++)
 	{
-		// Already tracking this service - update timestamp
-		slot = existing_slot;
+		if(rdr->parallel_slots_prov[i].srvid == srvid)
+			existing_prov = i;
+		else if(empty_prov < 0 && rdr->parallel_slots_prov[i].srvid == 0)
+			empty_prov = i;
+	}
+
+	struct s_parallel_slot *slot = NULL;
+	int8_t is_new = 0;
+	int8_t is_provisional = 0;
+	int32_t slot_idx = -1;
+	const char *array_name = "normal";
+
+	if(existing_normal >= 0)
+	{
+		// Already in normal array - just update
+		slot = &rdr->parallel_slots[existing_normal];
+		slot_idx = existing_normal;
 		is_new = 0;
-
-		// Measure interval
-		int64_t interval = comp_timeb(&now, &rdr->parallel_slots[slot].last_ecm);
-		if(interval > 0 && interval < 30000)  // Sanity: < 30 seconds
-		{
-			if(rdr->parallel_slots[slot].ecm_interval == 0)
-				rdr->parallel_slots[slot].ecm_interval = (int32_t)interval;
-			else
-				rdr->parallel_slots[slot].ecm_interval = (rdr->parallel_slots[slot].ecm_interval + (int32_t)interval) / 2;
-		}
 	}
-	else if(empty_slot >= 0)
+	else if(existing_prov >= 0)
 	{
-		// New service - use empty slot
-		slot = empty_slot;
+		// Already in provisional array - update there
+		slot = &rdr->parallel_slots_prov[existing_prov];
+		slot_idx = existing_prov;
+		is_new = 0;
+		is_provisional = 1;
+		array_name = "provisional";
+	}
+	else if(normal_count < rdr->maxparallel && empty_normal >= 0)
+	{
+		// New service, space in normal array
+		slot = &rdr->parallel_slots[empty_normal];
+		slot_idx = empty_normal;
+		slot->srvid = srvid;
+		slot->ecm_interval = 0;
 		is_new = 1;
-		rdr->parallel_slots[slot].srvid = srvid;
-		rdr->parallel_slots[slot].ecm_interval = 0;
+	}
+	else if(empty_prov >= 0)
+	{
+		// New service, normal full -> put in provisional
+		slot = &rdr->parallel_slots_prov[empty_prov];
+		slot_idx = empty_prov;
+		slot->srvid = srvid;
+		slot->ecm_interval = 0;
+		is_new = 1;
+		is_provisional = 1;
+		array_name = "provisional";
 	}
 	else
 	{
-		// No slot available - this can happen in race conditions, just log and continue
+		// No slot available in either array
 		cs_writeunlock(__func__, &rdr->parallel_lock);
-		cs_log_dbg(D_LB, "reader %s: no slot available for service %04X (race condition)", rdr->label, srvid);
+		cs_log("reader %s: no slot available for service %04X (all %d+%d slots used)",
+			rdr->label, srvid, rdr->maxparallel, prov_size);
 		return 0;
 	}
 
-	rdr->parallel_slots[slot].last_ecm = now;
+	// Update interval for existing slots
+	if(!is_new && slot->last_ecm.time > 0)
+	{
+		int64_t interval = comp_timeb(&now, &slot->last_ecm);
+		if(interval > 0 && interval < 30000)  // Sanity: < 30 seconds
+		{
+			if(slot->ecm_interval == 0)
+				slot->ecm_interval = (int32_t)interval;
+			else
+				slot->ecm_interval = (slot->ecm_interval + (int32_t)interval) / 2;
+		}
+	}
 
-	// Log status change
-	int32_t new_active = reader_count_active_services_nolock(rdr, &now);
+	slot->last_ecm = now;
+
+	// If this is a NORMAL service (not provisional), kick provisionals if needed
+	// This ensures provisionals are only kicked when normal services prove they're still active
+	if(!is_provisional)
+	{
+		reader_kick_provisionals_nolock(rdr, &now);
+	}
+
+	// Recount for logging (kick may have changed counts)
+	int32_t final_normal = 0, final_prov = 0;
+	for(int i = 0; i < rdr->maxparallel; i++)
+	{
+		if(rdr->parallel_slots[i].srvid != 0)
+			final_normal++;
+	}
+	for(int i = 0; i < prov_size; i++)
+	{
+		if(rdr->parallel_slots_prov[i].srvid != 0)
+			final_prov++;
+	}
+	int32_t total_active = final_normal + final_prov;
+
 	if(is_new)
 	{
-		cs_log_dbg(D_LB, "reader %s: registered service %04X in slot %d (%d/%d active)",
-			rdr->label, srvid, slot, new_active, rdr->maxparallel);
+		if(final_prov > 0)
+		{
+			cs_log_dbg(D_READER, "reader %s: registered service %04X in %s slot %d (%d/%d normal, +%d prov)",
+				rdr->label, srvid, array_name, slot_idx, final_normal, rdr->maxparallel, final_prov);
+		}
+		else
+		{
+			cs_log_dbg(D_READER, "reader %s: registered service %04X in %s slot %d (%d/%d normal)",
+				rdr->label, srvid, array_name, slot_idx, final_normal, rdr->maxparallel);
+		}
 
 		// Log "now full" only once per state change
-		if(new_active >= rdr->maxparallel && !rdr->parallel_full)
+		if(final_normal >= rdr->maxparallel && !rdr->parallel_full)
 		{
 			rdr->parallel_full = 1;
-			cs_log("reader %s: now full (%d/%d active services)",
-				rdr->label, new_active, rdr->maxparallel);
+			cs_log("reader %s: now full (%d/%d normal)",
+				rdr->label, final_normal, rdr->maxparallel);
 		}
 	}
 
 	// Reset full flag when capacity becomes available
-	if(new_active < rdr->maxparallel && rdr->parallel_full)
+	if(final_normal < rdr->maxparallel && rdr->parallel_full)
 	{
 		rdr->parallel_full = 0;
-		cs_log_dbg(D_LB, "reader %s: capacity available (%d/%d active services)",
-			rdr->label, new_active, rdr->maxparallel);
+		cs_log_dbg(D_READER, "reader %s: capacity available (%d/%d normal)",
+			rdr->label, final_normal, rdr->maxparallel);
 	}
 
 	cs_writeunlock(__func__, &rdr->parallel_lock);

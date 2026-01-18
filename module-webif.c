@@ -3005,6 +3005,8 @@ static char *send_oscam_reader_config(struct templatevars *vars, struct uriparam
 	}
 	// Max parallel services
 	tpl_printf(vars, TPLADD, "MAXPARALLEL", "%d", rdr->maxparallel);
+	// Parallelfactor: format as float with dot (comma would break URL parameters)
+	tpl_printf(vars, TPLADD, "PARALLELFACTOR", "%.1f", rdr->parallelfactor >= 0 ? rdr->parallelfactor : 2.0);
 	tpl_printf(vars, TPLADD, "PARALLELTIMEOUT", "%d", rdr->paralleltimeout);
 #ifdef WITH_CARDREADER
 	// Frequencies
