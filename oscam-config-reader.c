@@ -1103,17 +1103,17 @@ void reader_fixups_fn(void *var)
 	}
 
 	// Allocate/reallocate parallel_slots if maxparallel changed
-	// Two separate arrays: regular slots (maxparallel) and provisional slots (round(maxparallel * parallelfactor))
+	// Two separate arrays: active slots (maxparallel) and pending slots (round(maxparallel * parallelfactor))
 	if(rdr->maxparallel > 0)
 	{
 		// Set default parallelfactor if negative (not configured)
-		// parallelfactor = 0 is valid (disables provisional slots)
+		// parallelfactor = 0 is valid (disables pending slots)
 		if(rdr->parallelfactor < 0)
 			rdr->parallelfactor = 1.5;
 
-		// Calculate provisional slots size: round(maxparallel * parallelfactor) without math.h
-		// parallelfactor = 0 means no provisional slots (zapping support disabled)
-		int32_t prov_size = (int32_t)(rdr->maxparallel * rdr->parallelfactor + 0.5);
+		// Calculate pending slots size: round(maxparallel * parallelfactor) without math.h
+		// parallelfactor = 0 means no pending slots (zapping support disabled)
+		int32_t pending_size = (int32_t)(rdr->maxparallel * rdr->parallelfactor + 0.5);
 
 		// Only allocate if not yet allocated (first time setup)
 		// Size changes require OSCam restart to take effect
@@ -1121,7 +1121,7 @@ void reader_fixups_fn(void *var)
 		{
 			if(!cs_malloc(&rdr->parallel_slots, rdr->maxparallel * sizeof(struct s_parallel_slot)))
 				{ rdr->maxparallel = 0; }  // disable on allocation failure
-			else if(prov_size > 0 && !cs_malloc(&rdr->parallel_slots_prov, prov_size * sizeof(struct s_parallel_slot)))
+			else if(pending_size > 0 && !cs_malloc(&rdr->parallel_slots_prov, pending_size * sizeof(struct s_parallel_slot)))
 			{
 				NULLFREE(rdr->parallel_slots);  // free first array on second failure
 				rdr->maxparallel = 0;
