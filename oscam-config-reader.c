@@ -1009,11 +1009,11 @@ static void parallelfactor_fn(const char *token, char *value, void *setting, FIL
 			// Accept both '.' and ',' as decimal separator
 			char tmp[32];
 			cs_strncpy(tmp, value, sizeof(tmp));
-			
+
 			// Find decimal separator (either . or ,)
 			char *sep = strchr(tmp, '.');
 			if(!sep) sep = strchr(tmp, ',');
-			
+
 			if(sep)
 			{
 				*sep = '\0';  // Split at separator
@@ -1026,7 +1026,7 @@ static void parallelfactor_fn(const char *token, char *value, void *setting, FIL
 			{
 				rdr->parallelfactor = (float)atoi(tmp);
 			}
-			
+
 			if(rdr->parallelfactor < 0)
 				rdr->parallelfactor = 1.5;  // default on negative
 		}
@@ -1127,7 +1127,10 @@ void reader_fixups_fn(void *var)
 				rdr->maxparallel = 0;
 			}
 			else
-				{ cs_lock_create(__func__, &rdr->parallel_lock, "parallel_lock", 5000); }
+			{
+				cs_lock_create(__func__, &rdr->parallel_lock, "parallel_lock", 5000);
+				rdr->blocked_services = ll_create("blocked_services");
+			}
 
 			rdr->parallel_full = 0;  // reset full flag
 		}
@@ -1137,6 +1140,7 @@ void reader_fixups_fn(void *var)
 		// maxparallel was disabled, free the slots
 		NULLFREE(rdr->parallel_slots);
 		NULLFREE(rdr->parallel_slots_prov);
+		ll_destroy_data(&rdr->blocked_services);
 		rdr->parallel_full = 0;
 	}
 }
@@ -1583,6 +1587,7 @@ void free_reader(struct s_reader *rdr)
 		{ cs_lock_destroy(__func__, &rdr->parallel_lock); }
 	NULLFREE(rdr->parallel_slots);
 	NULLFREE(rdr->parallel_slots_prov);
+	ll_destroy_data(&rdr->blocked_services);
 
 	ecm_whitelist_clear(&rdr->ecm_whitelist);
 	ecm_hdr_whitelist_clear(&rdr->ecm_hdr_whitelist);
