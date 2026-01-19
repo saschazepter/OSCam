@@ -1911,7 +1911,7 @@ struct s_reader										// contains device info, reader info and card info
 	float			parallelfactor;						// zapping tolerance multiplier (default: 2.0)
 	int32_t			paralleltimeout;					// timeout buffer in ms after expected ECM (default: 1000)
 	struct s_parallel_slot	*parallel_slots;			// regular service tracking (size: maxparallel)
-	struct s_parallel_slot	*parallel_slots_prov;		// provisional service tracking (size: maxparallel * parallelfactor, rounded)
+	struct s_parallel_slot	*parallel_slots_prov;		// pending service tracking (size: maxparallel * parallelfactor, rounded)
 	CS_MUTEX_LOCK	parallel_lock;						// lock for parallel_slots access
 	int8_t			parallel_full;						// flag: 1 if reader is at capacity limit
 	int8_t			cooldownstate;
