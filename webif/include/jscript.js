@@ -2536,20 +2536,278 @@ var Base64={_keyStr:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456
 var wikiPopupHtml = '<div id="wikiPopup" class="wiki-popup">' +
 	'<div class="wiki-popup-header">' +
 		'<a class="wiki-popup-title" href="#" target="_blank"></a>' +
+		'<span class="wiki-popup-translate" title="Translate">&#127760;</span>' +
+		'<span class="wiki-popup-langselect" title="Select language">&#9662;</span>' +
+		'<span class="wiki-popup-lang"></span>' +
 		'<span class="wiki-popup-reset" title="Reset position and size">&#8634;</span>' +
 		'<span class="wiki-popup-close" title="Close">&times;</span>' +
 	'</div>' +
 	'<div class="wiki-popup-content"></div>' +
 	'</div>';
 
+/* Wiki Translation Service with browser detection and fallback */
+var WikiTranslator = {
+	lastMethod: null, /* Track which method was used */
+	methodCache: {}, /* In-memory cache for current session only */
+	
+	/* Timeout wrapper for promises */
+	withTimeout: function(promise, ms) {
+		var timeout = new Promise(function(_, reject) {
+			setTimeout(function() { reject(new Error('Timeout')); }, ms);
+		});
+		return Promise.race([promise, timeout]);
+	},
+
+	/* Get cached method for a language (session only) */
+	getCachedMethod: function(targetLang) {
+		return this.methodCache[targetLang] || null;
+	},
+
+	/* Save method to session cache */
+	setCachedMethod: function(targetLang, method) {
+		this.methodCache[targetLang] = method;
+	},
+
+	/* Check Edge Translator availability for a language pair */
+	async checkEdgeAvailability(targetLang) {
+		if (typeof Translator === 'undefined' || typeof Translator.availability !== 'function') {
+			return false;
+		}
+		try {
+			var status = await this.withTimeout(
+				Translator.availability({
+					sourceLanguage: 'en',
+					targetLanguage: targetLang
+				}),
+				3000
+			);
+			/* Only use Edge if model is already downloaded ('available') */
+			/* 'downloadable'/'downloading' would cause delays, use Google instead */
+			return status === 'available';
+		} catch (e) {
+			return false;
+		}
+	},
+
+	/* Detect best available translation method for a given target language */
+	async detectMethod(targetLang) {
+		/* Check cache first for fast path */
+		var cached = this.getCachedMethod(targetLang);
+		if (cached === 'edge-native' || cached === 'chrome-native') {
+			/* Verify native API is still available */
+			if (cached === 'edge-native' && typeof Translator !== 'undefined') {
+				var edgeOk = await this.checkEdgeAvailability(targetLang);
+				if (edgeOk) return 'edge-native';
+			}
+			if (cached === 'chrome-native' && 'translation' in self) {
+				return 'chrome-native';
+			}
+		}
+		if (cached === 'google-gtx') {
+			return 'google-gtx';
+		}
+
+		/* No cache - detect method */
+		/* Try Edge native Translator API (Translator.create) */
+		if (typeof Translator !== 'undefined' && typeof Translator.create === 'function') {
+			var edgeAvailable = await this.checkEdgeAvailability(targetLang);
+			if (edgeAvailable) {
+				return 'edge-native';
+			}
+		}
+		/* Try Chrome native Translation API (self.translation) */
+		if ('translation' in self && 'createTranslator' in self.translation) {
+			try {
+				var status = await self.translation.canTranslate({
+					sourceLanguage: 'en',
+					targetLanguage: targetLang
+				});
+				if (status === 'readily' || status === 'after-download') {
+					return 'chrome-native';
+				}
+			} catch (e) { /* ignore */ }
+		}
+		/* Fallback to Google GTX (works in all browsers) */
+		return 'google-gtx';
+	},
+
+	/* Edge native Translator API */
+	async useEdgeAPI(text, targetLang) {
+		var translator = await this.withTimeout(
+			Translator.create({
+				sourceLanguage: 'en',
+				targetLanguage: targetLang
+			}),
+			15000 /* 15 second timeout for model loading/download */
+		);
+		return this.withTimeout(translator.translate(text), 5000);
+	},
+
+	/* Chrome native Translation API */
+	async useChromeAPI(text, targetLang) {
+		var translator = await this.withTimeout(
+			self.translation.createTranslator({
+				sourceLanguage: 'en',
+				targetLanguage: targetLang
+			}),
+			10000
+		);
+		return this.withTimeout(translator.translate(text), 5000);
+	},
+
+	/* Google Translate (unofficial endpoint, works in all browsers) */
+	async useGoogleGTX(text, targetLang) {
+		var url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=' +
+			targetLang + '&dt=t&q=' + encodeURIComponent(text);
+		var resp = await this.withTimeout(fetch(url), 5000);
+		var data = await resp.json();
+		return data[0].map(function(x) { return x[0]; }).join('');
+	},
+
+	/* Main translate function with auto-detection and fallback */
+	async translate(text, targetLang) {
+		var method = await this.detectMethod(targetLang);
+		var self = this;
+		
+		/* Try native API first, fallback to Google on error */
+		if (method === 'edge-native') {
+			try {
+				this.lastMethod = 'edge-native';
+				var result = await this.useEdgeAPI(text, targetLang);
+				this.setCachedMethod(targetLang, 'edge-native');
+				return result;
+			} catch (e) {
+				console.warn('Edge Translator failed, falling back to Google:', e.message);
+				this.lastMethod = 'google-gtx';
+				this.setCachedMethod(targetLang, 'google-gtx');
+				return this.useGoogleGTX(text, targetLang);
+			}
+		}
+		
+		if (method === 'chrome-native') {
+			try {
+				this.lastMethod = 'chrome-native';
+				var result = await this.useChromeAPI(text, targetLang);
+				this.setCachedMethod(targetLang, 'chrome-native');
+				return result;
+			} catch (e) {
+				console.warn('Chrome Translator failed, falling back to Google:', e.message);
+				this.lastMethod = 'google-gtx';
+				this.setCachedMethod(targetLang, 'google-gtx');
+				return this.useGoogleGTX(text, targetLang);
+			}
+		}
+
+		this.lastMethod = 'google-gtx';
+		this.setCachedMethod(targetLang, 'google-gtx');
+		return this.useGoogleGTX(text, targetLang);
+	},
+	
+	/* Get human-readable method name */
+	getMethodName: function() {
+		switch (this.lastMethod) {
+			case 'edge-native': return 'Edge Translator';
+			case 'chrome-native': return 'Chrome Translator';
+			default: return 'Google Translate';
+		}
+	}
+};
+
+/* Wiki translation state */
+var wikiOriginalContent = null;
+var wikiTranslatedContent = null;
+var wikiIsTranslated = false;
+var wikiAutoTranslate = localStorage.getItem('wikiAutoTranslate') === 'true'; /* Auto-translate new popups */
+
+/* Update the language indicator in popup header */
+function wikiUpdateLangLabel() {
+	var $label = $('.wiki-popup-lang');
+	if (wikiIsTranslated) {
+		var methodInfo = WikiTranslator.getMethodName();
+		$label.text(wikiGetLangNameWithFlag(wikiTargetLang))
+		      .attr('title', 'Translated via: ' + methodInfo);
+	} else {
+		$label.text('').attr('title', '');
+	}
+}
+
+/*
+ * Wiki Translation Language Configuration
+ * Languages are configured via oscam.conf [webif] httphelplang parameter
+ * Server injects: var wikiHelpLangs = "de,fr,es,...";
+ */
+
+/* Get flag emoji from language/country code */
+function wikiGetFlagEmoji(code) {
+	var cc = code.toUpperCase();
+	try {
+		return String.fromCodePoint(
+			127397 + cc.charCodeAt(0),
+			127397 + cc.charCodeAt(1)
+		);
+	} catch (e) {
+		return '';
+	}
+}
+
+/* Get language name using Intl.DisplayNames API */
+function wikiGetLangName(langCode) {
+	try {
+		/* Try to get native language name (e.g. "Deutsch" for "de") */
+		var native = new Intl.DisplayNames([langCode], { type: 'language' });
+		var name = native.of(langCode);
+		/* If API just returns the code, try English instead */
+		if (name === langCode) {
+			var english = new Intl.DisplayNames(['en'], { type: 'language' });
+			name = english.of(langCode);
+		}
+		/* Capitalize first letter */
+		return name.charAt(0).toUpperCase() + name.slice(1);
+	} catch (e) {
+		/* Fallback to uppercase code */
+		return langCode.toUpperCase();
+	}
+}
+
+/* Get language name with flag emoji */
+function wikiGetLangNameWithFlag(langCode) {
+	var flag = wikiGetFlagEmoji(langCode);
+	var name = wikiGetLangName(langCode);
+	return flag ? flag + ' ' + name : name;
+}
+
+/* Parse configured languages from server */
+function wikiGetConfiguredLangs() {
+	/* wikiHelpLangs is set by server via httphelplang config */
+	if (typeof wikiHelpLangs === 'undefined' || !wikiHelpLangs) {
+		return ['de']; /* Fallback if server variable missing */
+	}
+	var configured = wikiHelpLangs.split(',').map(function(l) { return l.trim().toLowerCase(); });
+	/* Filter to valid ISO 639-1 codes (2 letters) */
+	return configured.filter(function(l) { return /^[a-z]{2}$/.test(l); });
+}
+
+/* Get saved preference or first configured language */
+function wikiGetDefaultLang() {
+	var configured = wikiGetConfiguredLangs();
+	if (configured.length === 0) return 'de';
+	var saved = localStorage.getItem('wikiTranslateLang');
+	if (saved && configured.indexOf(saved) !== -1) {
+		return saved;
+	}
+	return configured[0];
+}
+
+var wikiTargetLang = wikiGetDefaultLang();
+
 var wikiDragState = { isDragging: false, startX: 0, startY: 0, startLeft: 0, startTop: 0 };
 var wikiSavedLeft = localStorage.getItem('wikiPopupLeft');
 var wikiSavedWidth = localStorage.getItem('wikiPopupWidth');
-var wikiSavedHeight = localStorage.getItem('wikiPopupHeight');
 var wikiDefaultWidth = 400;
 var wikiLastLinkOffset = 0;
-var wikiUserResized = !!(wikiSavedWidth || wikiSavedHeight);
+var wikiUserResized = !!wikiSavedWidth;
 var wikiCurrentLink = null;
+var wikiCurrentParam = null;
 var wikiConnectorLine = null;
 
 /* Draw connector line between link and popup */
@@ -2635,12 +2893,12 @@ $(function() {
 	});
 
 	$('.wiki-popup-reset').click(function() {
+		/* Reset position and size */
 		localStorage.removeItem('wikiPopupLeft');
 		localStorage.removeItem('wikiPopupWidth');
 		localStorage.removeItem('wikiPopupHeight');
 		wikiSavedLeft = null;
 		wikiSavedWidth = null;
-		wikiSavedHeight = null;
 		wikiUserResized = false;
 		var $popup = $('#wikiPopup');
 		/* Recalculate position based on current link */
@@ -2660,6 +2918,241 @@ $(function() {
 			$popup.css({ width: wikiDefaultWidth, height: 'auto', left: defaultLeft });
 		}
 		setTimeout(updateWikiConnector, 50);
+	});
+
+	/* Perform translation on wiki content */
+	async function wikiDoTranslate() {
+		var $btn = $('.wiki-popup-translate');
+		var $content = $('.wiki-popup-content');
+		var $wikiText = $content.find('.wiki-text');
+
+		/* Nothing to translate */
+		if (!$wikiText.length) return;
+
+		/* Already translated */
+		if (wikiIsTranslated) return;
+
+		/* Store original content */
+		wikiOriginalContent = $wikiText.html();
+
+		/* Check cache first */
+		var cacheKey = 'wikiCache_' + wikiCurrentParam + '_' + wikiTargetLang;
+		var cached = localStorage.getItem(cacheKey);
+		if (cached) {
+			$wikiText.html(cached);
+			wikiTranslatedContent = cached;
+			wikiIsTranslated = true;
+			$btn.html('&#8617;').attr('title', 'Show original (EN)');
+			wikiUpdateLangLabel();
+			return;
+		}
+
+		/* Show loading state */
+		$btn.html('&#8987;').attr('title', 'Translating...');
+
+		try {
+			/* Translate text nodes while preserving HTML structure */
+			var $clone = $wikiText.clone();
+			
+			/* Tags where only comments (after #) should be translated */
+			var codeBlockTags = ['PRE'];
+			/* Tags that should NOT be translated at all */
+			var skipTags = ['CODE', 'KBD', 'SAMP', 'VAR'];
+			
+			/* Check if node is inside a specific tag type */
+			function getParentTag(node, tagList) {
+				var parent = node.parentNode;
+				while (parent) {
+					if (tagList.indexOf(parent.nodeName) !== -1) {
+						return parent.nodeName;
+					}
+					parent = parent.parentNode;
+				}
+				return null;
+			}
+			
+			/* Collect all text nodes with context */
+			var textNodes = [];
+			function collectTextNodes(node) {
+				if (node.nodeType === 3 && node.textContent.trim()) {
+					var skipTag = getParentTag(node, skipTags);
+					var codeTag = getParentTag(node, codeBlockTags);
+					if (!skipTag) {
+						textNodes.push({ node: node, inCodeBlock: !!codeTag });
+					}
+				} else if (node.nodeType === 1 && skipTags.indexOf(node.nodeName) === -1) {
+					for (var i = 0; i < node.childNodes.length; i++) {
+						collectTextNodes(node.childNodes[i]);
+					}
+				}
+			}
+			collectTextNodes($clone[0]);
+
+			/* Translate each text node */
+			for (var i = 0; i < textNodes.length; i++) {
+				var nodeInfo = textNodes[i];
+				var text = nodeInfo.node.textContent;
+				
+				if (nodeInfo.inCodeBlock) {
+					/* In code blocks: only translate comments (after #) */
+					var lines = text.split('\n');
+					var translatedLines = [];
+					for (var j = 0; j < lines.length; j++) {
+						var line = lines[j];
+						var hashIndex = line.indexOf('#');
+						if (hashIndex !== -1) {
+							var codePart = line.substring(0, hashIndex + 1);
+							var commentPart = line.substring(hashIndex + 1).trim();
+							if (commentPart.length > 0) {
+								var translatedComment = await WikiTranslator.translate(commentPart, wikiTargetLang);
+								translatedLines.push(codePart + ' ' + translatedComment);
+							} else {
+								translatedLines.push(line);
+							}
+						} else {
+							translatedLines.push(line);
+						}
+					}
+					nodeInfo.node.textContent = translatedLines.join('\n');
+				} else {
+					/* Normal text: translate everything */
+					var trimmed = text.trim();
+					if (trimmed.length > 0) {
+						var translated = await WikiTranslator.translate(trimmed, wikiTargetLang);
+						nodeInfo.node.textContent = translated;
+					}
+				}
+			}
+
+			/* Show translated content */
+			$wikiText.html($clone.html());
+			wikiTranslatedContent = $clone.html();
+			wikiIsTranslated = true;
+
+			/* Save to cache */
+			var cacheKey = 'wikiCache_' + wikiCurrentParam + '_' + wikiTargetLang;
+			try {
+				localStorage.setItem(cacheKey, wikiTranslatedContent);
+			} catch (e) {
+				console.warn('Wiki cache storage failed:', e);
+			}
+
+			/* Update button to show "back to original" */
+			$btn.html('&#8617;').attr('title', 'Show original (EN)');
+			wikiUpdateLangLabel();
+
+		} catch (err) {
+			console.error('Translation failed:', err);
+			$btn.html('&#10060;').attr('title', 'Translation failed - click to retry');
+			wikiAutoTranslate = false; /* Disable auto-translate on error */
+			localStorage.setItem('wikiAutoTranslate', 'false');
+			setTimeout(function() {
+				var langName = wikiGetLangName(wikiTargetLang);
+				$btn.html('&#127760;').attr('title', 'Translate to ' + langName);
+			}, 2000);
+		}
+	}
+
+	/* Translation button - toggle between original and translated content */
+	$('.wiki-popup-translate').click(async function() {
+		var $btn = $(this);
+		var $content = $('.wiki-popup-content');
+		var $wikiText = $content.find('.wiki-text');
+
+		/* Nothing to translate */
+		if (!$wikiText.length) return;
+
+		/* Toggle back to original */
+		if (wikiIsTranslated && wikiOriginalContent) {
+			$wikiText.html(wikiOriginalContent);
+			wikiIsTranslated = false;
+			wikiAutoTranslate = false; /* User wants original, disable auto-translate */
+			localStorage.removeItem('wikiTranslateLang');
+			localStorage.removeItem('wikiAutoTranslate');
+			/* Clear all cached translations */
+			var keysToRemove = [];
+			for (var i = 0; i < localStorage.length; i++) {
+				var key = localStorage.key(i);
+				if (key && key.indexOf('wikiCache_') === 0) {
+					keysToRemove.push(key);
+				}
+			}
+			for (var i = 0; i < keysToRemove.length; i++) {
+				localStorage.removeItem(keysToRemove[i]);
+			}
+			wikiTargetLang = wikiGetConfiguredLangs()[0] || 'de';
+			var langName = wikiGetLangName(wikiTargetLang);
+			$btn.html('&#127760;').attr('title', 'Translate to ' + langName);
+			wikiUpdateLangLabel();
+			return;
+		}
+
+		/* Translate */
+		wikiAutoTranslate = true; /* User wants translation, enable auto-translate */
+		localStorage.setItem('wikiAutoTranslate', 'true');
+		await wikiDoTranslate();
+	});
+
+	/* Show language selector menu */
+	function wikiShowLangMenu($btn) {
+		var langs = wikiGetConfiguredLangs();
+
+		/* Remove existing language menu if present */
+		$('#wikiLangMenu').remove();
+
+		/* Build language menu */
+		var menuHtml = '<div id="wikiLangMenu" class="wiki-lang-menu">';
+		for (var i = 0; i < langs.length; i++) {
+			var lang = langs[i];
+			var name = wikiGetLangNameWithFlag(lang);
+			var selected = (lang === wikiTargetLang) ? ' class="selected"' : '';
+			menuHtml += '<div' + selected + ' data-lang="' + lang + '">' + name + '</div>';
+		}
+		menuHtml += '</div>';
+
+		var $menu = $(menuHtml);
+		$('body').append($menu);
+
+		/* Position menu near the button */
+		var btnOffset = $btn.offset();
+		$menu.css({
+			top: btnOffset.top + $btn.outerHeight() + 2,
+			left: btnOffset.left - $menu.outerWidth() + $btn.outerWidth()
+		});
+
+		/* Handle language selection */
+		$menu.find('div[data-lang]').on('click', function(ev) {
+			ev.stopPropagation();
+			wikiTargetLang = $(this).data('lang');
+			localStorage.setItem('wikiTranslateLang', wikiTargetLang);
+			/* Enable auto-translate for next popups */
+			wikiAutoTranslate = true;
+			localStorage.setItem('wikiAutoTranslate', 'true');
+			/* Reset translation state and re-translate current content */
+			wikiIsTranslated = false;
+			wikiOriginalContent = null;
+			wikiTranslatedContent = null;
+			$('#wikiLangMenu').remove();
+			/* Translate current popup immediately */
+			wikiDoTranslate();
+		});
+
+		/* Close menu when clicking outside, but not on menu itself */
+		setTimeout(function() {
+			$(document).on('click.wikiLangMenu', function(ev) {
+				if (!$(ev.target).closest('#wikiLangMenu').length) {
+					$('#wikiLangMenu').remove();
+					$(document).off('click.wikiLangMenu');
+				}
+			});
+		}, 50);
+	}
+
+	/* Click on language selector button (▼) to show menu */
+	$('.wiki-popup-langselect').on('click', function(e) {
+		e.preventDefault();
+		e.stopPropagation();
+		wikiShowLangMenu($(this));
 	});
 
 	$(document).click(function(e) {
@@ -2782,21 +3275,16 @@ $(function() {
 		}
 	});
 
-	/* Save size after user resize */
+	/* Save width after user resize (height is always auto) */
 	var wikiLastWidth = 0;
-	var wikiLastHeight = 0;
 	$('#wikiPopup').on('mouseup', function() {
 		var w = $(this).width();
-		var h = $(this).height();
-		if (wikiLastWidth && wikiLastHeight && (w !== wikiLastWidth || h !== wikiLastHeight)) {
+		if (wikiLastWidth && w !== wikiLastWidth) {
 			wikiUserResized = true;
 			wikiSavedWidth = w;
-			wikiSavedHeight = h;
 			localStorage.setItem('wikiPopupWidth', wikiSavedWidth);
-			localStorage.setItem('wikiPopupHeight', wikiSavedHeight);
 		}
 		wikiLastWidth = w;
-		wikiLastHeight = h;
 	});
 
 	$('form table a').off('click').click(function(e) {
@@ -2843,11 +3331,26 @@ $(function() {
 
 		if (!inputName) return;
 
+		/* Store current param for caching */
+		wikiCurrentParam = inputName;
+
 		/* Extract section from form's hidden part input */
 		var section = $('input[name="part"]').val() || '';
 
 		var $link = $(this);
 		var $popup = $('#wikiPopup');
+
+		/* Reset translation state for new popup */
+		wikiIsTranslated = false;
+		wikiOriginalContent = null;
+		wikiTranslatedContent = null;
+		var langName = wikiGetLangName(wikiTargetLang);
+		if (wikiAutoTranslate) {
+			$('.wiki-popup-translate').html('&#8987;').attr('title', 'Translating to ' + langName + '...');
+		} else {
+			$('.wiki-popup-translate').html('&#127760;').attr('title', 'Translate to ' + langName);
+		}
+		wikiUpdateLangLabel();
 
 		$('.wiki-popup-title').text(inputName).attr('href',
 			'https://git.streamboard.tv/common/oscam/-/wikis/pages/configuration/oscam.' + oscamconf + '#' + externalParam);
@@ -2868,7 +3371,7 @@ $(function() {
 			top: offset.top - 10,
 			left: leftPos,
 			width: wikiUserResized && wikiSavedWidth ? parseInt(wikiSavedWidth) : wikiDefaultWidth,
-			height: wikiUserResized && wikiSavedHeight ? parseInt(wikiSavedHeight) : 'auto',
+			height: 'auto', /* Always auto-resize height for new content */
 			'max-width': $(window).width() - 20,
 			'max-height': $(window).height() - 20
 		}).fadeIn(200);
@@ -2876,10 +3379,9 @@ $(function() {
 		/* Draw connector line */
 		setTimeout(updateWikiConnector, 50);
 
-		/* Update last size for resize detection */
+		/* Update last width for resize detection */
 		setTimeout(function() {
 			wikiLastWidth = $popup.width();
-			wikiLastHeight = $popup.height();
 		}, 250);
 
 		$.ajax({
@@ -2891,12 +3393,21 @@ $(function() {
 				if (data && data.text) {
 					var html = formatWikiText(data.text);
 					$('.wiki-popup-content').html(html);
+					/* Auto-translate if enabled */
+					if (wikiAutoTranslate) {
+						wikiDoTranslate();
+					}
 				} else {
 					$('.wiki-popup-content').html(
 						'<div class="wiki-nohelp">No help available for this parameter.<br><br>' +
 						'<a href="https://git.streamboard.tv/common/oscam/-/wikis/pages/configuration/oscam.' +
 						oscamconf + '#' + externalParam + '" target="_blank">View Wiki &rarr;</a></div>'
 					);
+					/* Reset button if auto-translate was pending */
+					if (wikiAutoTranslate) {
+						var langName = wikiGetLangName(wikiTargetLang);
+						$('.wiki-popup-translate').html('&#127760;').attr('title', 'Translate to ' + langName);
+					}
 				}
 			},
 			error: function() {
@@ -2905,6 +3416,11 @@ $(function() {
 					'<a href="https://git.streamboard.tv/common/oscam/-/wikis/pages/configuration/oscam.' +
 					oscamconf + '#' + externalParam + '" target="_blank">View Wiki &rarr;</a></div>'
 				);
+				/* Reset button if auto-translate was pending */
+				if (wikiAutoTranslate) {
+					var langName = wikiGetLangName(wikiTargetLang);
+					$('.wiki-popup-translate').html('&#127760;').attr('title', 'Translate to ' + langName);
+				}
 			}
 		});
 	});

@@ -9533,8 +9533,18 @@ static int32_t process_request(FILE * f, IN_ADDR_T in)
 			tpl_addVar(vars, TPLADD, "BOARD_URL", BOARD_URL);
 #ifdef WEBIF_WIKI
 			tpl_addVar(vars, TPLADD, "WIKIINTERNALVAR", "\t\tvar wikiInternal = true;");
+			/* Set configured help languages for wiki translation feature */
+			if(cfg.http_help_lang && strlen(cfg.http_help_lang) > 0)
+			{
+				tpl_printf(vars, TPLADD, "WIKIHELPLANGSVAR", "\t\tvar wikiHelpLangs = \"%s\";", cfg.http_help_lang);
+			}
+			else
+			{
+				tpl_addVar(vars, TPLADD, "WIKIHELPLANGSVAR", "");
+			}
 #else
 			tpl_addVar(vars, TPLADD, "WIKIINTERNALVAR", "");
+			tpl_addVar(vars, TPLADD, "WIKIHELPLANGSVAR", "");
 #endif
 			tpl_addVar(vars, TPLADD, "CS_VERSION", CS_VERSION);
 			tpl_addVar(vars, TPLADD, "CS_GIT_COMMIT", CS_GIT_COMMIT);

@@ -1201,6 +1201,13 @@ only screen and (min-device-width : 320px) and (max-device-width : 568px) and (o
 .wiki-popup-reset:hover {
 	color:#FF9E5F
 }
+.wiki-popup-lang {
+	font-size:11px;
+	font-weight:bold;
+	color:#666;
+	padding:0 6px;
+	cursor:default
+}
 .wiki-popup-content {
 	padding:12px;
 	overflow-y:auto;
@@ -1286,4 +1293,60 @@ a.wiki-active {
 	outline:2px solid #ffcc00;
 	position:relative;
 	z-index:2
+}
+/* Wiki translate button */
+.wiki-popup-translate {
+	cursor:pointer;
+	font-size:16px;
+	line-height:1;
+	padding:0 2px 0 4px;
+	margin-left:8px;
+	-webkit-user-select:none;
+	user-select:none
+}
+.wiki-popup-translate:hover {
+	color:#FF9E5F
+}
+.wiki-popup-langselect {
+	cursor:pointer;
+	font-size:10px;
+	line-height:1;
+	padding:0 4px 0 0;
+	-webkit-user-select:none;
+	user-select:none
+}
+.wiki-popup-langselect:hover {
+	color:#FF9E5F
+}
+/* Wiki language selector menu */
+.wiki-lang-menu {
+	position:absolute;
+	background:#e8e8e8;
+	border:1px solid #999;
+	border-radius:4px;
+	box-shadow:0 2px 8px rgba(0,0,0,0.3);
+	z-index:10001;
+	min-width:120px;
+	max-height:250px;
+	overflow-y:auto;
+	font-size:12px
+}
+.wiki-lang-menu div[data-lang] {
+	padding:5px 10px;
+	cursor:pointer;
+	color:#333;
+	white-space:nowrap
+}
+.wiki-lang-menu div[data-lang]:hover {
+	background:#d0d0d0
+}
+.wiki-lang-menu div[data-lang].selected {
+	background:#b8c8d8;
+	color:#000
+}
+/* Wiki connector line */
+svg.wiki-connector {
+	position:absolute;
+	pointer-events:none;
+	z-index:1
 }
