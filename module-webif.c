@@ -1506,7 +1506,15 @@ static char *send_oscam_config_webif(struct templatevars *vars, struct uriparams
 	if(cfg.http_prepend_embedded_css)
 		{ tpl_addVar(vars, TPLADD, "HTTPPREPENDEMBEDDEDCSS", "checked"); }
 
+#ifdef WEBIF_WIKI
 	tpl_addVar(vars, TPLADD, "HTTPHELPLANG", cfg.http_help_lang);
+	tpl_addVar(vars, TPLADD, "HTTPHELPAPI0", cfg.http_help_api == 0 ? "selected" : "");
+	tpl_addVar(vars, TPLADD, "HTTPHELPAPI1", cfg.http_help_api == 1 ? "selected" : "");
+	tpl_addVar(vars, TPLADD, "HTTPHELPAPI2", cfg.http_help_api == 2 ? "selected" : "");
+	tpl_addVar(vars, TPLADD, "HTTPHELPKEY", cfg.http_help_key ? cfg.http_help_key : "");
+	tpl_addVar(vars, TPLADDONCE, "TPLWEBIFWIKI", tpl_getTpl(vars, "WEBIFWIKI"));
+#endif
+
 	tpl_addVar(vars, TPLADD, "HTTPLOCALE", cfg.http_locale);
 	tpl_printf(vars, TPLADD, "HTTPEMMUCLEAN", "%d", cfg.http_emmu_clean);
 	tpl_printf(vars, TPLADD, "HTTPEMMSCLEAN", "%d", cfg.http_emms_clean);
@@ -9542,9 +9550,14 @@ static int32_t process_request(FILE * f, IN_ADDR_T in)
 			{
 				tpl_addVar(vars, TPLADD, "WIKIHELPLANGSVAR", "");
 			}
+			/* Set configured translation API settings */
+			tpl_printf(vars, TPLADD, "WIKIHELPAPI", "\t\tvar wikiHelpApi = %d;", cfg.http_help_api);
+			tpl_printf(vars, TPLADD, "WIKIHELPKEY", "\t\tvar wikiHelpKey = \"%s\";", cfg.http_help_key ? cfg.http_help_key : "");
 #else
 			tpl_addVar(vars, TPLADD, "WIKIINTERNALVAR", "");
 			tpl_addVar(vars, TPLADD, "WIKIHELPLANGSVAR", "");
+			tpl_addVar(vars, TPLADD, "WIKIHELPAPI", "");
+			tpl_addVar(vars, TPLADD, "WIKIHELPKEY", "");
 #endif
 			tpl_addVar(vars, TPLADD, "CS_VERSION", CS_VERSION);
 			tpl_addVar(vars, TPLADD, "CS_GIT_COMMIT", CS_GIT_COMMIT);
@@ -9626,8 +9639,18 @@ static int32_t process_request(FILE * f, IN_ADDR_T in)
 			if (config_enabled(WITH_LB))
 				tpl_addVar(vars, TPLADD, "LBISDEFINED", "1");
 
-			// language code in helplink
-			tpl_addVar(vars, TPLADD, "LANGUAGE", cfg.http_help_lang);
+			// language code for meta tag - extract from locale (de_DE.utf8 -> de)
+			if(cfg.http_locale && strlen(cfg.http_locale) >= 2)
+			{
+				char lang[3];
+				cs_strncpy(lang, cfg.http_locale, sizeof(lang));
+				tpl_addVar(vars, TPLADD, "LANGUAGE", lang);
+			}
+			else
+			{
+				tpl_addVar(vars, TPLADD, "LANGUAGE", "en");
+			}
+
 			tpl_addVar(vars, TPLADD, "RUNTIME", sec2timeformat(vars, (now - first_client->login)));
 			time_t uptime = oscam_get_uptime();
 			if(uptime > 0){

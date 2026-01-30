@@ -2295,7 +2295,11 @@ struct s_config
 	int8_t			https_force_secure_mode;
 	int8_t			https_auto_create_cert;
 	char			*http_cert;
+#ifdef WEBIF_WIKI
 	char			*http_help_lang;
+	int8_t			http_help_api;
+	char			*http_help_key;
+#endif
 	char			*http_locale;
 	char			*http_oscam_label;
 	int32_t			http_emmu_clean;

@@ -2545,10 +2545,27 @@ var wikiPopupHtml = '<div id="wikiPopup" class="wiki-popup">' +
 	'<div class="wiki-popup-content"></div>' +
 	'</div>';
 
-/* Wiki Translation Service with browser detection and fallback */
+/*
+ * Wiki Translation Service Configuration
+ * Server injects: var wikiHelpApi = 0;
+ * 0=Disabled, 1=Google GTX, 2=MyMemory
+ */
 var WikiTranslator = {
 	lastMethod: null, /* Track which method was used */
-	methodCache: {}, /* In-memory cache for current session only */
+	
+	/* API mapping: 0=disabled, 1=google, 2=mymemory */
+	apiMap: { 0: 'disabled', 1: 'google', 2: 'mymemory' },
+	
+	/* Get configured API (default: disabled) */
+	getConfiguredApi: function() {
+		var apiNum = (typeof wikiHelpApi !== 'undefined') ? parseInt(wikiHelpApi) : 0;
+		return this.apiMap[apiNum] || 'disabled';
+	},
+	
+	/* Get configured API key */
+	getApiKey: function() {
+		return (typeof wikiHelpKey !== 'undefined') ? wikiHelpKey : '';
+	},
 	
 	/* Timeout wrapper for promises */
 	withTimeout: function(promise, ms) {
@@ -2556,16 +2573,6 @@ var WikiTranslator = {
 			setTimeout(function() { reject(new Error('Timeout')); }, ms);
 		});
 		return Promise.race([promise, timeout]);
-	},
-
-	/* Get cached method for a language (session only) */
-	getCachedMethod: function(targetLang) {
-		return this.methodCache[targetLang] || null;
-	},
-
-	/* Save method to session cache */
-	setCachedMethod: function(targetLang, method) {
-		this.methodCache[targetLang] = method;
 	},
 
 	/* Check Edge Translator availability for a language pair */
@@ -2582,7 +2589,6 @@ var WikiTranslator = {
 				3000
 			);
 			/* Only use Edge if model is already downloaded ('available') */
-			/* 'downloadable'/'downloading' would cause delays, use Google instead */
 			return status === 'available';
 		} catch (e) {
 			return false;
@@ -2591,31 +2597,19 @@ var WikiTranslator = {
 
 	/* Detect best available translation method for a given target language */
 	async detectMethod(targetLang) {
-		/* Check cache first for fast path */
-		var cached = this.getCachedMethod(targetLang);
-		if (cached === 'edge-native' || cached === 'chrome-native') {
-			/* Verify native API is still available */
-			if (cached === 'edge-native' && typeof Translator !== 'undefined') {
-				var edgeOk = await this.checkEdgeAvailability(targetLang);
-				if (edgeOk) return 'edge-native';
-			}
-			if (cached === 'chrome-native' && 'translation' in self) {
-				return 'chrome-native';
-			}
-		}
-		if (cached === 'google-gtx') {
-			return 'google-gtx';
-		}
-
-		/* No cache - detect method */
-		/* Try Edge native Translator API (Translator.create) */
+		var configuredApi = this.getConfiguredApi();
+		
+		/* Always try native browser APIs first (regardless of fallback setting) */
+		
+		/* Try Edge native Translator API */
 		if (typeof Translator !== 'undefined' && typeof Translator.create === 'function') {
 			var edgeAvailable = await this.checkEdgeAvailability(targetLang);
 			if (edgeAvailable) {
 				return 'edge-native';
 			}
 		}
-		/* Try Chrome native Translation API (self.translation) */
+		
+		/* Try Chrome native Translation API */
 		if ('translation' in self && 'createTranslator' in self.translation) {
 			try {
 				var status = await self.translation.canTranslate({
@@ -2627,7 +2621,12 @@ var WikiTranslator = {
 				}
 			} catch (e) { /* ignore */ }
 		}
-		/* Fallback to Google GTX (works in all browsers) */
+		
+		/* No browser API available - use configured fallback */
+		if (configuredApi === 'disabled') return null;
+		if (configuredApi === 'mymemory') return 'mymemory';
+		
+		/* Default fallback: Google GTX */
 		return 'google-gtx';
 	},
 
@@ -2638,7 +2637,7 @@ var WikiTranslator = {
 				sourceLanguage: 'en',
 				targetLanguage: targetLang
 			}),
-			15000 /* 15 second timeout for model loading/download */
+			15000
 		);
 		return this.withTimeout(translator.translate(text), 5000);
 	},
@@ -2655,7 +2654,7 @@ var WikiTranslator = {
 		return this.withTimeout(translator.translate(text), 5000);
 	},
 
-	/* Google Translate (unofficial endpoint, works in all browsers) */
+	/* Google Translate (unofficial GTX endpoint) */
 	async useGoogleGTX(text, targetLang) {
 		var url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=' +
 			targetLang + '&dt=t&q=' + encodeURIComponent(text);
@@ -2664,43 +2663,84 @@ var WikiTranslator = {
 		return data[0].map(function(x) { return x[0]; }).join('');
 	},
 
+	/* MyMemory Translation API (free, 1000 req/day with email) */
+	async useMyMemory(text, targetLang) {
+		var url = 'https://api.mymemory.translated.net/get?q=' +
+			encodeURIComponent(text) + '&langpair=en|' + targetLang;
+		var key = this.getApiKey();
+		if (key) {
+			url += '&de=' + encodeURIComponent(key); /* email for higher limits */
+		}
+		var resp = await this.withTimeout(fetch(url), 5000);
+		var data = await resp.json();
+		if (data.responseStatus === 200 && data.responseData) {
+			return data.responseData.translatedText;
+		}
+		throw new Error('MyMemory error: ' + (data.responseDetails || 'Unknown'));
+	},
+
 	/* Main translate function with auto-detection and fallback */
 	async translate(text, targetLang) {
 		var method = await this.detectMethod(targetLang);
 		var self = this;
+		var configuredApi = this.getConfiguredApi();
 		
-		/* Try native API first, fallback to Google on error */
+		/* No translation method available */
+		if (method === null) {
+			throw new Error('No translation available (fallback disabled)');
+		}
+		
+		/* MyMemory API */
+		if (method === 'mymemory') {
+			this.lastMethod = 'mymemory';
+			return this.useMyMemory(text, targetLang);
+		}
+		
+		/* Google GTX fallback */
+		if (method === 'google-gtx') {
+			this.lastMethod = 'google-gtx';
+			return this.useGoogleGTX(text, targetLang);
+		}
+		
+		/* Edge native API */
 		if (method === 'edge-native') {
 			try {
 				this.lastMethod = 'edge-native';
-				var result = await this.useEdgeAPI(text, targetLang);
-				this.setCachedMethod(targetLang, 'edge-native');
-				return result;
+				return await this.useEdgeAPI(text, targetLang);
 			} catch (e) {
-				console.warn('Edge Translator failed, falling back to Google:', e.message);
-				this.lastMethod = 'google-gtx';
-				this.setCachedMethod(targetLang, 'google-gtx');
-				return this.useGoogleGTX(text, targetLang);
+				console.warn('Edge Translator failed:', e.message);
+				/* Try fallback if configured */
+				if (configuredApi === 'mymemory') {
+					this.lastMethod = 'mymemory';
+					return this.useMyMemory(text, targetLang);
+				} else if (configuredApi === 'google') {
+					this.lastMethod = 'google-gtx';
+					return this.useGoogleGTX(text, targetLang);
+				}
+				throw new Error('Edge Translator failed, no fallback configured');
 			}
 		}
 		
+		/* Chrome native API */
 		if (method === 'chrome-native') {
 			try {
 				this.lastMethod = 'chrome-native';
-				var result = await this.useChromeAPI(text, targetLang);
-				this.setCachedMethod(targetLang, 'chrome-native');
-				return result;
+				return await this.useChromeAPI(text, targetLang);
 			} catch (e) {
-				console.warn('Chrome Translator failed, falling back to Google:', e.message);
-				this.lastMethod = 'google-gtx';
-				this.setCachedMethod(targetLang, 'google-gtx');
-				return this.useGoogleGTX(text, targetLang);
+				console.warn('Chrome Translator failed:', e.message);
+				/* Try fallback if configured */
+				if (configuredApi === 'mymemory') {
+					this.lastMethod = 'mymemory';
+					return this.useMyMemory(text, targetLang);
+				} else if (configuredApi === 'google') {
+					this.lastMethod = 'google-gtx';
+					return this.useGoogleGTX(text, targetLang);
+				}
+				throw new Error('Chrome Translator failed, no fallback configured');
 			}
 		}
-
-		this.lastMethod = 'google-gtx';
-		this.setCachedMethod(targetLang, 'google-gtx');
-		return this.useGoogleGTX(text, targetLang);
+		
+		throw new Error('No translation method available');
 	},
 	
 	/* Get human-readable method name */
@@ -2708,6 +2748,7 @@ var WikiTranslator = {
 		switch (this.lastMethod) {
 			case 'edge-native': return 'Edge Translator';
 			case 'chrome-native': return 'Chrome Translator';
+			case 'mymemory': return 'MyMemory';
 			default: return 'Google Translate';
 		}
 	}
@@ -2791,6 +2832,18 @@ function wikiGetConfiguredLangs() {
 function wikiGetDefaultLang() {
 	var configured = wikiGetConfiguredLangs();
 	if (configured.length === 0) return 'de';
+	var savedConfigHash = localStorage.getItem('wikiLangConfigHash');
+	/* Create hash of current config to detect changes */
+	var currentConfigHash = configured.join(',');
+	
+	/* If config changed, reset to first configured language */
+	if (savedConfigHash !== currentConfigHash) {
+		localStorage.setItem('wikiLangConfigHash', currentConfigHash);
+		localStorage.removeItem('wikiTranslateLang');
+		return configured[0];
+	}
+	
+	/* Config unchanged - use saved preference if valid */
 	var saved = localStorage.getItem('wikiTranslateLang');
 	if (saved && configured.indexOf(saved) !== -1) {
 		return saved;
@@ -2798,7 +2851,8 @@ function wikiGetDefaultLang() {
 	return configured[0];
 }
 
-var wikiTargetLang = wikiGetDefaultLang();
+/* Will be initialized in DOM ready when wikiHelpLangs is available */
+var wikiTargetLang = null;
 
 var wikiDragState = { isDragging: false, startX: 0, startY: 0, startLeft: 0, startTop: 0 };
 var wikiSavedLeft = localStorage.getItem('wikiPopupLeft');
@@ -2879,6 +2933,9 @@ $(function() {
 		/* No internal wiki - external wiki links are handled in document.ready above */
 		return;
 	}
+
+	/* Initialize wikiTargetLang now that wikiHelpLangs is available */
+	wikiTargetLang = wikiGetDefaultLang();
 
 	/* Internal wiki enabled - setup popup and override click handler */
 	$('body').append(wikiPopupHtml);
@@ -3043,13 +3100,35 @@ $(function() {
 
 		} catch (err) {
 			console.error('Translation failed:', err);
-			$btn.html('&#10060;').attr('title', 'Translation failed - click to retry');
+			/* Show error icon before title and error message in title */
+			var $header = $('.wiki-popup-header');
+			var $title = $('.wiki-popup-title');
+			var originalTitle = $title.text();
+
+			/* Add error icon before title if not already present */
+			if (!$header.find('.wiki-popup-error').length) {
+				$title.before('<span class="wiki-popup-error" style="color:#c00;cursor:pointer" title="Click to retry">&#10060;</span>');
+			}
+			$title.text('Error: ' + err.message).css('color', '#c00');
+			$btn.hide(); /* Hide translate button during error */
+
 			wikiAutoTranslate = false; /* Disable auto-translate on error */
 			localStorage.setItem('wikiAutoTranslate', 'false');
+
+			/* Click on error icon to retry */
+			$header.find('.wiki-popup-error').off('click').on('click', function() {
+				$(this).remove();
+				$title.text(originalTitle).css('color', '');
+				$btn.show();
+				$btn.click(); /* Retry translation */
+			});
+
 			setTimeout(function() {
+				$header.find('.wiki-popup-error').remove();
 				var langName = wikiGetLangName(wikiTargetLang);
-				$btn.html('&#127760;').attr('title', 'Translate to ' + langName);
-			}, 2000);
+				$btn.show().html('&#127760;').attr('title', 'Translate to ' + langName);
+				$title.text(originalTitle).css('color', '');
+			}, 6000);
 		}
 	}
 
@@ -3223,7 +3302,10 @@ $(function() {
 		wikiDragState.startY = e.pageY;
 		wikiDragState.startLeft = parseInt($('#wikiPopup').css('left')) || 0;
 		wikiDragState.startTop = parseInt($('#wikiPopup').css('top')) || 0;
-		e.preventDefault();
+		/* Only preventDefault for non-lang elements to allow tooltip */
+		if (!$(e.target).hasClass('wiki-popup-lang')) {
+			e.preventDefault();
+		}
 	});
 
 	/* Touch support for drag */
@@ -3287,7 +3369,11 @@ $(function() {
 		wikiLastWidth = w;
 	});
 
-	$('form table a').off('click').click(function(e) {
+	/* Wiki help click handler - only for help links without real href (exclude edit buttons) */
+	$('form table a').filter(function() {
+		var href = $(this).attr('href');
+		return !href || href === '#';
+	}).off('click').click(function(e) {
 		e.preventDefault();
 		e.stopPropagation();
 
@@ -3304,12 +3390,12 @@ $(function() {
 		var $cell = $(this).parent();
 		var inputName = null;
 
-		/* Try 1: Input in next cell (standard layout) */
-		var $input = $cell.next().find('input,select,textarea').first();
+		/* Try 1: Input in same cell (e.g. label and input together) */
+		var $input = $cell.find('input,select,textarea').first();
 
-		/* Try 2: Input in same cell */
+		/* Try 2: Input in next cell (standard layout) */
 		if (!$input.length) {
-			$input = $cell.find('input,select,textarea').first();
+			$input = $cell.next().find('input,select,textarea').first();
 		}
 
 		/* Try 3: For TH headers (like services), look in same column of next row */
@@ -3328,6 +3414,7 @@ $(function() {
 
 		/* Get param for external wiki link (use data-p override if present) */
 		var externalParam = $(this).data('p') || inputName;
+		inputName = externalParam;
 
 		if (!inputName) return;
 
