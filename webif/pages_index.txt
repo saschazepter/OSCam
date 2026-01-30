@@ -101,6 +101,7 @@ CONFIGSTREAMRELAY             config/streamrelay.html                           
 CONFIGSERIAL                  config/serial.html                                          MODULE_SERIAL
 CONFIGSERIALDEVICEBIT         config/serial_devices.html                                  MODULE_SERIAL
 CONFIGWEBIF                   config/webif.html
+WEBIFWIKI                     config/webif_wiki.html                                      WEBIF_WIKI
 HTTPSSL                       config/webif_httpssl.html                                   WITH_SSL
 SHOWCACHEEXINFO               config/webif_showcacheexinfo.html                           CS_CACHEEX
 CONFIGWEBIFJQUERYBIT          config/webif_show_jquery.html

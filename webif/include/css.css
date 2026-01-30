@@ -1168,8 +1168,8 @@ only screen and (min-device-width : 320px) and (max-device-width : 568px) and (o
 	font-size:13px;
 	border-radius:3px 3px 0 0;
 	display:flex;
-	justify-content:space-between;
-	align-items:center
+	align-items:center;
+	position:relative
 }
 .wiki-popup-title {
 	font-family:Arial;
@@ -1202,11 +1202,14 @@ only screen and (min-device-width : 320px) and (max-device-width : 568px) and (o
 	color:#FF9E5F
 }
 .wiki-popup-lang {
+	position:absolute;
+	left:50%;
+	transform:translateX(-50%);
 	font-size:11px;
 	font-weight:bold;
 	color:#666;
 	padding:0 6px;
-	cursor:default
+	cursor:move
 }
 .wiki-popup-content {
 	padding:12px;
