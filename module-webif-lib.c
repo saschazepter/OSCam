@@ -3,7 +3,6 @@
 #include "globals.h"
 
 #ifdef WEBIF
-#include "cscrypt/md5.h"
 #include "module-webif-lib.h"
 #include "module-webif-tpl.h"
 #include "oscam-config.h"
@@ -307,7 +306,7 @@ int32_t webif_write_raw(char *buf, FILE *f, int32_t len)
 #ifdef WITH_SSL
 	if(ssl_active)
 	{
-		return SSL_write((SSL *)f, buf, len);
+		return oscam_ssl_write((oscam_ssl_t *)f, (const unsigned char *)buf, (size_t)len);
 	}
 	else
 #endif
@@ -325,7 +324,7 @@ int32_t webif_read(char *buf, int32_t num, FILE *f)
 #ifdef WITH_SSL
 	if(ssl_active)
 	{
-		return SSL_read((SSL *)f, buf, num);
+		return oscam_ssl_read((oscam_ssl_t *)f, buf, (size_t)num);
 	}
 	else
 #endif
@@ -765,381 +764,71 @@ void calc_cpu_usage_pct(struct pstat* cur_usage, struct pstat* last_usage)
 #endif
 
 #ifdef WITH_SSL
-SSL *cur_ssl(void)
+oscam_ssl_t *cur_ssl(void)
 {
-	return (SSL *) pthread_getspecific(getssl);
+	return (oscam_ssl_t *) pthread_getspecific(getssl);
 }
 
-/* Locking functions for SSL multithreading */
-struct CRYPTO_dynlock_value
+oscam_ssl_conf_t *SSL_Webif_Init(void)
 {
-	pthread_mutex_t mutex;
-};
-
-/* function really needs unsigned long to prevent compiler warnings... */
-unsigned long SSL_id_function(void)
-{
-	return ((unsigned long) pthread_self());
-}
-
-void SSL_locking_function(int32_t mode, int32_t type, const char *file, int32_t line)
-{
-	if(mode & CRYPTO_LOCK)
-	{
-		cs_writelock(__func__, &lock_cs[type]);
-	}
-	else
-	{
-		cs_writeunlock(__func__, &lock_cs[type]);
-	}
-	// just to remove compiler warnings...
-	if(file || line) { return; }
-}
-
-struct CRYPTO_dynlock_value *SSL_dyn_create_function(const char *file, int32_t line)
-{
-	struct CRYPTO_dynlock_value *l;
-	if(!cs_malloc(&l, sizeof(struct CRYPTO_dynlock_value)))
-		{ return NULL; }
-
-	if(pthread_mutex_init(&l->mutex, NULL))
-	{
-		// Initialization of mutex failed.
-		NULLFREE(l);
-		return (NULL);
-	}
-
-	// just to remove compiler warnings...
-	if(file || line) { return l; }
-	return l;
-}
-
-void SSL_dyn_lock_function(int32_t mode, struct CRYPTO_dynlock_value *l, const char *file, int32_t line)
-{
-	if(mode & CRYPTO_LOCK)
-	{
-		SAFE_MUTEX_LOCK(&l->mutex);
-	}
-	else
-	{
-		SAFE_MUTEX_UNLOCK(&l->mutex);
-	}
-	// just to remove compiler warnings...
-	if(file || line) { return; }
-}
-
-void SSL_dyn_destroy_function(struct CRYPTO_dynlock_value *l, const char *file, int32_t line)
-{
-	pthread_mutex_destroy(&l->mutex);
-	NULLFREE(l);
-	// just to remove compiler warnings...
-	if(file || line) { return; }
-}
-
-#if defined(OPENSSL_NO_EC)
-#pragma message "WARNING: OpenSSL was built without support for elliptic curve cryptography (no-ec). Webserver certificate generation at runtime will not work!"
-static bool create_certificate(const char *path)
-{
-	cs_log("generating webserver ssl certificate file %s (%s)", path, "SKIPPED");
-	return false;
-}
-#else
-/* add X.509 V3 extensions */
-static bool add_ext(X509 *cert, int nid, char *value)
-{
-	X509_EXTENSION *ex;
-	X509V3_CTX ctx;
-
-	X509V3_set_ctx_nodb(&ctx);
-	X509V3_set_ctx(&ctx, cert, cert, NULL, NULL, 0);
-	ex = X509V3_EXT_conf_nid(NULL, &ctx, nid, value);
-	if (!ex)
-		return false;
-
-	X509_add_ext(cert, ex, -1);
-	X509_EXTENSION_free(ex);
-	return true;
-}
-
-/* Create a self-signed certificate for basic https webif usage */
-static bool create_certificate(const char *path)
-{
-	X509 *pcert = NULL;
-	X509_NAME * subject_name;
-	X509_NAME * issuer_name;
-	EVP_PKEY *pkey = NULL;
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-	RSA * rsa_key = NULL;
-#elif OPENSSL_VERSION_NUMBER < 0x30000000L
-	EC_KEY *ec_key = NULL;
-#endif
-	ASN1_INTEGER *asn1_serial_number;
-	BIGNUM *serial_number = NULL;
-	char san[256];
-	struct utsname buffer;
-	bool ret = false;
-
-	const char *cn = !uname(&buffer) ? buffer.nodename : "localhost";
-	size_t cn_len = MIN(strlen(cn), 63);
-
-	cs_log("generating webserver ssl certificate file %s (%s)", path,
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-	"RSA"
-#else
-	"ECDSA"
-#endif
-	);
-	if ((pkey = EVP_PKEY_new()))
-	{
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-		if (!(rsa_key = RSA_generate_key(4096, RSA_F4, NULL, NULL)))
-		{
-			goto err;
-		}
-		if (!EVP_PKEY_assign_RSA(pkey, rsa_key))
-		{
-			goto err;
-		}
-		rsa_key = NULL;
-#elif OPENSSL_VERSION_NUMBER < 0x30000000L
-		if (!(ec_key = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1))) //prime256v1
-		{
-			goto err;
-		}
-		if (!EC_KEY_generate_key(ec_key))
-		{
-			goto err;
-		}
-		if (!EVP_PKEY_assign_EC_KEY(pkey, ec_key))
-		{
-			goto err;
-		}
-		ec_key = NULL;
-#else
-		pkey = EVP_EC_gen(SN_X9_62_prime256v1); //prime256v1
-#endif
-		if ((pcert = X509_new()))
-		{
-			X509_set_pubkey(pcert, pkey);
-			// serialNumber
-			if (!X509_set_version(pcert, 2L))
-			{
-				goto err;
-			}
-
-			// serialNumber
-			if ((serial_number = BN_new()))
-			{
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-				if (!BN_pseudo_rand(serial_number, 64, 0, 0))
-				{
-					goto err;
-				}
-#else
-				if (!BN_rand(serial_number, 64, 0, 0))
-				{
-					goto err;
-				}
-#endif
-				asn1_serial_number = X509_get_serialNumber(pcert);
-				if (!asn1_serial_number)
-				{
-					goto err;
-				}
-				if (!BN_to_ASN1_INTEGER(serial_number, asn1_serial_number))
-				{
-					goto err;
-				}
-
-				// subject + issuer
-				if ((subject_name = X509_NAME_new()) && (issuer_name = X509_NAME_new()))
-				{
-					if (!X509_NAME_add_entry_by_NID(subject_name, NID_commonName, MBSTRING_UTF8, (unsigned char *) cn, cn_len, -1, 0))
-					{
-						goto err;
-					}
-					if (!X509_set_subject_name(pcert, subject_name))
-					{
-						goto err;
-					}
-
-					if (!X509_NAME_add_entry_by_NID(issuer_name, NID_commonName, MBSTRING_UTF8, (unsigned char *) cn, cn_len, -1, 0))
-					{
-						goto err;
-					}
-					if (!X509_set_issuer_name(pcert, issuer_name))
-					{
-						goto err;
-					}
-
-					// expiration
-					X509_gmtime_adj(X509_getm_notBefore(pcert), 0);
-					X509_gmtime_adj(X509_getm_notAfter(pcert), CERT_EXPIRY_TIME);
-
-					// X.509 V3 extensions
-					add_ext(pcert, NID_basic_constraints, "CA:FALSE" );
-					add_ext(pcert, NID_key_usage, "nonRepudiation, digitalSignature, keyEncipherment" );
-					add_ext(pcert, NID_ext_key_usage, "clientAuth, serverAuth" );
-					snprintf(san, sizeof(san), "DNS:%s, DNS:%s.local, IP:127.0.0.1, IP:::1", cn, cn);
-					add_ext(pcert, NID_subject_alt_name, san);
-
-					// sign certificate with private key
-					X509_sign(pcert, pkey, EVP_sha256());
-
-					// write private key and certificate to file
-					FILE * pemfile;
-					if ((pemfile = fopen(path, "w")))
-					{
-						PEM_write_PrivateKey(pemfile, pkey, NULL, NULL, 0, NULL, NULL);
-						PEM_write_X509(pemfile, pcert);
-						fclose(pemfile);
-						ret = true;
-					}
-					else
-					{
-						cs_log("can't write to file %s", path);
-						goto err;
-					}
-				}
-				else
-				{
-					cs_log("Error: X509_NAME_new() failed");
-				}
-			}
-			else
-			{
-				cs_log("Error: BN_new() failed");
-			}
-		}
-		else
-		{
-			cs_log("Error: X509_new() failed");
-		}
-	}
-	else
-	{
-		cs_log("Error: EVP_PKEY_new() failed");
-	}
-
-err:
-	ERR_print_errors_fp(stderr);
-	if (pkey)
-	{
-		EVP_PKEY_free(pkey);
-	}
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L && OPENSSL_VERSION_NUMBER < 0x30000000L
-	if (ec_key)
-	{
-		EC_KEY_free(ec_key);
-	}
-#endif
-	if (pcert)
-	{
-		X509_free(pcert);
-	}
-	if (serial_number)
-	{
-		BN_free(serial_number);
-	}
-
-	return ret;
-}
-#endif
-
-/* Init necessary structures for SSL in WebIf*/
-SSL_CTX *SSL_Webif_Init(void)
-{
-	SSL_CTX *ctx;
-
 	static const char *cs_cert = "oscam.pem";
-
-	// set locking callbacks for SSL
-	int32_t i, num = CRYPTO_num_locks();
-	lock_cs = (CS_MUTEX_LOCK *) OPENSSL_malloc(num * sizeof(CS_MUTEX_LOCK));
-
-	for(i = 0; i < num; ++i)
-	{
-		cs_lock_create(__func__, &lock_cs[i], "ssl_lock_cs", 10000);
-	}
-	/* static lock callbacks */
-	CRYPTO_set_id_callback(SSL_id_function);
-	CRYPTO_set_locking_callback(SSL_locking_function);
-	/* dynamic lock callbacks */
-	CRYPTO_set_dynlock_create_callback(SSL_dyn_create_function);
-	CRYPTO_set_dynlock_lock_callback(SSL_dyn_lock_function);
-	CRYPTO_set_dynlock_destroy_callback(SSL_dyn_destroy_function);
-
-	ctx = SSL_CTX_new(SSLv23_server_method());
-
-#if defined(SSL_CTX_set_ecdh_auto)
-		(void) SSL_CTX_set_ecdh_auto(ctx, 1);
-#elif defined(EC_PKEY_NO_PARAMETERS) && defined(NID_X9_62_prime256v1)
-		EC_KEY *ecdh = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
-		if(ecdh)
-		{
-			SSL_CTX_set_tmp_ecdh(ctx, ecdh);
-			EC_KEY_free(ecdh);
-		}
-#endif
-
-	if(cfg.https_force_secure_mode)
-	{
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L || defined SSL_CTX_clear_options // makro removed in OpenSSL 1.1.0+
-		SSL_CTX_clear_options(ctx, SSL_OP_ALL); //we CLEAR all bug workarounds! This is for security reason
-#else
-		cs_log("WARNING: You enabled to force secure HTTPS but your system does not support to clear the ssl workarounds! SSL security will be reduced!");
-#endif
-	}
-
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
-	SSL_CTX_set_min_proto_version(ctx, SSL3_VERSION);
-#elif defined SSL_OP_NO_TLSv1_1
-	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1);
-#else
-	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
-#endif
-
 	char path[128];
+	int ret;
 
-	if(!cfg.http_cert)
-		{ get_config_filename(path, sizeof(path), cs_cert); }
+	/* Determine certificate path */
+	if (!cfg.http_cert || cfg.http_cert[0] == '\0')
+		get_config_filename(path, sizeof(path), cs_cert);
 	else
-		{ cs_strncpy(path, cfg.http_cert, sizeof(path)); }
+		cs_strncpy(path, cfg.http_cert, sizeof(path));
 
-	if(!file_exists(path) && cfg.https_auto_create_cert) //generate a ready-to-use SSL certificate if no certificate file is available
+	/* Initialize MbedTLS core */
+	if ((ret = oscam_ssl_global_init()) != 0) {
+		cs_log("SSL: global init failed (%d)", ret);
+		return NULL;
+	}
+
+	oscam_ssl_mode_t mode =
+			cfg.https_force_secure_mode ? OSCAM_SSL_MODE_STRICT : OSCAM_SSL_MODE_LEGACY;
+
+	switch (mode)
 	{
-		if(!create_certificate(path))
-		{
-			goto out_err;
+		case OSCAM_SSL_MODE_STRICT:
+			cs_log("SSL: secure HTTPS mode (TLS 1.2, AEAD-only)");
+			break;
+		case OSCAM_SSL_MODE_LEGACY:
+			cs_log("SSL: legacy HTTPS mode (TLS 1.2, CBC fallback)");
+			break;
+		default:
+			cs_log("SSL: standard HTTPS mode (TLS 1.2, mixed ciphers)");
+			break;
+	}
+
+	/* Allocate SSL config context */
+	oscam_ssl_conf_t *conf = oscam_ssl_conf_build(mode);
+	if (!conf) {
+		cs_log("SSL: failed to create SSL config (%d)", ret);
+		return NULL;
+	}
+
+	/* Auto-create certificate if missing */
+	if (!file_exists(path) && cfg.https_auto_create_cert) {
+		cs_log("SSL: no certificate found at %s, creating new self-signed certificate", path);
+		if ((ret = oscam_ssl_generate_selfsigned(path)) != 0) {
+			cs_log("SSL: certificate generation failed (%d)", ret);
+			oscam_ssl_conf_free(conf);
+			return NULL;
 		}
 	}
 
-	if(!ctx)
-		goto out_err;
-
-	if(SSL_CTX_use_certificate_chain_file(ctx, path) <=0)
-		goto out_err;
-
-	if(SSL_CTX_use_PrivateKey_file(ctx, path, SSL_FILETYPE_PEM) <= 0)
-		goto out_err;
-
-	if(!SSL_CTX_check_private_key(ctx))
-	{
-		cs_log("SSL: Private key does not match the certificate public key");
-		goto out_err;
+	/* Load certificate and private key */
+	if ((ret = oscam_ssl_conf_use_own_cert_pem(conf, path, NULL)) != 0) {
+		cs_log("SSL: failed to load certificate/key from %s (%d)", path, ret);
+		oscam_ssl_conf_free(conf);
+		return NULL;
 	}
 
-	cs_log("loading ssl certificate file %s", path);
-	return ctx;
-
-out_err:
-	ERR_print_errors_fp(stderr);
-#if OPENSSL_VERSION_NUMBER < 0x1010005fL
-    // fix build "OpenSSL 1.1.0e  16 Feb 2017"
-	ERR_remove_state(0);
-#endif
-	SSL_CTX_free(ctx);
-	return NULL;
+	cs_log("SSL: initialized WebIf TLS context using %s", path);
+	return conf;
 }
 #endif
 
