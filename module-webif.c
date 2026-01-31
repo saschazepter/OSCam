@@ -9199,7 +9199,7 @@ static int32_t readRequest(FILE * f, IN_ADDR_T in, char **result, int8_t forcePl
 		memcpy(*result + bufsize, buf2, n);
 		bufsize += n;
 
-		if(bufsize > 102400) // max request size 100kb
+		if(bufsize > 1048576) // max request size 1MB
 		{
 			cs_log("error: too much data received from %s", cs_inet_ntoa(in));
 			NULLFREE(*result);
