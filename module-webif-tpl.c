@@ -130,12 +130,15 @@ void tpl_addVar(struct templatevars *vars, uint8_t addmode, const char *name, co
 	if(value == NULL) { value = ""; }
 	int32_t i;
 	char *tmp = NULL, *result = NULL;
-	for(i = (*vars).varscnt - 1; i >= 0; --i)
+	if(addmode != TPLADD)
 	{
-		if(strcmp((*vars).names[i], name) == 0)
+		for(i = (*vars).varscnt - 1; i >= 0; --i)
 		{
-			result = (*vars).values[i];
-			break;
+			if(strcmp((*vars).names[i], name) == 0)
+			{
+				result = (*vars).values[i];
+				break;
+			}
 		}
 	}
 	if(result == NULL)
