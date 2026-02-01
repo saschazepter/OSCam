@@ -9225,7 +9225,7 @@ static int32_t readRequest(FILE * f, IN_ADDR_T in, char **result, int8_t forcePl
 
 		pfd2[0].events = (POLLIN | POLLPRI);
 
-		int32_t rc = poll(pfd2, 1, 100);
+		int32_t rc = poll(pfd2, 1, 5);
 		if(rc > 0 || !check_request(*result, bufsize))
 			{ continue; }
 		else
