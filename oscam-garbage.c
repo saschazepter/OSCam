@@ -6,7 +6,8 @@
 #include "oscam-string.h"
 #include "oscam-time.h"
 
-#define HASH_BUCKETS 250
+#define HASH_BUCKETS 256
+#define BUCKET_MASK (HASH_BUCKETS - 1)
 
 struct cs_garbage
 {
@@ -44,14 +45,7 @@ void add_garbage(void *data)
 	}
 
 	SAFE_MUTEX_LOCK(&add_lock);
-
-	int32_t bucket = counter++;
-
-	if(counter >= HASH_BUCKETS)
-	{
-		counter = 0;
-	}
-
+	int32_t bucket = counter++ & BUCKET_MASK;
 	SAFE_MUTEX_UNLOCK(&add_lock);
 
 	struct cs_garbage *garbage = (struct cs_garbage*)malloc(sizeof(struct cs_garbage));
@@ -102,30 +96,21 @@ static pthread_mutex_t sleep_cond_mutex;
 
 static void garbage_collector(void)
 {
-	int32_t i,j;
-	struct cs_garbage *garbage, *next, *prev, *first;
+	int32_t i;
+	struct cs_garbage *garbage, *next, *prev;
 	set_thread_name(__func__);
-	int32_t timeout_time = 2 * cfg.ctimeout / 1000 + 6;
 
 	while(garbage_collector_active)
 	{
-		time_t deltime = time(NULL) - timeout_time;
+		time_t deltime = time(NULL) - MAX(26, 2 * cfg.ctimeout / 1000 + 6);
 
 		for(i = 0; i < HASH_BUCKETS; ++i)
 		{
-			j = 0;
 			cs_writelock(__func__, &garbage_lock[i]);
-			first = garbage_first[i];
 
-			for(garbage = first, prev = NULL; garbage; prev = garbage, garbage = garbage->next, j++)
+			for(garbage = garbage_first[i], prev = NULL; garbage; prev = garbage, garbage = garbage->next)
 			{
-				if(j == 2)
- 				{
-					j++;
-					cs_writeunlock(__func__, &garbage_lock[i]);
-				}
-
-				if(garbage->time < deltime) // all following elements are too new
+				if(garbage->time < deltime)
 				{
 					if(prev)
 					{
@@ -141,7 +126,7 @@ static void garbage_collector(void)
 
 			cs_writeunlock(__func__, &garbage_lock[i]);
 
-			// list has been taken out before so we don't need a lock here anymore!
+			// List has been detached, no lock needed for freeing
 			while(garbage)
 			{
 				next = garbage->next;
@@ -157,23 +142,22 @@ static void garbage_collector(void)
 
 void start_garbage_collector(int32_t debug)
 {
-	garbage_debug = debug;
 	int32_t i;
+	garbage_debug = debug;
 
 	SAFE_MUTEX_INIT(&add_lock, NULL);
 
 	for(i = 0; i < HASH_BUCKETS; ++i)
 	{
 		cs_lock_create(__func__, &garbage_lock[i], "garbage_lock", 9000);
-
 		garbage_first[i] = NULL;
 	}
+
 	cs_pthread_cond_init(__func__, &sleep_cond_mutex, &sleep_cond);
 
 	garbage_collector_active = 1;
 
-	int32_t ret = start_thread("garbage", (void *)&garbage_collector, NULL, &garbage_thread, 0, 1);
-	if(ret)
+	if(start_thread("garbage", (void *)&garbage_collector, NULL, &garbage_thread, 0, 1))
 	{
 		cs_exit(1);
 	}
