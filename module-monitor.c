@@ -2,9 +2,7 @@
 
 #include "globals.h"
 #ifdef MODULE_MONITOR
-#include "cscrypt/md5.h"
 #include "module-monitor.h"
-#include "oscam-aes.h"
 #include "oscam-array.h"
 #include "oscam-client.h"
 #include "oscam-config.h"
@@ -21,7 +19,7 @@ struct monitor_data
 {
 	bool            auth;
 	uint8_t         ucrc[4];
-	struct aes_keys aes_keys;
+	aes_keys        *aes_keys;
 	int32_t         seq;
 	int32_t         counter;
 	char            btxt[256];
@@ -98,7 +96,8 @@ static int32_t secmon_auth_client(uint8_t *ucrc)
 				(crc == crc32(0L, MD5((uint8_t *)account->usr, cs_strlen(account->usr), md5tmp), MD5_DIGEST_LENGTH)))
 		{
 			memcpy(module_data->ucrc, ucrc, 4);
-			aes_set_key(&module_data->aes_keys, (char *)MD5((uint8_t *)ESTR(account->pwd), cs_strlen(ESTR(account->pwd)), md5tmp));
+			if (!aes_set_key_alloc(&module_data->aes_keys, (char *)MD5((uint8_t *)ESTR(account->pwd), cs_strlen(ESTR(account->pwd)), md5tmp)))
+				return -1;
 			if(cs_auth_client(cur_cl, account, NULL))
 				{ return -1; }
 			module_data->auth = 1;
@@ -137,7 +136,7 @@ int32_t monitor_send_idx(struct s_client *cl, char *txt)
 	memset(buf+10+buf[9], 0, l-10-buf[9]);
 	uint8_t tmp[10];
 	memcpy(buf + 5, i2b_buf(4, crc32(0L, buf + 10, l - 10), tmp), 4);
-	aes_encrypt_idx(&module_data->aes_keys, buf + 5, l - 5);
+	aes_encrypt_idx(module_data->aes_keys, buf + 5, l - 5);
 	return sendto(cl->udp_fd, buf, l, 0, (struct sockaddr *)&cl->udp_sa, cl->udp_sa_len);
 }
 

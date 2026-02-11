@@ -2,7 +2,6 @@
 #ifdef READER_SECA
 #include "reader-common.h"
 #include "csctapi/icc_async.h"
-#include "cscrypt/idea.h"
 
 struct seca_data
 {

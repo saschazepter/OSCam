@@ -25,7 +25,6 @@
 #include "oscam-time.h"
 #include "oscam-work.h"
 #include "reader-irdeto.h"
-#include "cscrypt/md5.h"
 extern int32_t exit_oscam;
 
 static int32_t dvbapi_listenport_active = 0;
