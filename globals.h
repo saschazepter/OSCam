@@ -58,15 +58,7 @@
 #define ___config_enabled(__ignored, val, ...) val
 
 #include "config.h"
-
-#if defined(WITH_SSL) && !defined(WITH_LIBCRYPTO)
-# define WITH_LIBCRYPTO 1
-#endif
-
-/* For deprecated but still needed cryptography functions:
- * 10002 corresponds to OpenSSL version 1.0.2*/
-
-#define OPENSSL_API_COMPAT 10002
+#include "oscam-crypto.h"
 
 #if defined(__CYGWIN__) || defined(__arm__) || defined(__SH4__) || defined(__MIPS__) || defined(__MIPSEL__) || defined(__powerpc__)
 # define CS_LOGFILE "/dev/tty"
@@ -114,8 +106,6 @@
 #define __AVAILABILITY_MACROS_USES_AVAILABILITY 0
 #define MAC_OS_X_VERSION_MIN_REQUIRED MAC_OS_X_VERSION_10_6
 #endif
-
-#include "cscrypt/aes.h"
 
 #ifdef IPV6SUPPORT
 #define IN_ADDR_T struct in6_addr
@@ -802,22 +792,6 @@ typedef struct s_ptab
 	PORT			ports[CS_MAXPORTS];
 } PTAB;
 
-typedef struct aes_entry
-{
-	uint16_t		keyid;
-	uint16_t		caid;
-	uint32_t		ident;
-	uint8_t			plainkey[16];
-	AES_KEY			key;
-	struct aes_entry *next;
-} AES_ENTRY;
-
-struct aes_keys
-{
-	AES_KEY			aeskey_encrypt;					// encryption key needed by monitor and used by camd33, camd35
-	AES_KEY			aeskey_decrypt;					// decryption key needed by monitor and used by camd33, camd35
-};
-
 struct s_ecm
 {
 	uint8_t			ecmd5[CS_ECMSTORESIZE];
@@ -1294,7 +1268,7 @@ struct s_client
 
 	uint8_t			ucrc[4];						// needed by monitor and used by camd35
 	uint32_t		pcrc;							// password crc
-	struct aes_keys	*aes_keys;						// used by camd33 and camd35
+	aes_keys		*aes_keys;						// used by camd33 and camd35
 	uint16_t		ncd_msgid;
 	uint16_t		ncd_client_id;
 	uint8_t			ncd_skey[16];					// Also used for camd35 Cacheex to store remote node id
@@ -1662,7 +1636,7 @@ struct s_reader										// contains device info, reader info and card info
 #endif
 	int32_t			typ;
 	char			label[64];
-#ifdef WEBIF
+#if defined(WEBIF) || defined(MODULE_GBOX)
 	char			*description;
 #endif
 	char			device[128];
@@ -1948,8 +1922,8 @@ struct s_reader										// contains device info, reader info and card info
 #ifdef READER_VIACCESS
 	AES_ENTRY		*aes_list;						// multi AES linked list
 	uint8_t			initCA28;						// To set when CA28 succeed
-	uint32_t		key_schedule1[32];
-	uint32_t		key_schedule2[32];
+	des_key_schedule key_schedule1;
+	des_key_schedule key_schedule2;
 #endif
 
 #if defined(READER_DRE) || defined(READER_DRECAS)

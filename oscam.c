@@ -45,26 +45,16 @@
 #include "module-gbox.h"
 
 #ifdef WITH_SSL
-#include <openssl/crypto.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
+#include "oscam-ssl.h"
 
 static void ssl_init(void)
 {
-	SSL_load_error_strings();
-	ERR_load_BIO_strings();
-	ERR_load_SSL_strings();
-	SSL_library_init();
+	oscam_ssl_global_init();
 }
 
 static void ssl_done(void)
 {
-#if OPENSSL_VERSION_NUMBER < 0x1010005fL
-	ERR_remove_state(0);
-#endif
-	ERR_free_strings();
-	EVP_cleanup();
-	CRYPTO_cleanup_all_ex_data();
+	oscam_ssl_global_free();
 }
 
 #else
@@ -375,6 +365,15 @@ static void write_versionfile(bool use_stdout)
 	fprintf(fp, "Build Date:     %s\n", CS_BUILD_DATE);
 	fprintf(fp, "Version:        %s@%s\n", CS_VERSION, CS_GIT_COMMIT);
 	fprintf(fp, "Compiler:       %s\n", CS_TARGET);
+	fprintf(fp, "Crypto Backend: %s\n",
+	#if defined(WITH_MBEDTLS)
+			"MbedTLS"
+	#elif defined(WITH_OPENSSL)
+			"OpenSSL"
+	#else
+			"None"
+	#endif
+	);
 #ifdef USE_COMPRESS
 	fprintf(fp, "Compression:    %s, level %s\n", COMP_VERSION, COMP_LEVEL);
 #endif
@@ -404,7 +403,7 @@ static void write_versionfile(bool use_stdout)
 	fprintf(fp, "  Binary:       %s%s\n", osi.resolved_binfile, osi.binfile_exists ? "" : " is inaccessible!");
 	fprintf(fp, "  Signer:       %s\n", config_ssl);
 	fprintf(fp, "  SHA256:       %s\n", osi.hash_sha256 ? osi.hash_sha256 : "n/a");
-	fprintf(fp, "Certificate:    %s %s Certificate\n", ((osi.cert_is_valid_self || osi.cert_is_valid_system) ? "Trusted" : "Untrusted"), (osi.cert_is_cacert ? "CA" : "self signed"));
+	fprintf(fp, "Certificate:    %s %s%s Certificate\n", ((osi.cert_is_valid_self || osi.cert_is_valid_system) ? "Trusted" : "Untrusted"), (osi.cert_is_internal_ca ? "Internal " : ""), (osi.cert_is_cacert ? "CA" : "self signed"));
 	fprintf(fp, "  Subject:      %s\n", osi.cert_subject);
 	fprintf(fp, "  Issuer:       %s\n", osi.cert_issuer);
 	fprintf(fp, "  Version:      %d\n", osi.cert_version);
@@ -1740,6 +1739,10 @@ int32_t main(int32_t argc, char *argv[])
 		fprintf(stderr, "Could not create getclient, exiting...");
 		exit(1);
 	}
+
+#if defined(USE_SSL) || defined(USE_LIBCRYPTO)
+	mbedtls_platform_setup();
+#endif
 
 	void (*mod_def[])(struct s_module *) =
 	{

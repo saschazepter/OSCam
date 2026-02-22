@@ -31,8 +31,8 @@ struct videoguard_data
 	struct s_CmdTab *cmd_table;
 	uint16_t        cardkeys[3][32];
 	uint8_t         stateD3A[16];
-	AES_KEY         ekey;
-	AES_KEY         astrokey;
+	AesCtx          ekey;
+	AesCtx          astrokey;
 };
 
 extern int32_t cw_is_valid(uint8_t *cw);

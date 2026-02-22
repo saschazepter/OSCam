@@ -28,12 +28,18 @@ ifeq ($(uname_S),Darwin)
 	LINKER_VER_OPT:=-Wl,-v
 endif
 
-ifeq "$(shell ./config.sh --enabled WITH_SSL)" "Y"
-	override USE_SSL=1
+ifeq ($(USE_OPENSSL),1)
+	SECURITY_BACKEND := OPENSSL
+endif
+SECURITY_BACKEND ?= MBEDTLS
+override USE_$(SECURITY_BACKEND) = 1
+
+ifeq ($(USE_OPENSSL),1)
 	override USE_LIBCRYPTO=1
 endif
-ifdef USE_SSL
-	override USE_LIBCRYPTO=1
+
+ifeq "$(shell ./config.sh --enabled WITH_SSL)" "Y"
+	override USE_SSL=1
 endif
 
 CONF_DIR = /usr/local/etc
@@ -43,6 +49,10 @@ LIB_DL = -ldl
 
 ifeq ($(uname_S),FreeBSD)
 	LIB_DL :=
+endif
+
+ifneq ($(uname_S),Darwin)
+	LIB_RT = -lrt
 endif
 
 ifeq "$(shell ./config.sh --enabled MODULE_STREAMRELAY)" "Y"
@@ -68,6 +78,7 @@ STAT = $(shell which gnustat 2>/dev/null || which stat 2>/dev/null)
 SPLIT = $(shell which gsplit 2>/dev/null || which split 2>/dev/null)
 GREP = $(shell which ggrep 2>/dev/null || which grep 2>/dev/null)
 GIT = $(shell which git 2>/dev/null || true)
+LOWER = $(shell printf "%s" $(1) | tr A-Z a-z)
 
 # Compiler warnings
 CC_WARN = -W -Wall -Wshadow -Wredundant-decls -Wstrict-prototypes -Wold-style-definition
@@ -78,6 +89,12 @@ ifneq (,$(findstring clang,$(CCVERSION)))
 	CC_OPTS = -O2 -ggdb -pipe -ffunction-sections -fdata-sections -fomit-frame-pointer
 else
 	CC_OPTS = -O2 -ggdb -pipe -ffunction-sections -fdata-sections -fomit-frame-pointer -fno-schedule-insns
+	GCC_MAJOR := $(shell printf '%s\n' "$(CCVERSION)" | $(GREP) -E -o '[0-9]+\.[0-9]+\.[0-9]+' | tail -n1 | cut -d. -f1)
+	ifneq (,$(or $(filter 0 1 2 3 4,$(GCC_MAJOR)),$(filter ,$(GCC_MAJOR))))
+		override CC_OPTS += -std=gnu99
+	else ifneq (,$(filter 5 6 7 8 9 10,$(GCC_MAJOR)))
+		override CC_OPTS += -std=gnu11
+	endif
 endif
 
 LDFLAGS = -Wl,--gc-sections
@@ -184,22 +201,34 @@ DEFAULT_COOLAPI_LIB = -lnxp -lrt
 DEFAULT_COOLAPI2_LIB = -llnxUKAL -llnxcssUsr -llnxscsUsr -llnxnotifyqUsr -llnxplatUsr -lrt
 DEFAULT_SU980_LIB = -lentropic -lrt
 DEFAULT_AZBOX_LIB = -Lextapi/openxcas -lOpenXCASAPI
-DEFAULT_LIBCRYPTO_LIB = -lcrypto
-DEFAULT_SSL_LIB = -lssl
+DEFAULT_LIBCRYPTO_LIB = \
+	$(if $(USE_MBEDTLS),, \
+	$(if $(USE_OPENSSL),-lcrypto,))
+DEFAULT_SSL_LIB = \
+	$(if $(USE_MBEDTLS),, \
+	$(if $(USE_OPENSSL),-lssl,))
 DEFAULT_LIBDVBCSA_LIB = -ldvbcsa
 DEFAULT_LIBUSB_LIB = -lusb-1.0
 
 # Since FreeBSD 8 (released in 2010) they are using their own
 # libusb that is API compatible to libusb but with different soname
 ifeq ($(uname_S),FreeBSD)
-	DEFAULT_SSL_FLAGS = -I/usr/include
+	DEFAULT_SSL_FLAGS = \
+		$(if $(USE_MBEDTLS),-I$(MBEDTLS_INC), \
+		$(if $(USE_OPENSSL),-I/usr/include,))
 	DEFAULT_LIBUSB_LIB = -lusb
 	DEFAULT_PCSC_FLAGS = -I/usr/local/include/PCSC
 	DEFAULT_PCSC_LIB = -L/usr/local/lib -lpcsclite
 else ifeq ($(uname_S),Darwin)
-	DEFAULT_SSL_FLAGS = -I/usr/local/opt/openssl/include
-	DEFAULT_SSL_LIB = -L/usr/local/opt/openssl/lib -lssl
-	DEFAULT_LIBCRYPTO_LIB = -L/usr/local/opt/openssl/lib -lcrypto
+	DEFAULT_SSL_FLAGS = \
+		$(if $(USE_MBEDTLS),-I$(MBEDTLS_INC), \
+		$(if $(USE_OPENSSL),-I/usr/local/opt/openssl/include,))
+	DEFAULT_LIBCRYPTO_LIB = \
+		$(if $(USE_MBEDTLS),, \
+		$(if $(USE_OPENSSL),-L/usr/local/opt/openssl/lib -lcrypto,))
+	DEFAULT_SSL_LIB = \
+		$(if $(USE_MBEDTLS),, \
+		$(if $(USE_OPENSSL),-L/usr/local/opt/openssl/lib -lssl,))
 	DEFAULT_LIBDVBCSA_FLAGS = -I/usr/local/opt/libdvbcsa/include
 	DEFAULT_LIBDVBCSA_LIB = -L/usr/local/opt/libdvbcsa/lib -ldvbcsa
 	DEFAULT_LIBUSB_FLAGS = -I/usr/local/opt/libusb/include
@@ -219,13 +248,77 @@ else
 	# We can't just use -I/usr/include/PCSC because it won't work in
 	# case of cross compilation.
 	TOOLCHAIN_INC_DIR := $(strip $(shell echo | $(CC) -Wp,-v -xc - -fsyntax-only 2>&1 | $(GREP) include$ | tail -n 1))
-	DEFAULT_SSL_FLAGS = -I$(TOOLCHAIN_INC_DIR) -I$(TOOLCHAIN_INC_DIR)/../../include -I$(TOOLCHAIN_INC_DIR)/../local/include
+	DEFAULT_SSL_FLAGS = \
+		$(if $(USE_MBEDTLS),-I$(MBEDTLS_INC), \
+		$(if $(USE_OPENSSL),-I$(TOOLCHAIN_INC_DIR) -I$(TOOLCHAIN_INC_DIR)/../../include -I$(TOOLCHAIN_INC_DIR)/../local/include,))
 	DEFAULT_PCSC_FLAGS = -I$(TOOLCHAIN_INC_DIR)/PCSC -I$(TOOLCHAIN_INC_DIR)/../../include/PCSC -I$(TOOLCHAIN_INC_DIR)/../local/include/PCSC
 	DEFAULT_PCSC_LIB = -lpcsclite
 endif
 
 ifeq ($(uname_S),Cygwin)
 	DEFAULT_PCSC_LIB += -lwinscard
+endif
+
+# MbedTLS common settings
+MBEDTLS_DIR      := mbedtls
+MBEDTLS_INC      := $(MBEDTLS_DIR)/include
+
+ifneq ($(strip $(shell ./config.sh --show-enabled libraries)),)
+	ifeq ($(USE_MBEDTLS),1)
+		override CFLAGS += -I. -I$(MBEDTLS_DIR)/include
+		override CFLAGS  += -DMBEDTLS_NO_PLATFORM_ENTROPY -DMBEDTLS_NO_DEFAULT_ENTROPY_SOURCES
+		override CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
+		override LDFLAGS += $(LIB_RT)
+		IS_MBEDTLS_FILE = $(or $(findstring $(MBEDTLS_DIR)/,$<),$(findstring mbedtls/,$(CFLAGS)))
+	endif
+endif
+
+# MbedTLS base files
+ifeq ($(USE_MBEDTLS),1)
+	MBEDTLS_SRC_BASE := \
+		$(shell $(GREP) -q '^\#define MBEDTLS_DEBUG_C' mbedtls-config.h 2>/dev/null && echo $(MBEDTLS_DIR)/library/debug.c) \
+		mbedtls_platform.c
+
+	# MbedTLS all files
+	ifeq ($(USE_SSL),1)
+		MBEDTLS_SRC := $(filter-out \
+			$(MBEDTLS_DIR)/library/debug.c \
+			$(MBEDTLS_DIR)/library/platform.c \
+			$(MBEDTLS_DIR)/library/platform_util.c \
+			$(MBEDTLS_DIR)/library/psa_%.c \
+			$(MBEDTLS_DIR)/library/ssl_tls13_%.c, \
+			$(wildcard $(MBEDTLS_DIR)/library/*.c))
+	else
+	# MbedTLS optional files
+		ifeq "$(shell ./config.sh --enabled WITH_LIB_AES)" "Y"
+			MBEDTLS_SRC_CRYPTO += \
+				$(MBEDTLS_DIR)/library/aes.c \
+				$(MBEDTLS_DIR)/library/aesce.c \
+				$(MBEDTLS_DIR)/library/aesni.c
+		endif
+		ifeq ($(or $(shell ./config.sh --enabled WITH_LIB_DES),$(shell ./config.sh --enabled WITH_LIB_MDC2)),Y)
+			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/des.c
+		endif
+		ifeq "$(shell ./config.sh --enabled WITH_LIB_MD5)" "Y"
+			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/md5.c
+		endif
+		ifeq "$(shell ./config.sh --enabled WITH_LIB_SHA1)" "Y"
+			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/sha1.c
+		endif
+		ifeq "$(shell ./config.sh --enabled WITH_LIB_SHA256)" "Y"
+			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/sha256.c
+		endif
+		ifeq "$(shell ./config.sh --enabled WITH_LIB_BIGNUM)" "Y"
+			MBEDTLS_SRC_CRYPTO += \
+				$(MBEDTLS_DIR)/library/bignum.c \
+				$(MBEDTLS_DIR)/library/bignum_core.c \
+				$(MBEDTLS_DIR)/library/bignum_mod.c \
+				$(MBEDTLS_DIR)/library/constant_time.c
+		endif
+		ifneq ($(strip $(MBEDTLS_SRC_CRYPTO)),)
+			MBEDTLS_SRC += $(MBEDTLS_SRC_CRYPTO)
+		endif
+	endif
 endif
 
 # Function to initialize USE related variables
@@ -256,6 +349,8 @@ $(eval $(call prepare_use_flags,SU980,su980))
 $(eval $(call prepare_use_flags,AZBOX,azbox))
 $(eval $(call prepare_use_flags,AMSMC,amsmc))
 $(eval $(call prepare_use_flags,MCA,mca))
+$(eval $(call prepare_use_flags,MBEDTLS,))
+$(eval $(call prepare_use_flags,OPENSSL,))
 $(eval $(call prepare_use_flags,SSL,ssl))
 $(eval $(call prepare_use_flags,LIBCRYPTO,))
 $(eval $(call prepare_use_flags,LIBUSB,libusb))
@@ -263,11 +358,13 @@ $(eval $(call prepare_use_flags,PCSC,pcsc))
 $(eval $(call prepare_use_flags,LIBDVBCSA,libdvbcsa))
 $(eval $(call prepare_use_flags,COMPRESS,upx))
 
-ifdef USE_SSL
-	SSL_HEADER = $(shell find $(subst -DWITH_SSL=1,,$(subst -I,,$(SSL_FLAGS))) -name opensslv.h -print 2>/dev/null | tail -n 1)
+ifeq ($(USE_OPENSSL),1)
+	SSL_HEADER = $(shell find $(subst -DWITH_SSL=1,,$(subst -I,,$(DEFAULT_SSL_FLAGS))) -name opensslv.h -print 2>/dev/null | tail -n 1)
 	SSL_VER    = ${shell ($(GREP) 'OpenSSL [[:digit:]][^ ]*' $(SSL_HEADER) /dev/null 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 }' | xargs}
-	SSL_INFO   = $(shell echo ', $(SSL_VER)')
+else
+	SSL_VER    = ${shell ($(GREP) '^\#define MBEDTLS_VERSION_STRING_FULL' $(MBEDTLS_INC)/mbedtls/build_info.h /dev/null 2>/dev/null || echo '"n.a."') | tail -n 1 | awk -F'"' '{ print $$2 " (built-in)" }' | xargs}
 endif
+SSL_INFO   = $(shell echo ', $(SSL_VER)')
 
 # Add PLUS_TARGET and EXTRA_TARGET to TARGET
 ifdef NO_PLUS_TARGET
@@ -314,30 +411,11 @@ ifndef USE_LIBUSB
 	override LIST_SMARGO_BIN =
 endif
 
-SRC-$(CONFIG_LIB_AES) += cscrypt/aes.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_add.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_asm.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_ctx.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_div.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_exp.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_lib.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_mul.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_print.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_shift.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_sqr.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/bn_word.c
-SRC-$(CONFIG_LIB_BIGNUM) += cscrypt/mem.c
-SRC-$(CONFIG_LIB_DES) += cscrypt/des.c
-SRC-$(CONFIG_LIB_IDEA) += cscrypt/i_cbc.c
-SRC-$(CONFIG_LIB_IDEA) += cscrypt/i_ecb.c
-SRC-$(CONFIG_LIB_IDEA) += cscrypt/i_skey.c
-SRC-y += cscrypt/md5.c
-SRC-$(CONFIG_LIB_RC6) += cscrypt/rc6.c
-SRC-$(CONFIG_LIB_SHA1) += cscrypt/sha1.c
-SRC-$(CONFIG_LIB_MDC2) += cscrypt/mdc2.c
-SRC-$(CONFIG_LIB_FAST_AES) += cscrypt/fast_aes.c
-SRC-$(CONFIG_LIB_SHA256) += cscrypt/sha256.c
-
+# mbedtls source files
+ifeq ($(USE_MBEDTLS),1)
+	SRC-y += $(MBEDTLS_SRC) $(MBEDTLS_SRC_BASE)
+endif
+# cstapi source files
 SRC-$(CONFIG_WITH_CARDREADER) += csctapi/atr.c
 SRC-$(CONFIG_WITH_CARDREADER) += csctapi/icc_async.c
 SRC-$(CONFIG_WITH_CARDREADER) += csctapi/io_serial.c
@@ -359,9 +437,9 @@ SRC-$(CONFIG_CARDREADER_STINGER) += csctapi/ifd_stinger.c
 SRC-$(CONFIG_CARDREADER_STAPI) += csctapi/ifd_stapi.c
 SRC-$(CONFIG_CARDREADER_STAPI5) += csctapi/ifd_stapi.c
 SRC-$(CONFIG_CARDREADER_INTERNAL_AMSMC) += csctapi/ifd_amsmc.c
-
-SRC-$(CONFIG_LIB_MINILZO) += minilzo/minilzo.c
-
+# minilzo source files
+SRC-$(CONFIG_WITH_LIB_MINILZO) += minilzo/minilzo.c
+# oscam source files
 SRC-$(CONFIG_CS_ANTICASC) += module-anticasc.c
 SRC-$(CONFIG_CS_CACHEEX) += module-cacheex.c
 SRC-$(CONFIG_MODULE_CAMD33) += module-camd33.c
@@ -428,7 +506,6 @@ SRC-$(CONFIG_READER_VIDEOGUARD) += reader-videoguard1.c
 SRC-$(CONFIG_READER_VIDEOGUARD) += reader-videoguard12.c
 SRC-$(CONFIG_READER_VIDEOGUARD) += reader-videoguard2.c
 SRC-$(CONFIG_WITH_SIGNING) += oscam-signing.c
-SRC-y += oscam-aes.c
 SRC-y += oscam-array.c
 SRC-y += oscam-hashtable.c
 SRC-y += oscam-cache.c
@@ -441,6 +518,8 @@ SRC-y += oscam-config-account.c
 SRC-y += oscam-config-global.c
 SRC-y += oscam-config-reader.c
 SRC-y += oscam-config.c
+SRC-y += oscam-crypto.c
+SRC-y += oscam-crypto-$(call LOWER,$(SECURITY_BACKEND)).c
 SRC-y += oscam-ecm.c
 SRC-y += oscam-emm.c
 SRC-y += oscam-emm-cache.c
@@ -454,6 +533,7 @@ SRC-y += oscam-net.c
 SRC-y += oscam-llist.c
 SRC-y += oscam-reader.c
 SRC-y += oscam-simples.c
+SRC-$(if $(filter 1,$(USE_SSL)),y) += oscam-ssl-$(call LOWER,$(SECURITY_BACKEND)).c
 SRC-y += oscam-string.c
 SRC-y += oscam-time.c
 SRC-y += oscam-work.c
@@ -473,11 +553,12 @@ SRC := $(subst config.c,$(OBJDIR)/config.c,$(SRC))
 # starts the compilation.
 all: submodules
 	@./config.sh --use-flags "$(USE_FLAGS)" --objdir "$(OBJDIR)" --make-config.mak
-	@-mkdir -p $(OBJDIR)/cscrypt $(OBJDIR)/csctapi $(OBJDIR)/minilzo $(OBJDIR)/webif $(OBJDIR)/signing
+	@-mkdir -p $(OBJDIR)/csctapi $(OBJDIR)/minilzo $(OBJDIR)/webif $(OBJDIR)/signing $(OBJDIR)/$(MBEDTLS_DIR)/library
 	@-printf "\
 +-------------------------------------------------------------------------------\n\
 | OSCam Ver.: $(VER) sha: $(GIT_SHA) target: $(TARGET)\n\
 | Build Date: $(BUILD_DATE)\n\
+| Backend   : $(SECURITY_BACKEND)\n\
 | Tools:\n\
 |  CROSS    = $(CROSS_DIR)$(CROSS)\n\
 |  CC       = $(CC)\n\
@@ -497,6 +578,7 @@ $(SIGN_INFO_TOOL)\
 |  Protocols: $(shell ./config.sh --use-flags "$(USE_FLAGS)" --show-enabled protocols | sed -e 's|MODULE_||g')\n\
 |  Readers  : $(shell ./config.sh --use-flags "$(USE_FLAGS)" --show-enabled readers | sed -e 's|READER_||g')\n\
 |  CardRdrs : $(shell ./config.sh --use-flags "$(USE_FLAGS)" --show-enabled card_readers | sed -e 's|CARDREADER_||g')\n\
+|  Libraries: $(shell ./config.sh --use-flags "$(USE_FLAGS)" --show-enabled libraries | sed -e 's|WITH_LIB_||g')\n\
 |  Compiler : $(CCVERSION)$(SSL_INFO)\n\
 $(UPX_INFO)\
 $(SIGN_INFO)\
@@ -531,7 +613,9 @@ $(OBJDIR)/config.o: $(OBJDIR)/config.c
 $(OBJDIR)/%.o: %.c Makefile
 	@$(CC) $(CFLAGS) -MP -MM -MT $@ -o $(subst .o,.d,$@) $<
 	$(SAY) "CC	$<"
-	$(Q)$(CC) $(STD_DEFS) $(CC_OPTS) $(CC_WARN) $(CFLAGS) -c $< -o $@
+	$(Q)$(CC) $(STD_DEFS) $(CC_OPTS) \
+	$(if $(IS_MBEDTLS_FILE),$(filter-out -Wredundant-decls,$(CC_WARN)),$(CC_WARN)) \
+	$(CFLAGS) -c $< -o $@
 
 -include $(subst .o,.d,$(OBJ))
 
@@ -575,7 +659,7 @@ distclean: clean
 	@-$(MAKE) --no-print-directory --quiet -C webif clean
 
 submodules:
-	@./config.sh --submodule
+	@./config.sh --use-flags "$(USE_FLAGS)" --submodule
 
 README.build:
 	@echo "Extracting 'make help' into $@ file."
@@ -772,9 +856,12 @@ OSCam build system documentation\n\
                          MCA_LDFLAGS='$(DEFAULT_MCA_FLAGS)'\n\
                      Using USE_MCA=1 adds to '-mca' to PLUS_TARGET.\n\
 \n\
-   USE_LIBCRYPTO=1 - Request linking with libcrypto instead of using OSCam\n\
+   USE_OPENSSL=1   - Request using OpenSSL as security backend. This overrides\n\
+                     the use of default mbedtls backend.\n\
+\n\
+   USE_LIBCRYPTO=1 - Request linking with libcrypto instead of using de\n\
                      internal crypto functions. USE_LIBCRYPTO is automatically\n\
-                     enabled if the build is configured with SSL support. The\n\
+                     enabled if the build is configured with USE_OPENSSL. The\n\
                      variables that control USE_LIBCRYPTO=1 build are:\n\
                          LIBCRYPTO_FLAGS='$(DEFAULT_LIBCRYPTO_FLAGS)'\n\
                          LIBCRYPTO_CFLAGS='$(DEFAULT_LIBCRYPTO_FLAGS)'\n\
@@ -880,7 +967,6 @@ OSCam build system documentation\n\
  Predefined targets for static builds:\n\
     make static        - Builds OSCam statically\n\
     make static-libusb - Builds OSCam with libusb linked statically\n\
-    make static-libcrypto - Builds OSCam with libcrypto linked statically\n\
     make static-ssl    - Builds OSCam with SSL support linked statically\n\
 \n\
  Developer targets:\n\
@@ -911,8 +997,6 @@ OSCam build system documentation\n\
      make USE_LIBUSB=1 USE_PCSC=1\n\n\
    Build OSCam with static libusb:\n\
      make USE_LIBUSB=1 LIBUSB_LIB=\"/usr/lib/libusb-1.0.a\"\n\n\
-   Build OSCam with static libcrypto:\n\
-     make USE_LIBCRYPTO=1 LIBCRYPTO_LIB=\"/usr/lib/libcrypto.a\"\n\n\
    Build OSCam with static libssl and libcrypto:\n\
      make USE_SSL=1 SSL_LIB=\"/usr/lib/libssl.a\" LIBCRYPTO_LIB=\"/usr/lib/libcrypto.a\"\n\n\
    Build OSCam with static libdvbcsa:\n\

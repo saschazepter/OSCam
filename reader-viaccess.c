@@ -2,11 +2,9 @@
 
 #ifdef READER_VIACCESS
 
-#include "oscam-aes.h"
 #include "oscam-time.h"
 #include "oscam-emm.h"
 #include "reader-common.h"
-#include "cscrypt/des.h"
 #include "oscam-work.h"
 
 typedef unsigned int uint;
@@ -1666,13 +1664,13 @@ static int32_t viaccess_do_ecm(struct s_reader *reader, const ECM_REQUEST *er, s
 			memcpy(returnedcw, ea->cw, 16);
 			// Processing 3DES
 			// Processing even cw
-			des(returnedcw, reader->key_schedule1, 0); // decrypt
-			des(returnedcw, reader->key_schedule2, 1); // crypt
-			des(returnedcw, reader->key_schedule1, 0); // decrypt
+			des(returnedcw, &reader->key_schedule1, 0); // decrypt
+			des(returnedcw, &reader->key_schedule2, 1); // crypt
+			des(returnedcw, &reader->key_schedule1, 0); // decrypt
 			// Processing odd cw
-			des(returnedcw + 8, reader->key_schedule1, 0); // decrypt
-			des(returnedcw + 8, reader->key_schedule2, 1); // crypt
-			des(returnedcw + 8, reader->key_schedule1, 0); // decrypt
+			des(returnedcw + 8, &reader->key_schedule1, 0); // decrypt
+			des(returnedcw + 8, &reader->key_schedule2, 1); // crypt
+			des(returnedcw + 8, &reader->key_schedule1, 0); // decrypt
 			// returning value
 			memcpy(ea->cw, returnedcw, 16);
 		}
@@ -2396,8 +2394,8 @@ static int32_t viaccess_card_info(struct s_reader *reader)
 		{
 			rdr_log(reader, "CA 28 initialisation successful!");
 			// init 3DES key
-			des_set_key(reader->des_key, reader->key_schedule1);
-			des_set_key(reader->des_key+8, reader->key_schedule2);
+			des_set_key(reader->des_key, &reader->key_schedule1);
+			des_set_key(reader->des_key+8, &reader->key_schedule2);
 			reader->initCA28=1;
 		}
 		else
