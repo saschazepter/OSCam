@@ -239,6 +239,10 @@ int32_t cs_open_logfiles(void)
 	// We use openlog to set the default syslog settings so that it's possible to allow switching syslog on and off
 	openlog(syslog_ident, LOG_NDELAY | LOG_PID, LOG_DAEMON);
 	cs_log(">> OSCam << cardserver %s, version " CS_VERSION "@" CS_GIT_COMMIT " (" CS_TARGET ")", starttext);
+	cs_log("group_t ABI: bits=%d size=%zu align=%zu", GROUP_BITS, sizeof(group_t), (size_t)__alignof__(group_t));
+#if GROUP_BITS < 128
+	cs_log("WARNING: built with 64-bit group_t; binaries/config state are not ABI-compatible with 128-bit group_t builds");
+#endif
 
 	return (fp <= (FILE *)0);
 }

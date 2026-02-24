@@ -1452,6 +1452,11 @@ static void newcamd_report_cards(struct s_client *client)
 
 		if(!(rdr->grp & client->grp))
 		{
+			char rdr_grp[CS_GROUP_FMT_LEN], cl_grp[CS_GROUP_FMT_LEN];
+			cs_log_dbg(D_CLIENT, "newcamd: skip reader %s by group filter (reader=%s, client=%s)",
+				rdr->label,
+				cs_fmt_group(rdr_grp, sizeof(rdr_grp), rdr->grp),
+				cs_fmt_group(cl_grp, sizeof(cl_grp), client->grp));
 			continue; // test - skip unaccesible readers
 		}
 
