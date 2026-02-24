@@ -9202,6 +9202,7 @@ static int8_t parse_chunked_complete(char *body, int32_t body_len)
 {
 	char *pos = body;
 	char *end = body + body_len;
+	const uint64_t max_chunk_size = 2ULL * 1024ULL * 1024ULL * 1024ULL;
 
 	while(pos < end)
 	{
@@ -9224,6 +9225,7 @@ static int8_t parse_chunked_complete(char *body, int32_t body_len)
 			else { break; }
 
 			has_digits = 1;
+			if(chunk_size > ((UINT64_MAX - digit) >> 4)) { return -1; }
 			chunk_size = (chunk_size << 4) + digit;
 			p++;
 		}
@@ -9231,6 +9233,7 @@ static int8_t parse_chunked_complete(char *body, int32_t body_len)
 		if(!has_digits) { return 0; }
 		while(p < line_end && (*p == ' ' || *p == '\t')) { p++; }
 		if(p < line_end && *p != ';') { return 0; }
+		if(chunk_size > max_chunk_size) { return -1; }
 
 		pos = line_end + line_sep_len;
 
