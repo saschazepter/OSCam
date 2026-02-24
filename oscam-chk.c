@@ -885,7 +885,14 @@ int32_t matching_reader(ECM_REQUEST *er, struct s_reader *rdr)
 #endif
 
 	if(!(rdr->grp & cur_cl->grp))
-		{ return (0); }
+	{
+		char rdr_grp[CS_GROUP_FMT_LEN], cl_grp[CS_GROUP_FMT_LEN];
+		cs_log_dbg(D_TRACE, "reader %s skipped by group filter (reader=%s, client=%s)",
+			rdr->label,
+			cs_fmt_group(rdr_grp, sizeof(rdr_grp), rdr->grp),
+			cs_fmt_group(cl_grp, sizeof(cl_grp), cur_cl->grp));
+		return (0);
+	}
 
 	// Checking caids:
 	if((!er->ocaid || !chk_ctab(er->ocaid, &rdr->ctab)) && !chk_ctab(er->caid, &rdr->ctab))

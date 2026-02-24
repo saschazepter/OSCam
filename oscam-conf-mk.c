@@ -80,8 +80,8 @@ char *mk_t_tuntab(TUNTAB *ttab)
 		if(grp & ((group_t)1 << i))
 		{
 			needed += 2;
-			if(i > 8) { needed += 1; }
-			if(i > 98) { needed += 1; }
+			if(i > 9) { needed += 1; }
+			if(i > 99) { needed += 1; }
 		}
 	}
 
@@ -95,16 +95,16 @@ char *mk_t_tuntab(TUNTAB *ttab)
 			if(dot == 0)
 			{
 				snprintf(value + pos, needed - pos, "%d", i + 1);
-				if(i > 98) { pos += 3; }
-				else if(i > 8) { pos += 2; }
+				if(i > 99) { pos += 3; }
+				else if(i > 9) { pos += 2; }
 				else { pos += 1; }
 				dot = 1;
 			}
 			else
 			{
 				snprintf(value + pos, needed - pos, ",%d", i + 1);
-				if(i > 98) { pos += 4; }
-				else if(i > 8) { pos += 3; }
+				if(i > 99) { pos += 4; }
+				else if(i > 9) { pos += 3; }
 				else { pos += 2; }
 			}
 		}

@@ -1853,6 +1853,12 @@ void dvbapi_start_emm_filter(int32_t demux_id)
 	{
 		if(!(rdr->grp & cl->grp))
 		{
+			char rdr_grp[CS_GROUP_FMT_LEN], cl_grp[CS_GROUP_FMT_LEN];
+			cs_log_dbg(D_DVBAPI, "Demuxer %d skip reader %s by group filter (reader=%s, client=%s)",
+				demux_id,
+				rdr->label,
+				cs_fmt_group(rdr_grp, sizeof(rdr_grp), rdr->grp),
+				cs_fmt_group(cl_grp, sizeof(cl_grp), cl->grp));
 			continue;
 		}
 
