@@ -9238,10 +9238,11 @@ static int8_t parse_chunked_complete(char *body, int32_t body_len)
 		{
 			while(pos < end)
 			{
-				char *trailer_end = find_crlf(pos, end);
+				int8_t trailer_sep_len = 0;
+				char *trailer_end = find_line_end(pos, end, &trailer_sep_len);
 				if(trailer_end == NULL) { return 0; }
 				if(trailer_end == pos) { return 1; }
-				pos = trailer_end + 2;
+				pos = trailer_end + trailer_sep_len;
 			}
 			return 0;
 		}
@@ -9400,6 +9401,7 @@ static int32_t readRequest(FILE * f, IN_ADDR_T in, char **result, int8_t forcePl
 					cs_sleepms(5);
 					continue;
 				}
+				NULLFREE(*result);
 				return -1;
 			}
 #ifdef WITH_SSL
@@ -9412,12 +9414,14 @@ static int32_t readRequest(FILE * f, IN_ADDR_T in, char **result, int8_t forcePl
 					ERR_error_string_n(errcode, errstring, sizeof(errstring) - 1);
 					cs_log_dbg(D_TRACE, "WebIf: read error ret=%d (%d%s%s)", n, SSL_get_error(cur_ssl(), n), errcode ? " " : "", errcode ? errstring : "");
 				}
+				NULLFREE(*result);
 				return -1;
 			}
 #else
 			if(errno != ECONNRESET)
 				{ cs_log_dbg(D_TRACE, "WebIf: read error ret=%d (errno=%d %s)", n, errno, strerror(errno)); }
 #endif
+			NULLFREE(*result);
 			return -1;
 		}
 		if(!cs_realloc(result, bufsize + n + 1))
