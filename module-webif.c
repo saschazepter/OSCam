@@ -9116,36 +9116,259 @@ static int8_t check_valid_origin(IN_ADDR_T addr)
 	return 0;
 }
 
-static int8_t check_request(char *result, int32_t readen)
+static char *find_line_end(char *start, char *end, int8_t *line_sep_len)
 {
-	if(readen < 50) { return 0; }
-	result[readen] = '\0';
-	int8_t method;
-	if(strncmp(result, "POST", 4) == 0) { method = 1; }
-	else { method = 0; }
-	char *headerEnd = strstr(result, "\r\n\r\n");
-	if(headerEnd == NULL) { return 0; }
-	else if(method == 0) { return 1; }
-	else
+	char *p;
+	for(p = start; p < end; p++)
 	{
-		char *ptr = strstr(result, "Content-Length: ");
-		if(ptr != NULL)
+		if(*p == '\n')
 		{
-			ptr += 16;
-			if(ptr < result + readen)
+			if(p > start && p[-1] == '\r')
 			{
-				uint32_t length = atoi(ptr);
-				if(cs_strlen(headerEnd + 4) >= length) { return 1; }
+				*line_sep_len = 2;
+				return p - 1;
+			}
+			*line_sep_len = 1;
+			return p;
+		}
+	}
+	return NULL;
+}
+
+static char *find_header_end(char *start, char *end, int8_t *header_sep_len)
+{
+	char *p;
+	for(p = start; p < end; p++)
+	{
+		if(*p == '\n')
+		{
+			if(p + 1 < end && p[1] == '\n')
+			{
+				*header_sep_len = 2;
+				return p;
+			}
+
+			if(p > start && p[-1] == '\r' && p + 2 < end && p[1] == '\r' && p[2] == '\n')
+			{
+				*header_sep_len = 4;
+				return p - 1;
 			}
 		}
 	}
+
+	return NULL;
+}
+
+static void parse_transfer_encoding_tokens(char *start, char *end, int8_t *has_chunked_encoding)
+{
+	char *ptr = start;
+	while(ptr < end)
+	{
+		while(ptr < end && (*ptr == ' ' || *ptr == '\t' || *ptr == ',')) { ptr++; }
+		if(ptr >= end) { break; }
+
+		char *token_start = ptr;
+		while(ptr < end && *ptr != ',' && *ptr != ';' && *ptr != ' ' && *ptr != '\t') { ptr++; }
+		char *token_end = ptr;
+
+		if(token_end - token_start == 7 && strncasecmp(token_start, "chunked", 7) == 0)
+			{ *has_chunked_encoding = 1; }
+
+		while(ptr < end && *ptr != ',') { ptr++; }
+	}
+}
+
+static int8_t parse_content_length_value(char *start, char *end, uint32_t *content_length)
+{
+	char *ptr = start;
+	char *endptr = NULL;
+	unsigned long parsed_length;
+
+	while(ptr < end && (*ptr == ' ' || *ptr == '\t')) { ptr++; }
+	if(ptr >= end || *ptr == '-' || *ptr == '+') { return -1; }
+
+	errno = 0;
+	parsed_length = strtoul(ptr, &endptr, 10);
+	if(endptr == ptr) { return -1; }
+
+	while(endptr < end && (*endptr == ' ' || *endptr == '\t')) { endptr++; }
+	if(endptr != end || errno != 0 || parsed_length > UINT32_MAX) { return -1; }
+
+	*content_length = (uint32_t)parsed_length;
+	return 1;
+}
+
+static int8_t parse_chunked_complete(char *body, int32_t body_len)
+{
+	char *pos = body;
+	char *end = body + body_len;
+
+	while(pos < end)
+	{
+		int8_t line_sep_len = 0;
+		char *line_end = find_line_end(pos, end, &line_sep_len);
+		if(line_end == NULL) { return 0; }
+
+		char *p = pos;
+		while(p < line_end && (*p == ' ' || *p == '\t')) { p++; }
+
+		uint64_t chunk_size = 0;
+		int8_t has_digits = 0;
+		while(p < line_end)
+		{
+			char c = *p;
+			uint8_t digit;
+			if(c >= '0' && c <= '9') { digit = (uint8_t)(c - '0'); }
+			else if(c >= 'a' && c <= 'f') { digit = (uint8_t)(c - 'a' + 10); }
+			else if(c >= 'A' && c <= 'F') { digit = (uint8_t)(c - 'A' + 10); }
+			else { break; }
+
+			has_digits = 1;
+			chunk_size = (chunk_size << 4) + digit;
+			p++;
+		}
+
+		if(!has_digits) { return 0; }
+		while(p < line_end && (*p == ' ' || *p == '\t')) { p++; }
+		if(p < line_end && *p != ';') { return 0; }
+
+		pos = line_end + line_sep_len;
+
+		if(chunk_size == 0)
+		{
+			while(pos < end)
+			{
+				char *trailer_end = find_crlf(pos, end);
+				if(trailer_end == NULL) { return 0; }
+				if(trailer_end == pos) { return 1; }
+				pos = trailer_end + 2;
+			}
+			return 0;
+		}
+
+		if(chunk_size > (uint64_t)(end - pos - 1)) { return 0; }
+		pos += (size_t)chunk_size;
+		if(pos >= end) { return 0; }
+		if(pos[0] == '\n') { pos += 1; }
+		else if(pos + 1 < end && pos[0] == '\r' && pos[1] == '\n') { pos += 2; }
+		else { return 0; }
+	}
+
+	return 0;
+}
+
+static int32_t check_request(char *result, int32_t readen)
+{
+	if(readen <= 0) { return 0; }
+	result[readen] = '\0';
+	int8_t method_has_body;
+	if(strncmp(result, "POST ", 5) == 0 || strncmp(result, "PUT ", 4) == 0 || strncmp(result, "PATCH ", 6) == 0)
+		{ method_has_body = 1; }
+	else
+		{ method_has_body = 0; }
+	int8_t header_sep_len = 0;
+	char *headerEnd = find_header_end(result, result + readen, &header_sep_len);
+	if(headerEnd == NULL) { return 0; }
+	else if(method_has_body == 0) { return 1; }
+	else
+	{
+		int8_t request_line_sep_len = 0;
+		char *line = find_line_end(result, headerEnd, &request_line_sep_len);
+		if(line == NULL) { return 0; }
+		line += request_line_sep_len;
+
+		int8_t has_chunked_encoding = 0;
+		int8_t has_content_length = 0;
+		int8_t invalid_content_length = 0;
+		uint32_t content_length = 0;
+		int8_t active_header = 0;
+
+		while(line < headerEnd)
+		{
+			int8_t line_sep_len = 0;
+			char *line_end = find_line_end(line, headerEnd, &line_sep_len);
+			if(line_end == NULL || line_end > headerEnd) { break; }
+
+			if(line[0] == ' ' || line[0] == '\t')
+			{
+				char *cont = line;
+				while(cont < line_end && (*cont == ' ' || *cont == '\t')) { cont++; }
+
+				if(active_header == 1)
+				{
+					if(cont < line_end)
+						{ invalid_content_length = 1; }
+				}
+				else if(active_header == 2)
+				{
+					parse_transfer_encoding_tokens(cont, line_end, &has_chunked_encoding);
+				}
+
+				line = line_end + line_sep_len;
+				continue;
+			}
+
+			active_header = 0;
+
+			char *name_start = line;
+			while(name_start < line_end && (*name_start == ' ' || *name_start == '\t')) { name_start++; }
+			char *colon = memchr(name_start, ':', line_end - name_start);
+			if(colon != NULL)
+			{
+				char *name_end = colon;
+				char *value_start = colon + 1;
+				while(name_end > name_start && (name_end[-1] == ' ' || name_end[-1] == '\t')) { name_end--; }
+				while(value_start < line_end && (*value_start == ' ' || *value_start == '\t')) { value_start++; }
+
+				if(name_end - name_start == 14 && strncasecmp(name_start, "Content-Length", 14) == 0)
+				{
+					if(parse_content_length_value(value_start, line_end, &content_length) < 0)
+						{ invalid_content_length = 1; }
+					else
+						{ has_content_length = 1; }
+					active_header = 1;
+				}
+				else if(name_end - name_start == 17 && strncasecmp(name_start, "Transfer-Encoding", 17) == 0)
+				{
+					parse_transfer_encoding_tokens(value_start, line_end, &has_chunked_encoding);
+					active_header = 2;
+				}
+			}
+
+			line = line_end + line_sep_len;
+		}
+
+		char *body = headerEnd + header_sep_len;
+		int32_t body_len = (int32_t)(result + readen - body);
+
+		if(invalid_content_length)
+			{ return -1; }
+
+		if(has_chunked_encoding)
+		{
+			return parse_chunked_complete(body, body_len);
+		}
+
+		if(has_content_length)
+		{
+			if(body_len >= (int32_t)content_length) { return 1; }
+			return 0;
+		}
+
+		return 1;
+	}
+
 	return 0;
 }
 
 static int32_t readRequest(FILE * f, IN_ADDR_T in, char **result, int8_t forcePlain)
 {
 	int32_t n, bufsize = 0, errcount = 0;
+	int32_t req_state;
+	const int32_t request_timeout_ms = 30000;
 	char buf2[1024];
+	struct timeb start, now;
+	cs_ftime(&start);
 #ifdef WITH_SSL
 	int8_t is_ssl = 0;
 	if(ssl_active && !forcePlain)
@@ -9154,6 +9377,15 @@ static int32_t readRequest(FILE * f, IN_ADDR_T in, char **result, int8_t forcePl
 
 	do
 	{
+		cs_ftime(&now);
+		int64_t elapsed = (int64_t)(now.time - start.time) * 1000 + (int64_t)(now.millitm - start.millitm);
+		if(elapsed > request_timeout_ms)
+		{
+			cs_log_dbg(D_TRACE, "WebIf: request read timeout after %d ms from %s", request_timeout_ms, cs_inet_ntoa(in));
+			NULLFREE(*result);
+			return -1;
+		}
+
 		errno = 0;
 		if(forcePlain)
 			{ n = read(fileno(f), buf2, sizeof(buf2)); }
@@ -9216,7 +9448,14 @@ static int32_t readRequest(FILE * f, IN_ADDR_T in, char **result, int8_t forcePl
 				{ continue; }
 		}
 #endif
-	} while (!check_request(*result, bufsize));
+		req_state = check_request(*result, bufsize);
+		if(req_state < 0)
+		{
+			cs_log_dbg(D_TRACE, "WebIf: invalid request header from %s", cs_inet_ntoa(in));
+			NULLFREE(*result);
+			return -1;
+		}
+	} while (req_state == 0);
 	return bufsize;
 }
 static int32_t process_request(FILE * f, IN_ADDR_T in)
