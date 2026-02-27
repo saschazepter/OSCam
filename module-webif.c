@@ -9159,25 +9159,6 @@ static char *find_header_end(char *start, char *end, int8_t *header_sep_len)
 	return NULL;
 }
 
-static void parse_transfer_encoding_tokens(char *start, char *end, int8_t *has_chunked_encoding)
-{
-	char *ptr = start;
-	while(ptr < end)
-	{
-		while(ptr < end && (*ptr == ' ' || *ptr == '\t' || *ptr == ',')) { ptr++; }
-		if(ptr >= end) { break; }
-
-		char *token_start = ptr;
-		while(ptr < end && *ptr != ',' && *ptr != ';' && *ptr != ' ' && *ptr != '\t') { ptr++; }
-		char *token_end = ptr;
-
-		if(token_end - token_start == 7 && strncasecmp(token_start, "chunked", 7) == 0)
-			{ *has_chunked_encoding = 1; }
-
-		while(ptr < end && *ptr != ',') { ptr++; }
-	}
-}
-
 static int8_t parse_content_length_value(char *start, char *end, uint32_t *content_length)
 {
 	char *ptr = start;
@@ -9198,82 +9179,15 @@ static int8_t parse_content_length_value(char *start, char *end, uint32_t *conte
 	return 1;
 }
 
-static int8_t parse_chunked_complete(char *body, int32_t body_len)
-{
-	char *pos = body;
-	char *end = body + body_len;
-	const uint64_t max_chunk_size = 2ULL * 1024ULL * 1024ULL * 1024ULL;
-
-	while(pos < end)
-	{
-		int8_t line_sep_len = 0;
-		char *line_end = find_line_end(pos, end, &line_sep_len);
-		if(line_end == NULL) { return 0; }
-
-		char *p = pos;
-		while(p < line_end && (*p == ' ' || *p == '\t')) { p++; }
-
-		uint64_t chunk_size = 0;
-		int8_t has_digits = 0;
-		while(p < line_end)
-		{
-			char c = *p;
-			uint8_t digit;
-			if(c >= '0' && c <= '9') { digit = (uint8_t)(c - '0'); }
-			else if(c >= 'a' && c <= 'f') { digit = (uint8_t)(c - 'a' + 10); }
-			else if(c >= 'A' && c <= 'F') { digit = (uint8_t)(c - 'A' + 10); }
-			else { break; }
-
-			has_digits = 1;
-			if(chunk_size > ((UINT64_MAX - digit) >> 4)) { return -1; }
-			chunk_size = (chunk_size << 4) + digit;
-			p++;
-		}
-
-		if(!has_digits) { return 0; }
-		while(p < line_end && (*p == ' ' || *p == '\t')) { p++; }
-		if(p < line_end && *p != ';') { return 0; }
-		if(chunk_size > max_chunk_size) { return -1; }
-
-		pos = line_end + line_sep_len;
-
-		if(chunk_size == 0)
-		{
-			while(pos < end)
-			{
-				int8_t trailer_sep_len = 0;
-				char *trailer_end = find_line_end(pos, end, &trailer_sep_len);
-				if(trailer_end == NULL) { return 0; }
-				if(trailer_end == pos) { return 1; }
-				pos = trailer_end + trailer_sep_len;
-			}
-			return 0;
-		}
-
-		if(chunk_size > (uint64_t)(end - pos - 1)) { return 0; }
-		pos += (size_t)chunk_size;
-		if(pos >= end) { return 0; }
-		if(pos[0] == '\n') { pos += 1; }
-		else if(pos + 1 < end && pos[0] == '\r' && pos[1] == '\n') { pos += 2; }
-		else { return 0; }
-	}
-
-	return 0;
-}
-
 static int32_t check_request(char *result, int32_t readen)
 {
 	if(readen <= 0) { return 0; }
 	result[readen] = '\0';
-	int8_t method_has_body;
-	if(strncmp(result, "POST ", 5) == 0 || strncmp(result, "PUT ", 4) == 0 || strncmp(result, "PATCH ", 6) == 0)
-		{ method_has_body = 1; }
-	else
-		{ method_has_body = 0; }
+	int8_t is_post = (strncmp(result, "POST ", 5) == 0);
 	int8_t header_sep_len = 0;
 	char *headerEnd = find_header_end(result, result + readen, &header_sep_len);
 	if(headerEnd == NULL) { return 0; }
-	else if(method_has_body == 0) { return 1; }
+	else if(!is_post) { return 1; }
 	else
 	{
 		int8_t request_line_sep_len = 0;
@@ -9281,38 +9195,15 @@ static int32_t check_request(char *result, int32_t readen)
 		if(line == NULL) { return 0; }
 		line += request_line_sep_len;
 
-		int8_t has_chunked_encoding = 0;
 		int8_t has_content_length = 0;
 		int8_t invalid_content_length = 0;
 		uint32_t content_length = 0;
-		int8_t active_header = 0;
 
 		while(line < headerEnd)
 		{
 			int8_t line_sep_len = 0;
 			char *line_end = find_line_end(line, headerEnd, &line_sep_len);
 			if(line_end == NULL || line_end > headerEnd) { break; }
-
-			if(line[0] == ' ' || line[0] == '\t')
-			{
-				char *cont = line;
-				while(cont < line_end && (*cont == ' ' || *cont == '\t')) { cont++; }
-
-				if(active_header == 1)
-				{
-					if(cont < line_end)
-						{ invalid_content_length = 1; }
-				}
-				else if(active_header == 2)
-				{
-					parse_transfer_encoding_tokens(cont, line_end, &has_chunked_encoding);
-				}
-
-				line = line_end + line_sep_len;
-				continue;
-			}
-
-			active_header = 0;
 
 			char *name_start = line;
 			while(name_start < line_end && (*name_start == ' ' || *name_start == '\t')) { name_start++; }
@@ -9330,12 +9221,10 @@ static int32_t check_request(char *result, int32_t readen)
 						{ invalid_content_length = 1; }
 					else
 						{ has_content_length = 1; }
-					active_header = 1;
 				}
 				else if(name_end - name_start == 17 && strncasecmp(name_start, "Transfer-Encoding", 17) == 0)
 				{
-					parse_transfer_encoding_tokens(value_start, line_end, &has_chunked_encoding);
-					active_header = 2;
+					invalid_content_length = 1;
 				}
 			}
 
@@ -9348,18 +9237,13 @@ static int32_t check_request(char *result, int32_t readen)
 		if(invalid_content_length)
 			{ return -1; }
 
-		if(has_chunked_encoding)
-		{
-			return parse_chunked_complete(body, body_len);
-		}
-
 		if(has_content_length)
 		{
 			if(body_len >= (int32_t)content_length) { return 1; }
 			return 0;
 		}
 
-		return 1;
+		return -1;
 	}
 
 	return 0;
@@ -9370,6 +9254,7 @@ static int32_t readRequest(FILE * f, IN_ADDR_T in, char **result, int8_t forcePl
 	int32_t n, bufsize = 0, errcount = 0;
 	int32_t req_state;
 	const int32_t request_timeout_ms = 30000;
+	const int32_t max_request_size = 1024 * 1024;
 	char buf2[1024];
 	struct timeb start, now;
 	cs_ftime(&start);
@@ -9437,7 +9322,7 @@ static int32_t readRequest(FILE * f, IN_ADDR_T in, char **result, int8_t forcePl
 		memcpy(*result + bufsize, buf2, n);
 		bufsize += n;
 
-		if(bufsize > 102400) // max request size 100kb
+		if(bufsize > max_request_size)
 		{
 			cs_log("error: too much data received from %s", cs_inet_ntoa(in));
 			NULLFREE(*result);
