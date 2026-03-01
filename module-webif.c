@@ -1512,6 +1512,7 @@ static char *send_oscam_config_webif(struct templatevars *vars, struct uriparams
 	tpl_printf(vars, TPLADD, "HTTPEMMSCLEAN", "%d", cfg.http_emms_clean);
 	tpl_printf(vars, TPLADD, "HTTPEMMGCLEAN", "%d", cfg.http_emmg_clean);
 	tpl_printf(vars, TPLADD, "HTTPREFRESH", "%d", cfg.http_refresh);
+	tpl_printf(vars, TPLADD, "HTTPMAXREQUESTSIZE", "%d", cfg.http_max_request_size);
 	tpl_printf(vars, TPLADD, "HTTPPOLLREFRESH", "%d", cfg.poll_refresh);
 	tpl_addVar(vars, TPLADD, "HTTPTPL", cfg.http_tpl);
 	tpl_addVar(vars, TPLADD, "HTTPPICONPATH", cfg.http_piconpath);
@@ -6845,7 +6846,7 @@ static char *send_oscam_services_edit(struct templatevars * vars, struct uripara
 {
 	struct s_sidtab *sidtab, *ptr;
 	char label[sizeof(cfg.sidtab->label)];
-	int32_t i;
+	int32_t i, sidtab_count;
 
 	setActiveMenu(vars, MNU_SERVICES);
 
@@ -6855,6 +6856,20 @@ static char *send_oscam_services_edit(struct templatevars * vars, struct uripara
 
 	if(sidtab == NULL)
 	{
+		sidtab_count = 0;
+		for(ptr = cfg.sidtab; ptr != NULL; ptr = ptr->next)
+		{
+			sidtab_count++;
+		}
+
+		if(sidtab_count >= MAX_SIDBITS)
+		{
+			cs_log("webif: cannot add service '%s' (limit %d reached)", label[0] ? label : "<new>", MAX_SIDBITS);
+			tpl_addMsg(vars, "Maximum number of services reached");
+			tpl_addMsg(vars, "No new service can be added");
+			return tpl_getTpl(vars, "SERVICESBIT");
+		}
+
 		i = 1;
 		while(cs_strlen(label) < 1)
 		{
@@ -7054,6 +7069,11 @@ static char *send_oscam_services(struct templatevars * vars, struct uriparams * 
 		tpl_addVar(vars, TPLAPPEND, "SERVICETABS", tpl_getTpl(vars, "SERVICECONFIGLISTBIT"));
 		sidtab = sidtab->next;
 		counter++;
+	}
+	if(counter > MAX_SIDBITS)
+	{
+		cs_log("webif: configured services exceed limit (%d > %d)", counter, MAX_SIDBITS);
+		tpl_addMsg(vars, "Configured services exceed maximum and should be reduced");
 	}
 	if(counter >= MAX_SIDBITS)
 	{
@@ -7726,7 +7746,7 @@ static bool send_EMM(struct s_reader * rdr, uint16_t caid, const struct s_cardsy
 		if(cs_malloc(&emm_pack, sizeof(EMM_PACKET)))
 		{
 			struct s_client *webif_client = cur_client();
-			webif_client->grp = 0xFF; /* to access to all readers */
+			webif_client->grp = ~(group_t)0; /* to access to all readers */
 
 			memset(emm_pack, '\0', sizeof(EMM_PACKET));
 			emm_pack->client = webif_client;
@@ -8712,7 +8732,7 @@ static char *send_oscam_api(struct templatevars * vars, FILE * f, struct uripara
 					return tpl_getTpl(vars, "APIERROR");
 				}
 				struct s_client *webif_client = cur_client();
-				webif_client->grp = 0xFF;  // access all readers
+				webif_client->grp = ~(group_t)0;  // access all readers
 
 				memset(cmd_pack, '0', sizeof(CMD_PACKET));
 				cmd_pack->client = webif_client;
@@ -9145,6 +9165,7 @@ static int8_t check_request(char *result, int32_t readen)
 static int32_t readRequest(FILE * f, IN_ADDR_T in, char **result, int8_t forcePlain)
 {
 	int32_t n, bufsize = 0, errcount = 0;
+	const int32_t max_request_size = cfg.http_max_request_size > 0 ? cfg.http_max_request_size : 102400;
 	char buf2[1024];
 	struct pollfd pfd2[1];
 #ifdef WITH_SSL
@@ -9199,9 +9220,9 @@ static int32_t readRequest(FILE * f, IN_ADDR_T in, char **result, int8_t forcePl
 		memcpy(*result + bufsize, buf2, n);
 		bufsize += n;
 
-		if(bufsize > 102400) // max request size 100kb
+		if(bufsize > max_request_size)
 		{
-			cs_log("error: too much data received from %s", cs_inet_ntoa(in));
+			cs_log("error: too much data received from %s (%d > %d)", cs_inet_ntoa(in), bufsize, max_request_size);
 			NULLFREE(*result);
 			*result = NULL;
 			return -1;
