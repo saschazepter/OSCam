@@ -2,58 +2,12 @@
 
 #include "globals.h"
 #include "oscam-signing.h"
-#include "cscrypt/sha256.h"
 #include "oscam-string.h"
 #include "oscam-time.h"
 #include "oscam-files.h"
 
-#ifndef CERT_ALGO_RSAENCRYPTION // warning about using OpenSSL versions before 1.0.0 with non RSA public key algorithm
-#if OPENSSL_VERSION_NUMBER < 0x10000000L
-#pragma message "WARNING: Due to lack of full support for elliptic curve signature algorithms in OpenSSL versions before 1.0.0, \
-make sure using RSA public key algorithm. Otherwise binary signature validation at runtime will not work!"
-#endif
-#endif
-
 extern char *config_cert;
 struct o_sign_info osi;
-
-static char* _X509_NAME_oneline_utf8(X509_NAME *name)
-{
-	if (!name)
-		return NULL;
-
-	BIO *bio_out = BIO_new(BIO_s_mem());
-	if (!bio_out)
-		return NULL;
-
-	// Ensure buffer is updated and readable
-	X509_NAME_print_ex(bio_out, name, 0,
-		(ASN1_STRFLGS_RFC2253 | XN_FLAG_SEP_COMMA_PLUS |
-		 XN_FLAG_FN_SN | XN_FLAG_DUMP_UNKNOWN_FIELDS) & ~ASN1_STRFLGS_ESC_MSB);
-
-	(void)BIO_flush(bio_out);
-
-	BUF_MEM *bio_buf = NULL;
-	BIO_get_mem_ptr(bio_out, &bio_buf);
-	if (!bio_buf || !bio_buf->data || bio_buf->length == 0)
-	{
-		BIO_free(bio_out);
-		return NULL;
-	}
-
-	char *line = (char *)malloc(bio_buf->length + 1);
-	if (!line)
-	{
-		BIO_free(bio_out);
-		return NULL;
-	}
-
-	memcpy(line, bio_buf->data, bio_buf->length);
-	line[bio_buf->length] = '\0';
-
-	BIO_free(bio_out);
-	return line;
-}
 
 static void hex_encode(const unsigned char *readbuf, void *writebuf, size_t len)
 {
@@ -69,289 +23,253 @@ static void hex_encode(const unsigned char *readbuf, void *writebuf, size_t len)
 	out[len * 2] = '\0';
 }
 
-static time_t posix_time(unsigned int year, unsigned int month, unsigned int day,
-						 unsigned int hour, unsigned int min, unsigned int sec)
+static char* cert_dn_to_str(const void *dn)
 {
-	if (year < 1970 || month < 1 || month > 12 || day < 1 || day > 31 ||
-		hour > 23 || min > 59 || sec > 60)
-	{
-		return -1;
-	}
-
-	// Cumulative days to month (non-leap years)
-	static const unsigned int month_day[13] = {0, 0, 31, 59, 90, 120, 151, 181,
-											   212, 243, 273, 304, 334};
-
-	unsigned int full_year = year;
-	year -= 1900;
-
-	// Leap-year correction
-	bool is_leap = (full_year % 4 == 0 && (full_year % 100 != 0 || full_year % 400 == 0));
-	unsigned int leap_correction = (is_leap && month > 2) ? 1 : 0;
-
-	// Number of Februaries since 1900
-	const unsigned int year_for_leap = (month > 2) ? year + 1 : year;
-
-	return (time_t)(
-		sec + min * 60 + hour * 3600 +
-		(month_day[month] + day - 1 + leap_correction) * 86400 +
-		(year - 70) * 31536000 +
-		((year_for_leap - 69) / 4) * 86400 -
-		((year_for_leap - 1) / 100) * 86400 +
-		((year_for_leap + 299) / 400) * 86400
-	);
+	if (!dn) return cs_strdup("");
+	char buf[256];
+	if (oscam_ssl_cert_dn_gets(buf, sizeof(buf), dn) != OSCAM_SSL_OK)
+		return cs_strdup("");
+	return cs_strdup(buf);
 }
 
-static unsigned int two_digits_to_uint(const char **s) {
-	unsigned int n = 10 * (**s - '0');
-	(*s)++;
-	n += (**s - '0');
-	(*s)++;
-	return n;
-}
-
-static time_t ASN1_TIME_to_posix_time(const ASN1_TIME *t) {
-    if (!t) return -1;
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L  // changed in OpenSSL 1.1.0+
-    const unsigned char *us = ASN1_STRING_get0_data((const ASN1_STRING*)t);
-    const char *s = (const char*)us;
-#else
-    const char *s = (const char*)t->data;
-#endif
-    if (!s) return -1;
-
-	unsigned int year, month, day, hour, min, sec;
-	switch(t->type) // https://www.rfc-editor.org/rfc/rfc5280#section-4.1.2.5.1
-	{
-		case V_ASN1_UTCTIME: // YYMMDDHHMMSSZ
-			year = two_digits_to_uint(&s);
-			year += year < 50 ? 2000 : 1900;
-			break;
-		case V_ASN1_GENERALIZEDTIME: // YYYYMMDDHHMMSSZ
-			year = 100 * two_digits_to_uint(&s);
-			year += two_digits_to_uint(&s);
-			break;
-		default:
-			return -1; // error
-	}
-	month = two_digits_to_uint(&s);
-	day   = two_digits_to_uint(&s);
-	hour  = two_digits_to_uint(&s);
-	min   = two_digits_to_uint(&s);
-	sec   = two_digits_to_uint(&s);
-	if (*s != 'Z') return -1;
-	if (year == 9999 && month == 12 && day == 31 && hour == 23 && min == 59
-		&& sec == 59) // 99991231235959Z rfc 5280
-	{
-		return -1;
-	}
-	return posix_time(year, month, day, hour, min, sec);
-}
-
-static void convert_ASN1TIME(const ASN1_TIME *t, char *buf, size_t len) {
-	struct tm timeinfo;
-
-	time_t ct = ASN1_TIME_to_posix_time(t);
-	localtime_r(&ct, &timeinfo);
-	strftime(buf, len, "%d.%m.%Y %H:%M:%S", &timeinfo);
-}
-
-static EVP_PKEY *verify_cert(void)
+static void format_cert_time(const oscam_cert_time_t *t, char *buf, size_t len)
 {
-	int ret = 0;
+	struct tm tmv;
+	memset(&tmv, 0, sizeof(tmv));
+	tmv.tm_year = t->year - 1900;
+	tmv.tm_mon  = t->mon  - 1;
+	tmv.tm_mday = t->day;
+	tmv.tm_hour = t->hour;
+	tmv.tm_min  = t->min;
+	tmv.tm_sec  = t->sec;
+	strftime(buf, len, "%d.%m.%Y %H:%M:%S", &tmv);
+}
+
+static bool issuer_in_system_store(const char *issuer_dn)
+{
+	if (!issuer_dn || !*issuer_dn)
+		return false;
+
 	char system_ca_file[MAX_LEN];
-	char ptype[MAX_LEN];
-	X509 *pCert = NULL;
-	BIO *pBio = NULL;
-	EVP_PKEY *pKey = NULL;
+	snprintf(system_ca_file, sizeof(system_ca_file), "%s/%s",
+			 CA_SYSTEM_LOCATION, CA_FILE_NAME);
 
-	// Add all digest algorithms to the table
-#if OPENSSL_VERSION_NUMBER < 0x30000000L // no-op in OpenSSL 3.0+
-	OpenSSL_add_all_algorithms();
-#endif
+	oscam_x509_crt *sys = oscam_ssl_cert_new();
+	if (!sys)
+		return false;
 
-	pBio = BIO_new(BIO_s_mem());
-	if (!pBio)
+	if (oscam_ssl_cert_parse_file(sys, system_ca_file) != OSCAM_SSL_OK)
 	{
-		cs_log("Error: BIO_new() failed");
+		oscam_ssl_cert_delete(sys);
+		return false;
+	}
+
+	bool found = false;
+	for (const oscam_x509_crt *c = sys; c != NULL; c = oscam_ssl_cert_get_next((oscam_x509_crt *)c))
+	{
+		char dn[512];
+		if (oscam_ssl_cert_dn_gets(dn, sizeof(dn), oscam_ssl_cert_get_subject(c)) != OSCAM_SSL_OK)
+			continue;
+
+		if (strcmp(dn, issuer_dn) == 0)
+		{
+			found = true;
+			break;
+		}
+	}
+
+	oscam_ssl_cert_delete(sys);
+	return found;
+}
+
+static oscam_pk_context *verify_cert(void)
+{
+	int ret;
+	oscam_x509_crt *crt = oscam_ssl_cert_new();
+	if (!crt)
+		return NULL;
+
+	ret = oscam_ssl_cert_parse(crt,
+	                           (const unsigned char *)config_cert,
+	                           strlen(config_cert) + 1);
+	if (ret != OSCAM_SSL_OK)
+	{
+		char estr[128];
+		oscam_ssl_strerror(ret, estr, sizeof(estr));
+		cs_log("Error: unable to parse built-in certificate (%s)", estr);
+		oscam_ssl_cert_delete(crt);
 		return NULL;
 	}
 
-	// Load built-in cert from memory into BIO object
-	if (!BIO_puts(pBio, config_cert))
+	/* ---- Certificate information ---- */
+
+	/* version */
+	osi.cert_version = oscam_ssl_cert_get_version(crt);
+
+	/* validity */
+	oscam_cert_time_t vfrom, vto;
+	oscam_ssl_cert_get_validity(crt, &vfrom, &vto);
+
+	format_cert_time(&vfrom, osi.cert_valid_from, sizeof(osi.cert_valid_from));
+	format_cert_time(&vto,   osi.cert_valid_to,   sizeof(osi.cert_valid_to));
+
+	time_t now = time(NULL);
+	struct tm lt;
+	memset(&lt, 0, sizeof(lt));
+	localtime_r(&now, &lt);
+
+	osi.cert_is_expired =
+		(vto.year <  lt.tm_year + 1900) ||
+		(vto.year == lt.tm_year + 1900 && vto.mon < lt.tm_mon + 1);
+
+	/* Serial */
+	char serial_hex[128];
+	oscam_ssl_cert_serial_gets(crt, serial_hex, sizeof(serial_hex));
+	osi.cert_serial = cs_strdup(strtolower(serial_hex));
+
+	/* Fingerprint (SHA-1 of raw DER) */
+	const unsigned char *der = NULL;
+	size_t der_len = 0;
+	oscam_ssl_cert_raw(crt, &der, &der_len);
+
+	if (der && der_len > 0)
 	{
-		cs_log("Error: BIO_puts() failed");
-		BIO_free(pBio);
-		return NULL;
-	}
+		unsigned char fp[SHA_DIGEST_LENGTH];
+		oscam_sha1(der, der_len, fp);
 
-	// Read cert in PEM format from BIO (allocates X509 internally)
-	pCert = PEM_read_bio_X509(pBio, NULL, NULL, NULL);
-	if (!pCert)
-	{
-		cs_log("Error: PEM_read_bio_X509() failed");
-		BIO_free(pBio);
-		return NULL;
-	}
-
-	// version
-	osi.cert_version = (int)X509_get_version(pCert) + 1;
-
-	// valid from / to
-	ASN1_TIME *not_before = X509_get_notBefore(pCert);
-	convert_ASN1TIME(not_before, osi.cert_valid_from, sizeof(osi.cert_valid_from));
-	ASN1_TIME *not_after = X509_get_notAfter(pCert);
-	convert_ASN1TIME(not_after, osi.cert_valid_to, sizeof(osi.cert_valid_to));
-
-	// expiration
-	osi.cert_is_expired = !(X509_cmp_current_time(not_before) < 0 &&
-							X509_cmp_current_time(not_after) > 0);
-
-	// serial number
-	ASN1_INTEGER *serial = X509_get_serialNumber(pCert);
-	BIGNUM *bn = ASN1_INTEGER_to_BN(serial, NULL);
-	char *hex = BN_bn2hex(bn);
-	osi.cert_serial = NULL;
-	if (cs_malloc(&osi.cert_serial, cs_strlen(hex) + 1))
-		cs_strncpy(osi.cert_serial, strtolower(hex), cs_strlen(hex) + 1);
-	OPENSSL_free(hex);
-	BN_free(bn);
-
-	// fingerprint (SHA1)
-	unsigned char buf[SHA_DIGEST_LENGTH];
-	const EVP_MD *digest = EVP_sha1();
-	unsigned len = 0;
-	ret = X509_digest(pCert, digest, buf, &len);
-	if (ret && len == SHA_DIGEST_LENGTH)
-	{
-		char strbuf[2 * SHA_DIGEST_LENGTH + 1];
-		hex_encode(buf, strbuf, SHA_DIGEST_LENGTH);
-		osi.cert_fingerprint = NULL;
-		if (cs_malloc(&osi.cert_fingerprint, cs_strlen(strbuf) + 1))
-			cs_strncpy(osi.cert_fingerprint, strtolower(strbuf), cs_strlen(strbuf) + 1);
-	}
-
-	// subject + issuer
-	char *subj = _X509_NAME_oneline_utf8(X509_get_subject_name(pCert));
-	char *issuer = _X509_NAME_oneline_utf8(X509_get_issuer_name(pCert));
-	osi.cert_subject = NULL;
-	osi.cert_issuer = NULL;
-	if (cs_malloc(&osi.cert_subject, cs_strlen(subj) + 1))
-		cs_strncpy(osi.cert_subject, subj, cs_strlen(subj) + 1);
-	if (cs_malloc(&osi.cert_issuer, cs_strlen(issuer) + 1))
-		cs_strncpy(osi.cert_issuer, issuer, cs_strlen(issuer) + 1);
-
-	// self-signed check
-	osi.cert_is_cacert = false;
-	if (strncmp(subj, issuer, cs_strlen(issuer)) != 0)
-		osi.cert_is_cacert = true;
-	free(subj);
-	free(issuer);
-
-	// check provided certificate chain in built-in cert
-	osi.cert_is_valid_self = false;
-	X509_STORE *store_pem = X509_STORE_new();
-	if (store_pem)
-	{
-		X509 *crt = NULL;
-		while ((crt = PEM_read_bio_X509(pBio, NULL, NULL, NULL)))
-		{
-			if (!X509_STORE_add_cert(store_pem, crt))
-				cs_log("Error: X509_STORE_add_cert() failed");
-			X509_free(crt);
-		}
-
-		X509_STORE_CTX *ctx_store_pem = X509_STORE_CTX_new();
-		if (ctx_store_pem)
-		{
-			if (X509_STORE_CTX_init(ctx_store_pem, store_pem, pCert, NULL))
-			{
-				ret = X509_verify_cert(ctx_store_pem);
-				if (ret >= 0)
-					osi.cert_is_valid_self = ret;
-			}
-			X509_STORE_CTX_free(ctx_store_pem);
-		}
-		X509_STORE_free(store_pem);
-	}
-
-	// check system ca-certificates.crt
-	osi.cert_is_valid_system = false;
-	osi.system_ca_file = NULL;
-	if (!osi.cert_is_valid_self)
-	{
-		X509_STORE *store_system = X509_STORE_new();
-		if (store_system)
-		{
-			const char *ca_path;
-			snprintf(system_ca_file, sizeof(system_ca_file), "%s/%s", CA_SYSTEM_LOCATION, CA_FILE_NAME);
-			if (!file_exists(system_ca_file))
-			{
-				if (!(ca_path = getenv(X509_get_default_cert_dir_env())))
-					ca_path = X509_get_default_cert_dir();
-				snprintf(system_ca_file, sizeof(system_ca_file), "%s/%s", ca_path, CA_FILE_NAME);
-			}
-
-			if (cs_malloc(&osi.system_ca_file, cs_strlen(system_ca_file) + 1))
-				cs_strncpy(osi.system_ca_file, system_ca_file, cs_strlen(system_ca_file) + 1);
-
-			if (X509_STORE_load_locations(store_system, system_ca_file, NULL))
-			{
-				X509_STORE_CTX *ctx_store_system = X509_STORE_CTX_new();
-				if (ctx_store_system)
-				{
-					if (X509_STORE_CTX_init(ctx_store_system, store_system, pCert, NULL))
-					{
-						ret = X509_verify_cert(ctx_store_system);
-						if (ret >= 0)
-							osi.cert_is_valid_system = ret;
-					}
-					X509_STORE_CTX_free(ctx_store_system);
-				}
-			}
-			else
-			{
-				cs_log("Error: X509_STORE_load_locations() failed. Unable to load CA certs from %s", system_ca_file);
-			}
-			X509_STORE_free(store_system);
-		}
-	}
-
-	// extract public key
-	pKey = X509_get_pubkey(pCert);
-	osi.pkey_type = NULL;
-	if (pKey)
-	{
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L  // changed in OpenSSL 1.1.0+
-		switch (EVP_PKEY_id(pKey))
-#else
-		switch (EVP_PKEY_type(pKey->type))
-#endif
-		{
-			case EVP_PKEY_RSA:
-				snprintf(ptype, sizeof(ptype), "%d bit RSA Key", EVP_PKEY_bits(pKey));
-				break;
-			case EVP_PKEY_DSA:
-				snprintf(ptype, sizeof(ptype), "%d bit DSA Key", EVP_PKEY_bits(pKey));
-				break;
-			case EVP_PKEY_EC:
-				snprintf(ptype, sizeof(ptype), "%d bit ECDSA Key", EVP_PKEY_bits(pKey));
-				break;
-			default:
-				snprintf(ptype, sizeof(ptype), "%d bit non-RSA/DSA Key", EVP_PKEY_bits(pKey));
-				break;
-		}
-		if (cs_malloc(&osi.pkey_type, cs_strlen(ptype) + 1))
-			cs_strncpy(osi.pkey_type, ptype, cs_strlen(ptype) + 1);
+		char fphex[2 * SHA_DIGEST_LENGTH + 1];
+		hex_encode(fp, fphex, SHA_DIGEST_LENGTH);
+		osi.cert_fingerprint = cs_strdup(strtolower(fphex));
 	}
 	else
 	{
-		cs_log("Error: X509_get_pubkey() failed");
+		osi.cert_fingerprint = cs_strdup("");
 	}
 
-	BIO_free(pBio);
-	X509_free(pCert);
-	return pKey;
+	/* Subject / issuer */
+	osi.cert_subject = cert_dn_to_str(oscam_ssl_cert_get_subject(crt));
+	osi.cert_issuer  = cert_dn_to_str(oscam_ssl_cert_get_issuer(crt));
+
+	/* "CA" here means "issuer != subject" in your logic */
+	osi.cert_is_cacert       = strcmp(osi.cert_subject, osi.cert_issuer) != 0;
+	osi.cert_is_valid_self   = false;
+	osi.cert_is_valid_system = false;
+	osi.cert_is_internal_ca  = false;
+
+	/* Parse the full built-in certificate chain (one or more PEM blocks) */
+	oscam_x509_crt *chain = oscam_ssl_cert_new();
+	if (chain)
+	{
+		int rself = oscam_ssl_cert_parse(chain,
+		                                 (const unsigned char *)config_cert,
+		                                 strlen(config_cert) + 1);
+		if (rself == OSCAM_SSL_OK)
+		{
+			/* First cert in the chain is our leaf (signing cert).
+			   Remaining certs are chain->next, etc. (mbedTLS) or NULL (OpenSSL). */
+			oscam_x509_crt *crt_leaf   = chain;
+			oscam_x509_crt *trust_self = oscam_ssl_cert_get_next(crt_leaf);
+
+			if (trust_self)
+			{
+				int vr = oscam_ssl_cert_verify(crt_leaf, trust_self);
+				if (vr == OSCAM_SSL_OK)
+					osi.cert_is_valid_self = true;
+			}
+		}
+		oscam_ssl_cert_delete(chain);
+	}
+
+	/* If not trusted by the built-in chain, try system CA bundle */
+	if (!osi.cert_is_valid_self)
+	{
+		char system_ca_file[MAX_LEN];
+		const char *ca_path = NULL;
+
+		snprintf(system_ca_file, sizeof(system_ca_file), "%s/%s",
+		         CA_SYSTEM_LOCATION, CA_FILE_NAME);
+
+		if (!file_exists(system_ca_file))
+		{
+			ca_path = getenv("SSL_CERT_DIR");
+			if (!ca_path)
+				ca_path = "/etc/ssl/certs";
+
+			snprintf(system_ca_file, sizeof(system_ca_file), "%s/%s",
+			         ca_path, CA_FILE_NAME);
+		}
+
+		if (cs_malloc(&osi.system_ca_file, cs_strlen(system_ca_file) + 1))
+		{
+			cs_strncpy(osi.system_ca_file, system_ca_file,
+			           cs_strlen(system_ca_file) + 1);
+		}
+
+		oscam_x509_crt *trust_sys = oscam_ssl_cert_new();
+		if (trust_sys)
+		{
+			int rsys = oscam_ssl_cert_parse_file(trust_sys, system_ca_file);
+			if (rsys == OSCAM_SSL_OK)
+			{
+				int vr = oscam_ssl_cert_verify(crt, trust_sys);
+				if (vr == OSCAM_SSL_OK)
+					osi.cert_is_valid_system = true;
+			}
+			else
+			{
+				cs_log("Error: unable to load CA bundle from %s", system_ca_file);
+			}
+			oscam_ssl_cert_delete(trust_sys);
+		}
+	}
+
+	if (osi.cert_is_valid_self && !osi.cert_is_valid_system)
+	{
+		if (!issuer_in_system_store(osi.cert_issuer))
+			osi.cert_is_internal_ca = true;
+	}
+
+	/* Public-key type */
+	const oscam_pk_context *pub = oscam_ssl_cert_get_pubkey(crt);
+	int bits     = pub ? oscam_ssl_pk_get_bits(pub) : 0;
+	int ptype_id = pub ? oscam_ssl_pk_get_type(pub) : OSCAM_PK_NONE;
+
+	const char *ptype_name =
+		(ptype_id == OSCAM_PK_RSA) ? "RSA" :
+		(ptype_id == OSCAM_PK_EC)  ? "ECDSA" : "Other";
+
+	char ptype[64];
+	snprintf(ptype, sizeof(ptype), "%d-bit %s Key", bits, ptype_name);
+	osi.pkey_type = cs_strdup(ptype);
+
+	/* Clone the public key into an independent context */
+	oscam_pk_context *pk = oscam_ssl_pk_new();
+	if (!pk)
+	{
+		oscam_ssl_cert_delete(crt);
+		return NULL;
+	}
+
+	if (pub)
+	{
+		int rc = oscam_ssl_pk_clone(pk, pub);
+		if (rc != OSCAM_SSL_OK)
+		{
+			char estr[128];
+			oscam_ssl_strerror(rc, estr, sizeof(estr));
+			cs_log("Error: failed to clone public key (rc=%d, %s)", rc, estr);
+			oscam_ssl_pk_delete(pk);
+			pk = NULL;
+		}
+	}
+	else
+	{
+		oscam_ssl_pk_delete(pk);
+		pk = NULL;
+	}
+
+	oscam_ssl_cert_delete(crt);
+	return pk;
 }
 
 static DIGEST hashBinary(const char *binfile, DIGEST *sign)
@@ -414,14 +332,15 @@ static DIGEST hashBinary(const char *binfile, DIGEST *sign)
 					}
 
 					// SHA256 hash binary (excluding signature)
-					mbedtls_sha256_context ctx;
-					mbedtls_sha256_init(&ctx);
-					mbedtls_sha256_starts(&ctx, 0);
-					mbedtls_sha256_update(&ctx, data, offset);
-					mbedtls_sha256_update(&ctx, signature_end, file_size - end);
-					mbedtls_sha256_finish(&ctx, arRetval.data = (unsigned char *)OPENSSL_malloc(SHA256_DIGEST_LENGTH));
-					arRetval.size = SHA256_DIGEST_LENGTH;
-					mbedtls_sha256_free(&ctx);
+					arRetval.data = malloc(SHA256_DIGEST_LENGTH);
+					if (arRetval.data) {
+						oscam_sha256_stream(
+							data, offset,                       // first part of file
+							signature_end, file_size - end,     // second part of file
+							arRetval.data
+						);
+						arRetval.size = SHA256_DIGEST_LENGTH;
+					}
 
 					munmap(data, file_size);
 				}
@@ -434,19 +353,12 @@ static DIGEST hashBinary(const char *binfile, DIGEST *sign)
 	return arRetval;
 }
 
-static bool verifyBin(const char *binfile, EVP_PKEY *pubkey)
+static bool verifyBin(const char *binfile, oscam_pk_context *pubkey)
 {
-	int bResult = 0;
-	osi.is_verified = false;
-	osi.sign_digest_size = 0;
-	osi.hash_digest_size = 0;
-	osi.hash_size = 0;
-	osi.hash_sha256 = NULL;
-	EVP_MD_CTX *mctx = NULL;
-	DIGEST sign = {NULL, 0};
-
-	// Get binfile hash digest and encrypted signature
+	DIGEST sign = { NULL, 0 };
 	DIGEST hash = hashBinary(binfile, &sign);
+
+	osi.is_verified = false;
 	osi.sign_digest_size = sign.size;
 
 	if (hash.data)
@@ -455,75 +367,36 @@ static bool verifyBin(const char *binfile, EVP_PKEY *pubkey)
 		hex_encode(hash.data, shaVal, hash.size);
 
 		osi.hash_digest_size = hash.size;
-		osi.hash_size = cs_strlen(shaVal);
-
+		osi.hash_size = strlen(shaVal);
 		if (cs_malloc(&osi.hash_sha256, osi.hash_size + 1))
-		{
 			cs_strncpy(osi.hash_sha256, strtolower(shaVal), osi.hash_size + 1);
-		}
-		OPENSSL_free(hash.data);
 
 		if (pubkey && sign.data)
 		{
-			// Create message digest context
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L  // changed in OpenSSL 1.1.0+
-			mctx = EVP_MD_CTX_new();
-#else
-			mctx = EVP_MD_CTX_create();
-#endif
-			if (!mctx)
-			{
-				cs_log("Error: EVP_MD_CTX allocation failed");
-			}
-			else
-			{
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L  // changed in OpenSSL 1.1.0+
-				EVP_PKEY_CTX *pkctx = NULL;
-				if (EVP_DigestVerifyInit(mctx, &pkctx, EVP_sha256(), NULL, pubkey) <= 0)
-				{
-					cs_log("Error: EVP_DigestVerifyInit() failed");
-				}
-				else if (EVP_DigestVerifyUpdate(mctx, shaVal, cs_strlen(shaVal)) <= 0)
-				{
-					cs_log("Error: EVP_DigestVerifyUpdate() failed");
-				}
-				else
-				{
-					bResult = (EVP_DigestVerifyFinal(mctx, sign.data, sign.size) == 1);
-					osi.is_verified = (bResult == 1);
-				}
-#else
-				if (!EVP_VerifyInit(mctx, EVP_sha256()))
-				{
-					cs_log("Error: EVP_VerifyInit() failed");
-				}
-				else if (!EVP_VerifyUpdate(mctx, shaVal, cs_strlen(shaVal)))
-				{
-					cs_log("Error: EVP_VerifyUpdate() failed");
-				}
-				else
-				{
-					bResult = EVP_VerifyFinal(mctx, sign.data, sign.size, pubkey);
-					osi.is_verified = (bResult == 1);
-				}
-#endif
-			}
+			/* behavior: final_digest = SHA256( lowercase_hex(sha256(file_wo_sig)) ) */
+			unsigned char final_digest[32];
+			oscam_sha256((const unsigned char *)osi.hash_sha256,
+							 strlen(osi.hash_sha256),
+							 final_digest);
+
+			int ret = oscam_ssl_pk_verify(pubkey,
+										final_digest, sizeof(final_digest),
+										sign.data, sign.size);
+
+			osi.is_verified = (ret == 0);
 		}
+		free(hash.data);
 	}
 
-	if (sign.data) free(sign.data);
+	if (sign.data)
+		free(sign.data);
 
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L  // changed in OpenSSL 1.1.0+
-	EVP_MD_CTX_free(mctx);
-#else
-	EVP_MD_CTX_destroy(mctx);
-#endif
-	return (bResult == 1);
+	return osi.is_verified;
 }
 
 bool init_signing_info(const char *binfile)
 {
-	EVP_PKEY *pubkey = NULL;
+	oscam_pk_context *pubkey = NULL;
 	memset(&osi, 0, sizeof(struct o_sign_info));
 
 	// verify signing certificate and extract public key
@@ -547,8 +420,9 @@ bool init_signing_info(const char *binfile)
 
 	if (pubkey)
 	{
-		cs_log("Certificate    = %s %s Certificate, %s %s",
+		cs_log("Certificate    = %s %s%s Certificate, %s %s",
 				((osi.cert_is_valid_self || osi.cert_is_valid_system) ? "Trusted" : "Untrusted"),
+				(osi.cert_is_internal_ca ? "Internal " : ""),
 				(osi.cert_is_cacert ? "CA" : "Self Signed"),
 				(osi.cert_is_expired ? "expired since" : "valid until"),
 				osi.cert_valid_to);
@@ -559,7 +433,9 @@ bool init_signing_info(const char *binfile)
 	}
 
 	if (tmp) free(tmp);
-	EVP_PKEY_free(pubkey);
+	if (pubkey) {
+		oscam_ssl_pk_delete(pubkey);
+	}
 
 	return ret;
 }

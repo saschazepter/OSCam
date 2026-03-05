@@ -10,7 +10,6 @@
 #define DVB_BUFFER_WAIT_CSA 188*(DVB_MAX_TS_PACKETS-128)
 #define DVB_BUFFER_SIZE DVB_BUFFER_SIZE_CSA
 
-#include "cscrypt/md5.h"
 #include <dvbcsa/dvbcsa.h>
 #if DVBCSA_KEY_ECM
 #define DVBCSA_HEADER_ECM 1
