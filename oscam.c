@@ -867,6 +867,11 @@ static void init_machine_info(void)
 		cs_log("ERROR: uname call failed: %s", strerror(errno));
 	}
 
+	cs_log("group_t ABI: bits=%d size=%zu align=%zu", GROUP_BITS, sizeof(group_t), (size_t)__alignof__(group_t));
+#if GROUP_BITS < 128
+	cs_log("WARNING: built with 64-bit group_t; binaries/config state are not ABI-compatible with 128-bit group_t builds");
+#endif
+
 #if !defined(__linux__)
 	return;
 #endif
