@@ -121,7 +121,7 @@ static time_t ASN1_TIME_to_posix_time(const ASN1_TIME *t) {
     if (!s) return -1;
 
 	unsigned int year, month, day, hour, min, sec;
-	switch(t->type) // https://www.rfc-editor.org/rfc/rfc5280#section-4.1.2.5.1
+	switch(ASN1_STRING_type((ASN1_STRING*)(uintptr_t)t)) // https://www.rfc-editor.org/rfc/rfc5280#section-4.1.2.5.1
 	{
 		case V_ASN1_UTCTIME: // YYMMDDHHMMSSZ
 			year = two_digits_to_uint(&s);
