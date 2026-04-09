@@ -411,7 +411,7 @@ int oscam_ssl_get_peer_cn(oscam_ssl_t *ssl, char *out, size_t outlen)
 	X509 *peer = SSL_get_peer_certificate(ssl->ssl);
 	if (!peer) return OSCAM_SSL_ERR;
 
-	X509_NAME *subj = X509_get_subject_name(peer);
+	X509_NAME *subj = (X509_NAME *)(uintptr_t)X509_get_subject_name(peer);
 	int idx = X509_NAME_get_index_by_NID(subj, NID_commonName, -1);
 	if (idx < 0) { X509_free(peer); return OSCAM_SSL_ERR; }
 
