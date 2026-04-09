@@ -25,6 +25,7 @@
 #include "mbedtls/version.h"
 #include "mbedtls/asn1write.h"
 #include "mbedtls/private/rsa.h"
+#include "psa/crypto.h"
 
 /* Opaque structs defined here (match header typedefs) */
 
@@ -220,8 +221,7 @@ static void warn_if_ec_curve_not_advertised(const mbedtls_x509_crt *crt,
 {
 #if defined(MBEDTLS_ECP_C)
 	if (!crt || !key || !adv_groups) return;
-	if (!(mbedtls_pk_get_type(key) == MBEDTLS_PK_ECKEY ||
-		  mbedtls_pk_get_type(key) == MBEDTLS_PK_ECDSA))
+	if (!PSA_KEY_TYPE_IS_ECC(mbedtls_pk_get_key_type(key)))
 		return;
 
 	uint16_t need = 0;
@@ -245,14 +245,12 @@ static void warn_if_ec_curve_not_advertised(const mbedtls_x509_crt *crt,
 #endif
 }
 
-static const char *pk_type_name(mbedtls_pk_type_t t)
+static const char *pk_type_name(const mbedtls_pk_context *pk)
 {
-	switch (t) {
-		case MBEDTLS_PK_RSA:   return "RSA";
-		case MBEDTLS_PK_ECKEY: return "ECDSA";
-		case MBEDTLS_PK_ECDSA: return "ECDSA";
-		default:               return "UNKNOWN";
-	}
+	psa_key_type_t t = mbedtls_pk_get_key_type(pk);
+	if (PSA_KEY_TYPE_IS_RSA(t))       return "RSA";
+	if (PSA_KEY_TYPE_IS_ECC(t))       return "ECDSA";
+	return "UNKNOWN";
 }
 #endif
 
@@ -338,7 +336,7 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 		return NULL;
 	}
 
-	mbedtls_ssl_conf_rng(&conf->ssl_conf, mbedtls_ctr_drbg_random, &conf->ctr_drbg);
+	/* mbedTLS 4.x: RNG is handled internally via PSA, no explicit conf_rng needed */
 
 	/* ---- Configure as SERVER ---- */
 	if (mbedtls_ssl_config_defaults(&conf->ssl_conf,
@@ -355,12 +353,15 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 #endif
 
 	/* ---- Common defaults ---- */
-	mbedtls_ssl_conf_rng(&conf->ssl_conf, mbedtls_ctr_drbg_random, &conf->ctr_drbg);
+	/* mbedTLS 4.x: RNG is handled internally via PSA, no explicit conf_rng needed */
 	mbedtls_ssl_conf_authmode(&conf->ssl_conf, MBEDTLS_SSL_VERIFY_NONE);
 
 	/* Default TLS version range */
-	int min_minor = MBEDTLS_SSL_MINOR_VERSION_3;  /* TLS 1.2 */
-	int max_minor = MBEDTLS_SSL_MINOR_VERSION_4;  /* TLS 1.3 */
+	mbedtls_ssl_protocol_version min_ver = MBEDTLS_SSL_VERSION_TLS1_2;
+	mbedtls_ssl_protocol_version max_ver = MBEDTLS_SSL_VERSION_TLS1_2;
+#if defined(MBEDTLS_SSL_PROTO_TLS1_3)
+	max_ver = MBEDTLS_SSL_VERSION_TLS1_3;
+#endif
 
 	/* Cipher suite selection */
 	const int *suites = NULL;
@@ -391,25 +392,22 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
 		MBEDTLS_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
-		MBEDTLS_TLS_RSA_WITH_AES_128_CBC_SHA,
-		MBEDTLS_TLS_RSA_WITH_AES_256_CBC_SHA,
 		0
 	};
 
 	switch (mode) {
 		case OSCAM_SSL_MODE_STRICT:
-			min_minor = MBEDTLS_SSL_MINOR_VERSION_3;
+			min_ver = MBEDTLS_SSL_VERSION_TLS1_2;
 #if defined(MBEDTLS_SSL_PROTO_TLS1_3)
-			max_minor = MBEDTLS_SSL_MINOR_VERSION_4;
+			max_ver = MBEDTLS_SSL_VERSION_TLS1_3;
 #else
-			/* Fallback to strong TLS 1.2 only if TLS 1.3 is disabled */
-			max_minor = MBEDTLS_SSL_MINOR_VERSION_3;
+			max_ver = MBEDTLS_SSL_VERSION_TLS1_2;
 #endif
 			suites = suites_strict;
 			break;
 		case OSCAM_SSL_MODE_LEGACY:
 			suites = suites_legacy;
-			max_minor = MBEDTLS_SSL_MINOR_VERSION_3;  /* lock to TLS 1.2 */
+			max_ver = MBEDTLS_SSL_VERSION_TLS1_2;
 			break;
 		default:
 			suites = suites_default;
@@ -417,8 +415,8 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 	}
 
 	/* Apply version limits and cipher suites */
-	mbedtls_ssl_conf_min_version(&conf->ssl_conf, MBEDTLS_SSL_MAJOR_VERSION_3, min_minor);
-	mbedtls_ssl_conf_max_version(&conf->ssl_conf, MBEDTLS_SSL_MAJOR_VERSION_3, max_minor);
+	mbedtls_ssl_conf_min_tls_version(&conf->ssl_conf, min_ver);
+	mbedtls_ssl_conf_max_tls_version(&conf->ssl_conf, max_ver);
 	mbedtls_ssl_conf_ciphersuites(&conf->ssl_conf, suites);
 
 	/* Supported groups (curve list) */
@@ -445,8 +443,8 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 #if defined(MBEDTLS_SSL_TICKET_C)
 	static mbedtls_ssl_ticket_context ticket_ctx;
 	mbedtls_ssl_ticket_init(&ticket_ctx);
-	if (mbedtls_ssl_ticket_setup(&ticket_ctx, mbedtls_ctr_drbg_random,
-								 &conf->ctr_drbg, MBEDTLS_CIPHER_AES_256_GCM, 86400) == 0) {
+	if (mbedtls_ssl_ticket_setup(&ticket_ctx,
+								 PSA_ALG_GCM, PSA_KEY_TYPE_AES, 256, 86400) == 0) {
 		mbedtls_ssl_conf_session_tickets_cb(&conf->ssl_conf,
 											mbedtls_ssl_ticket_write,
 											mbedtls_ssl_ticket_parse,
@@ -455,14 +453,8 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 #endif
 
 #if defined(MBEDTLS_DEBUG_C)
-if (mbedtls_pk_can_do(&conf->own_key, MBEDTLS_PK_ECDSA))
-	cs_log("SSL: loaded ECDSA key (%zu bits, curve %s)",
-		mbedtls_pk_get_bitlen(&conf->own_key),
-		mbedtls_pk_get_name(&conf->own_key));
-else if (mbedtls_pk_can_do(&conf->own_key, MBEDTLS_PK_RSA))
-	cs_log("SSL: loaded RSA key (%zu bits)", mbedtls_pk_get_bitlen(&conf->own_key));
-else
-	cs_log("SSL: loaded unknown key type");
+	cs_log("SSL: loaded %s key (%zu bits)",
+		pk_type_name(&conf->own_key), mbedtls_pk_get_bitlen(&conf->own_key));
 #endif
 
 	return conf;
@@ -485,12 +477,8 @@ int oscam_ssl_conf_set_min_tls12(oscam_ssl_conf_t *conf)
 {
 	if (!conf)
 		return OSCAM_SSL_PARAM;
-	mbedtls_ssl_conf_min_version(&conf->ssl_conf,
-								 MBEDTLS_SSL_MAJOR_VERSION_3,
-								 MBEDTLS_SSL_MINOR_VERSION_3);
-	mbedtls_ssl_conf_max_version(&conf->ssl_conf,
-								 MBEDTLS_SSL_MAJOR_VERSION_3,
-								 MBEDTLS_SSL_MINOR_VERSION_3);
+	mbedtls_ssl_conf_min_tls_version(&conf->ssl_conf, MBEDTLS_SSL_VERSION_TLS1_2);
+	mbedtls_ssl_conf_max_tls_version(&conf->ssl_conf, MBEDTLS_SSL_VERSION_TLS1_2);
 	return OSCAM_SSL_OK;
 }
 
@@ -516,8 +504,7 @@ int oscam_ssl_conf_use_own_cert_pem(oscam_ssl_conf_t *conf,
 
 	// 2) Parse private key (same file). MbedTLS will locate the key PEM block.
 	ret = mbedtls_pk_parse_keyfile(&conf->own_key, pem_path,
-								   key_pass ? key_pass : NULL,
-								   mbedtls_ctr_drbg_random, &conf->ctr_drbg);
+								   key_pass ? key_pass : NULL);
 	if (ret != 0) {
 		char e[128]; mbedtls_strerror(ret, e, sizeof(e));
 		cs_log("SSL: failed to parse private key from %s (%s)", pem_path, e);
@@ -525,22 +512,13 @@ int oscam_ssl_conf_use_own_cert_pem(oscam_ssl_conf_t *conf,
 	}
 
 #if defined(MBEDTLS_DEBUG_C)
-mbedtls_pk_type_t kt = mbedtls_pk_get_type(&conf->own_key);
-if (kt == MBEDTLS_PK_ECKEY || kt == MBEDTLS_PK_ECDSA) {
-#if defined(MBEDTLS_ECP_C)
-	cs_log("SSL: loaded key type=%s curve=%s",
-		   pk_type_name(kt), grp_name(get_group_id_from_pk(&conf->own_key)));
-#else
-	cs_log("SSL: loaded key type=%s", pk_type_name(kt));
-#endif
-} else {
-	cs_log("SSL: loaded key type=%s", pk_type_name(kt));
-}
+	cs_log("SSL: loaded key type=%s (%zu bits)",
+		   pk_type_name(&conf->own_key), mbedtls_pk_get_bitlen(&conf->own_key));
 #endif
 
 	// 3) Validate key matches leaf cert
-	if (!mbedtls_pk_can_do(&conf->own_key, MBEDTLS_PK_RSA) &&
-		!mbedtls_pk_can_do(&conf->own_key, MBEDTLS_PK_ECDSA)) {
+	psa_key_type_t kt = mbedtls_pk_get_key_type(&conf->own_key);
+	if (!PSA_KEY_TYPE_IS_RSA(kt) && !PSA_KEY_TYPE_IS_ECC(kt)) {
 		cs_log("SSL: private key algorithm not supported (RSA/ECDSA required)");
 		return MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
 	}
@@ -862,14 +840,34 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *)pers, strlen(pers))) != 0)
 		goto cleanup;
 
-	/* ---- Generate RSA 4096-bit key ---- */
-	if ((ret = mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA))) != 0)
-		goto cleanup;
-
+	/* ---- Generate RSA 4096-bit key via PSA, import into PK context ---- */
 	{
-		mbedtls_rsa_context *rsa = mbedtls_pk_rsa(key);
-		/* public exponent = 65537 */
-		if ((ret = mbedtls_rsa_gen_key(rsa, mbedtls_ctr_drbg_random, &ctr_drbg, 4096, 65537)) != 0)
+		psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
+		mbedtls_svc_key_id_t key_id = MBEDTLS_SVC_KEY_ID_INIT;
+
+		psa_set_key_type(&attrs, PSA_KEY_TYPE_RSA_KEY_PAIR);
+		psa_set_key_bits(&attrs, 4096);
+		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_EXPORT);
+		psa_set_key_algorithm(&attrs, PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256));
+
+		if (psa_generate_key(&attrs, &key_id) != PSA_SUCCESS) {
+			ret = MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
+			goto cleanup;
+		}
+
+		/* Export DER, parse into PK context, destroy PSA key */
+		unsigned char *der_buf = malloc(4096);
+		size_t der_len = 0;
+		psa_status_t st = psa_export_key(key_id, der_buf, 4096, &der_len);
+		psa_destroy_key(key_id);
+		if (st != PSA_SUCCESS || der_len == 0) {
+			free(der_buf);
+			ret = MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
+			goto cleanup;
+		}
+		ret = mbedtls_pk_parse_key(&key, der_buf, der_len, NULL, 0);
+		free(der_buf);
+		if (ret != 0)
 			goto cleanup;
 	}
 
@@ -906,13 +904,12 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	mbedtls_x509write_crt_set_validity(&crt, not_before, not_after);
 
 	/* ---- Serial number (random 128-bit) ---- */
-	mbedtls_mpi serial;
-	mbedtls_mpi_init(&serial);
-	unsigned char serial_bytes[16];
-	mbedtls_ctr_drbg_random(&ctr_drbg, serial_bytes, sizeof(serial_bytes));
-	mbedtls_mpi_read_binary(&serial, serial_bytes, sizeof(serial_bytes));
-	mbedtls_x509write_crt_set_serial(&crt, &serial);
-	mbedtls_mpi_free(&serial);
+	{
+		unsigned char serial_bytes[16];
+		mbedtls_ctr_drbg_random(&ctr_drbg, serial_bytes, sizeof(serial_bytes));
+		serial_bytes[0] &= 0x7F; /* ensure positive (ASN.1 INTEGER) */
+		mbedtls_x509write_crt_set_serial_raw(&crt, serial_bytes, sizeof(serial_bytes));
+	}
 
 	/* ---- Basic constraints & key usage ---- */
 	mbedtls_x509write_crt_set_basic_constraints(&crt, 0, -1);
@@ -923,8 +920,7 @@ int oscam_ssl_generate_selfsigned(const char *path)
 		MBEDTLS_X509_NS_CERT_TYPE_SSL_SERVER);
 
 	/* ---- Write certificate to PEM ---- */
-	ret = mbedtls_x509write_crt_pem(&crt, cert_buf, sizeof(cert_buf),
-	                                mbedtls_ctr_drbg_random, &ctr_drbg);
+	ret = mbedtls_x509write_crt_pem(&crt, cert_buf, sizeof(cert_buf));
 	if (ret < 0)
 		goto cleanup;
 
@@ -1096,66 +1092,16 @@ int oscam_ssl_pk_clone(oscam_pk_context *dst, const oscam_pk_context *src)
 	if (!dst || !src)
 		return MBEDTLS_ERR_PK_BAD_INPUT_DATA;
 
-	const mbedtls_pk_type_t type = mbedtls_pk_get_type(&src->pk);
-	const mbedtls_pk_info_t *info = mbedtls_pk_info_from_type(type);
-	if (!info)
-		return MBEDTLS_ERR_PK_TYPE_MISMATCH;
-
 	mbedtls_pk_init(&dst->pk);
 
-	int ret = mbedtls_pk_setup(&dst->pk, info);
-	if (ret != 0)
-		return ret;
-
-	switch (type)
-	{
-#if defined(MBEDTLS_RSA_C)
-	case MBEDTLS_PK_RSA:
-		ret = mbedtls_rsa_copy(mbedtls_pk_rsa(dst->pk), mbedtls_pk_rsa(src->pk));
-		break;
-#endif
-
-#if defined(MBEDTLS_ECP_C)
-	case MBEDTLS_PK_ECKEY:
-	case MBEDTLS_PK_ECKEY_DH:
-	case MBEDTLS_PK_ECDSA:
-	{
-		const mbedtls_ecp_keypair *src_ec = mbedtls_pk_ec(src->pk);
-		mbedtls_ecp_keypair *dst_ec = mbedtls_pk_ec(dst->pk);
-
-		if (!src_ec || !dst_ec)
-			return MBEDTLS_ERR_PK_BAD_INPUT_DATA;
-
-		mbedtls_ecp_keypair_init(dst_ec);
-
-		ret = mbedtls_ecp_group_copy(&dst_ec->MBEDTLS_PRIVATE(grp),
-									 &src_ec->MBEDTLS_PRIVATE(grp));
-		if (ret == 0)
-			ret = mbedtls_ecp_copy(&dst_ec->MBEDTLS_PRIVATE(Q),
-								   &src_ec->MBEDTLS_PRIVATE(Q));
-		break;
-	}
-#endif
-
-#if defined(MBEDTLS_PK_PARSE_C)
-	default:
-	{
-		/* Fallback: clone via DER public key serialization */
-		unsigned char buf[512];
-		ret = mbedtls_pk_write_pubkey_der(&src->pk, buf, sizeof(buf));
-		if (ret > 0)
-			ret = mbedtls_pk_parse_public_key(&dst->pk,
-											  buf + sizeof(buf) - ret, ret);
-		else
-			ret = MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
-		break;
-	}
-#else
-	default:
+	/* Clone via DER public key serialization (works for all key types) */
+	unsigned char buf[1024];
+	int ret = mbedtls_pk_write_pubkey_der(&src->pk, buf, sizeof(buf));
+	if (ret > 0)
+		ret = mbedtls_pk_parse_public_key(&dst->pk,
+										  buf + sizeof(buf) - ret, ret);
+	else
 		ret = MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
-		break;
-#endif
-	}
 
 	return ret;
 }
@@ -1177,20 +1123,10 @@ int oscam_ssl_pk_get_type(const oscam_pk_context *pk)
 	if (!pk)
 		return OSCAM_PK_NONE;
 
-	mbedtls_pk_type_t t = mbedtls_pk_get_type(&pk->pk);
-
-	switch (t)
-	{
-		case MBEDTLS_PK_RSA:
-			return OSCAM_PK_RSA;
-
-		case MBEDTLS_PK_ECKEY:
-		case MBEDTLS_PK_ECDSA:
-			return OSCAM_PK_EC;
-
-		default:
-			return OSCAM_PK_NONE;
-	}
+	psa_key_type_t t = mbedtls_pk_get_key_type(&pk->pk);
+	if (PSA_KEY_TYPE_IS_RSA(t))   return OSCAM_PK_RSA;
+	if (PSA_KEY_TYPE_IS_ECC(t))   return OSCAM_PK_EC;
+	return OSCAM_PK_NONE;
 }
 
 int oscam_ssl_get_fd(oscam_ssl_t *ssl)
