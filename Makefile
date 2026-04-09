@@ -286,19 +286,14 @@ endif
 
 # MbedTLS base files
 ifeq ($(USE_MBEDTLS),1)
-	MBEDTLS_SRC_BASE := \
-		$(shell $(GREP) -q '^\#define MBEDTLS_DEBUG_C' mbedtls-config.h 2>/dev/null && echo $(MBEDTLS_DIR)/library/debug.c) \
-		mbedtls_platform.c
+	MBEDTLS_SRC_BASE := mbedtls_platform.c
 
 	# MbedTLS all files (4.x: library/ = SSL/TLS/X.509, tf-psa-crypto/ = crypto)
 	ifeq ($(USE_SSL),1)
 		MBEDTLS_SRC := $(filter-out \
-			$(MBEDTLS_DIR)/library/debug.c \
 			$(MBEDTLS_DIR)/library/ssl_tls13_%.c, \
 			$(wildcard $(MBEDTLS_DIR)/library/*.c))
-		MBEDTLS_SRC += $(filter-out \
-			$(MBEDTLS_BUILTIN)/src/psa_%.c, \
-			$(wildcard $(MBEDTLS_BUILTIN)/src/*.c))
+		MBEDTLS_SRC += $(wildcard $(MBEDTLS_BUILTIN)/src/*.c)
 		MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/core/*.c)
 		MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/utilities/*.c)
 		MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/extras/*.c)
@@ -581,6 +576,10 @@ ifeq ($(USE_MBEDTLS),1)
 		(cd $(MBEDTLS_DIR) && python3 tf-psa-crypto/scripts/generate_config_checks.py 2>/dev/null)
 	@test -f $(MBEDTLS_TF_PSA)/core/psa_crypto_driver_wrappers.h || \
 		(cd $(MBEDTLS_DIR) && python3 tf-psa-crypto/scripts/generate_driver_wrappers.py 2>/dev/null)
+	@test -f $(MBEDTLS_DIR)/library/error.c || \
+		(cd $(MBEDTLS_DIR) && perl scripts/generate_errors.pl 2>/dev/null)
+	@test -f $(MBEDTLS_DIR)/library/ssl_debug_helpers_generated.c || \
+		(cd $(MBEDTLS_DIR) && python3 framework/scripts/generate_ssl_debug_helpers.py 2>/dev/null)
 endif
 	@-printf "\
 +-------------------------------------------------------------------------------\n\
