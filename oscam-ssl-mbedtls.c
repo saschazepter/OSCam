@@ -17,14 +17,14 @@
 #include "mbedtls/debug.h"
 #endif
 
-#include "mbedtls/entropy.h"
+#include "mbedtls/private/entropy.h"
 #include "mbedtls/error.h"
 #include "mbedtls/oid.h"
 #include "mbedtls/platform.h"
 #include "mbedtls/ssl_cookie.h"
 #include "mbedtls/version.h"
 #include "mbedtls/asn1write.h"
-#include "mbedtls/rsa.h"
+#include "mbedtls/private/rsa.h"
 
 /* Opaque structs defined here (match header typedefs) */
 
