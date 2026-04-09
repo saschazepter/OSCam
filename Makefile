@@ -262,11 +262,22 @@ endif
 # MbedTLS common settings
 MBEDTLS_DIR      := mbedtls
 MBEDTLS_INC      := $(MBEDTLS_DIR)/include
+MBEDTLS_TF_PSA   := $(MBEDTLS_DIR)/tf-psa-crypto
+MBEDTLS_BUILTIN  := $(MBEDTLS_TF_PSA)/drivers/builtin
 
 ifneq ($(strip $(shell ./config.sh --show-enabled libraries)),)
 	ifeq ($(USE_MBEDTLS),1)
 		override CFLAGS += -I. -I$(MBEDTLS_DIR)/include
-		override CFLAGS  += -DMBEDTLS_NO_PLATFORM_ENTROPY -DMBEDTLS_NO_DEFAULT_ENTROPY_SOURCES
+		override CFLAGS  += -I$(MBEDTLS_DIR)/library
+		override CFLAGS  += -I$(MBEDTLS_TF_PSA)/include
+		override CFLAGS  += -I$(MBEDTLS_TF_PSA)/core
+		override CFLAGS  += -I$(MBEDTLS_TF_PSA)/extras
+		override CFLAGS  += -I$(MBEDTLS_BUILTIN)/include
+		override CFLAGS  += -I$(MBEDTLS_BUILTIN)/src
+		override CFLAGS  += -I$(MBEDTLS_TF_PSA)/utilities
+		override CFLAGS  += -I$(MBEDTLS_TF_PSA)/dispatch
+		override CFLAGS  += -I$(MBEDTLS_TF_PSA)/platform
+		override CFLAGS  += -DTF_PSA_CRYPTO_USER_CONFIG_FILE=\"tf-psa-crypto-config.h\"
 		override CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
 		override LDFLAGS += $(LIB_RT)
 		IS_MBEDTLS_FILE = $(or $(findstring $(MBEDTLS_DIR)/,$<),$(findstring mbedtls/,$(CFLAGS)))
@@ -279,41 +290,47 @@ ifeq ($(USE_MBEDTLS),1)
 		$(shell $(GREP) -q '^\#define MBEDTLS_DEBUG_C' mbedtls-config.h 2>/dev/null && echo $(MBEDTLS_DIR)/library/debug.c) \
 		mbedtls_platform.c
 
-	# MbedTLS all files
+	# MbedTLS all files (4.x: library/ = SSL/TLS/X.509, tf-psa-crypto/ = crypto)
 	ifeq ($(USE_SSL),1)
 		MBEDTLS_SRC := $(filter-out \
 			$(MBEDTLS_DIR)/library/debug.c \
-			$(MBEDTLS_DIR)/library/platform.c \
-			$(MBEDTLS_DIR)/library/platform_util.c \
-			$(MBEDTLS_DIR)/library/psa_%.c \
 			$(MBEDTLS_DIR)/library/ssl_tls13_%.c, \
 			$(wildcard $(MBEDTLS_DIR)/library/*.c))
+		MBEDTLS_SRC += $(filter-out \
+			$(MBEDTLS_BUILTIN)/src/psa_%.c, \
+			$(wildcard $(MBEDTLS_BUILTIN)/src/*.c))
+		MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/core/*.c)
+		MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/utilities/*.c)
+		MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/extras/*.c)
+		MBEDTLS_SRC += $(filter-out \
+			$(MBEDTLS_TF_PSA)/platform/platform.c \
+			$(MBEDTLS_TF_PSA)/platform/memory_buffer_alloc.c, \
+			$(wildcard $(MBEDTLS_TF_PSA)/platform/*.c))
 	else
-	# MbedTLS optional files
+	# MbedTLS optional files (crypto-only, no SSL)
 		ifeq "$(shell ./config.sh --enabled WITH_LIB_AES)" "Y"
 			MBEDTLS_SRC_CRYPTO += \
-				$(MBEDTLS_DIR)/library/aes.c \
-				$(MBEDTLS_DIR)/library/aesce.c \
-				$(MBEDTLS_DIR)/library/aesni.c
+				$(MBEDTLS_BUILTIN)/src/aes.c \
+				$(MBEDTLS_BUILTIN)/src/aesce.c \
+				$(MBEDTLS_BUILTIN)/src/aesni.c
 		endif
 		ifeq ($(or $(shell ./config.sh --enabled WITH_LIB_DES),$(shell ./config.sh --enabled WITH_LIB_MDC2)),Y)
-			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/des.c
+			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_BUILTIN)/src/des.c
 		endif
 		ifeq "$(shell ./config.sh --enabled WITH_LIB_MD5)" "Y"
-			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/md5.c
+			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_BUILTIN)/src/md5.c
 		endif
 		ifeq "$(shell ./config.sh --enabled WITH_LIB_SHA1)" "Y"
-			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/sha1.c
+			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_BUILTIN)/src/sha1.c
 		endif
 		ifeq "$(shell ./config.sh --enabled WITH_LIB_SHA256)" "Y"
-			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/sha256.c
+			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_BUILTIN)/src/sha256.c
 		endif
 		ifeq "$(shell ./config.sh --enabled WITH_LIB_BIGNUM)" "Y"
 			MBEDTLS_SRC_CRYPTO += \
-				$(MBEDTLS_DIR)/library/bignum.c \
-				$(MBEDTLS_DIR)/library/bignum_core.c \
-				$(MBEDTLS_DIR)/library/bignum_mod.c \
-				$(MBEDTLS_DIR)/library/constant_time.c
+				$(MBEDTLS_BUILTIN)/src/bignum.c \
+				$(MBEDTLS_BUILTIN)/src/bignum_core.c \
+				$(MBEDTLS_BUILTIN)/src/bignum_mod.c
 		endif
 		ifneq ($(strip $(MBEDTLS_SRC_CRYPTO)),)
 			MBEDTLS_SRC += $(MBEDTLS_SRC_CRYPTO)
@@ -556,7 +573,15 @@ SRC := $(subst config.c,$(OBJDIR)/config.c,$(SRC))
 # starts the compilation.
 all: submodules
 	@./config.sh --use-flags "$(USE_FLAGS)" --objdir "$(OBJDIR)" --make-config.mak
-	@-mkdir -p $(OBJDIR)/csctapi $(OBJDIR)/minilzo $(OBJDIR)/webif $(OBJDIR)/signing $(OBJDIR)/$(MBEDTLS_DIR)/library
+	@-mkdir -p $(OBJDIR)/csctapi $(OBJDIR)/minilzo $(OBJDIR)/webif $(OBJDIR)/signing $(OBJDIR)/$(MBEDTLS_DIR)/library $(OBJDIR)/$(MBEDTLS_BUILTIN)/src $(OBJDIR)/$(MBEDTLS_TF_PSA)/core $(OBJDIR)/$(MBEDTLS_TF_PSA)/utilities $(OBJDIR)/$(MBEDTLS_TF_PSA)/extras $(OBJDIR)/$(MBEDTLS_TF_PSA)/platform
+ifeq ($(USE_MBEDTLS),1)
+	@test -f $(MBEDTLS_DIR)/library/mbedtls_config_check_before.h || \
+		(cd $(MBEDTLS_DIR) && python3 scripts/generate_config_checks.py 2>/dev/null)
+	@test -f $(MBEDTLS_TF_PSA)/core/tf_psa_crypto_config_check_before.h || \
+		(cd $(MBEDTLS_DIR) && python3 tf-psa-crypto/scripts/generate_config_checks.py 2>/dev/null)
+	@test -f $(MBEDTLS_TF_PSA)/core/psa_crypto_driver_wrappers.h || \
+		(cd $(MBEDTLS_DIR) && python3 tf-psa-crypto/scripts/generate_driver_wrappers.py 2>/dev/null)
+endif
 	@-printf "\
 +-------------------------------------------------------------------------------\n\
 | OSCam Ver.: $(VER) sha: $(GIT_SHA) target: $(TARGET)\n\
