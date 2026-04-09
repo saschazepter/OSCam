@@ -74,6 +74,41 @@ static struct pstat p_stat_old;
 
 static bool use_srvid2 = false;
 
+static int32_t webif_group_input_maxlength(void)
+{
+	int32_t i;
+	int32_t length = 0;
+
+	for(i = 1; i <= GROUP_BITS; ++i)
+	{
+		if(i > 1)
+		{
+			++length;
+		}
+
+		if(i >= 100)
+		{
+			length += 3;
+		}
+		else if(i >= 10)
+		{
+			length += 2;
+		}
+		else
+		{
+			++length;
+		}
+	}
+
+	return length;
+}
+
+static void tpl_add_group_limit_vars(struct templatevars *vars)
+{
+	tpl_printf(vars, TPLADD, "GROUPMAX", "%d", GROUP_BITS);
+	tpl_printf(vars, TPLADD, "GROUPMAXINPUT", "%d", webif_group_input_maxlength());
+}
+
 /* constants for menuactivating */
 #define MNU_STATUS           0
 #define MNU_LIVELOG          1
@@ -929,6 +964,7 @@ static char *send_oscam_config_camd35tcp(struct templatevars *vars, struct uripa
 static char *send_oscam_config_cache(struct templatevars *vars, struct uriparams *params)
 {
 	setActiveSubMenu(vars, MNU_CFG_CACHE);
+	tpl_add_group_limit_vars(vars);
 
 	webif_save_config("cache", vars, params);
 
@@ -2405,6 +2441,8 @@ static char *send_oscam_reader_config(struct templatevars *vars, struct uriparam
 
 	struct s_reader *rdr;
 
+	tpl_add_group_limit_vars(vars);
+
 	if(!apicall) { setActiveMenu(vars, MNU_READERS); }
 
 	if(strcmp(getParam(params, "action"), "Add") == 0)
@@ -3696,6 +3734,8 @@ static char *send_oscam_user_config_edit(struct templatevars *vars, struct uripa
 
 	int32_t i;
 	int existing_insert = 0;
+
+	tpl_add_group_limit_vars(vars);
 
 	if(!apicall) { setActiveMenu(vars, MNU_USERS); }
 
