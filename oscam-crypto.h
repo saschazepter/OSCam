@@ -147,7 +147,7 @@ typedef DES_key_schedule des_key_schedule;
 #else
 
 #if defined(WITH_SSL) || defined(WITH_LIB_BIGNUM)
-#include "mbedtls/bignum.h"
+#include "mbedtls/private/bignum.h"
 #endif
 
 #endif /* WITH_OPENSSL */

@@ -12,19 +12,16 @@
  * =========================================================== */
 #include "mbedtls/platform.h"
 #if defined(WITH_SSL) || defined(WITH_LIB_AES)
-#include "mbedtls/aes.h"
-#endif
-#if defined(WITH_SSL) || defined(WITH_LIB_DES) || defined(WITH_LIB_MDC2)
-#include "mbedtls/des.h"
+#include "mbedtls/private/aes.h"
 #endif
 #if defined(WITH_SSL) || defined(WITH_LIB_MD5)
-#include "mbedtls/md5.h"
+#include "mbedtls/private/md5.h"
 #endif
 #if defined(WITH_SSL) || defined(WITH_LIB_SHA1)
-#include "mbedtls/sha1.h"
+#include "mbedtls/private/sha1.h"
 #endif
 #if defined(WITH_SSL) || defined(WITH_LIB_SHA256)
-#include "mbedtls/sha256.h"
+#include "mbedtls/private/sha256.h"
 #endif
 
 /* ----------------------------------------------------------------------
@@ -35,10 +32,9 @@
 #define OSCAM_STATIC_ASSERT(cond, name) \
 	typedef char static_assert_##name[(cond) ? 1 : -1]
 
-#if defined(WITH_LIB_DES) || defined(WITH_LIB_MDC2)
-OSCAM_STATIC_ASSERT(sizeof(mbedtls_des_context) <= 160,
-	des_key_schedule_too_small);
-#endif
+/* DES: standalone implementation — DES was removed in mbedTLS 4.0.
+ * Our des_key_schedule opaque buffer is 160 bytes; we only need 8 bytes
+ * for the raw key, so this is fine. */
 
 #if defined(WITH_LIB_SHA1)
 OSCAM_STATIC_ASSERT(sizeof(mbedtls_sha1_context) <= 128,
@@ -235,166 +231,7 @@ char *__md5_crypt(const char *pw, const char *salt, char *passwd)
 }
 #endif/* WITH_LIB_MD5 */
 
-/* ----------------------------------------------------------------------
- * DES
- * ---------------------------------------------------------------------- */
-#ifdef WITH_LIB_DES
-typedef struct {
-	unsigned char k8[8];
-} mbed_des_key_schedule;
-
-static inline mbed_des_key_schedule *DES_S(des_key_schedule *s) { return (mbed_des_key_schedule *)s; }
-
-void oscam_des_set_key(const uint8_t *key, des_key_schedule *schedule)
-{
-	mbed_des_key_schedule *S = DES_S(schedule);
-	memcpy(S->k8, key, 8);
-}
-
-void oscam_des_set_odd_parity(uint8_t key8[8])
-{
-	mbedtls_des_key_set_parity(key8);
-}
-
-void oscam_des_set_odd_parity_all(uint8_t *key, size_t len)
-{
-	if (!key || len == 0)
-		return;
-
-	while (len >= 8) {
-		mbedtls_des_key_set_parity(key);
-		key += 8;
-		len -= 8;
-	}
-}
-
-void oscam_des(uint8_t *data, des_key_schedule *schedule, int enc)
-{
-	mbed_des_key_schedule *S = DES_S(schedule);
-	mbedtls_des_context ctx;
-	mbedtls_des_init(&ctx);
-
-	if (enc)
-		mbedtls_des_setkey_enc(&ctx, S->k8);
-	else
-		mbedtls_des_setkey_dec(&ctx, S->k8);
-
-	mbedtls_des_crypt_ecb(&ctx, data, data);
-	mbedtls_des_free(&ctx);
-}
-
-// --- Single DES ECB ---
-void oscam_des_ecb_encrypt(uint8_t *data, const uint8_t *key, int32_t len)
-{
-	mbedtls_des_context ctx;
-	mbedtls_des_init(&ctx);
-	mbedtls_des_setkey_enc(&ctx, key);
-	len &= ~7;
-	for (int i = 0; i < len; i += 8)
-		mbedtls_des_crypt_ecb(&ctx, data + i, data + i);
-	mbedtls_des_free(&ctx);
-}
-
-void des_ecb_decrypt(uint8_t *data, const uint8_t *key, int32_t len)
-{
-	mbedtls_des_context ctx;
-	mbedtls_des_init(&ctx);
-	mbedtls_des_setkey_dec(&ctx, key);
-	len &= ~7;
-	for (int i = 0; i < len; i += 8)
-		mbedtls_des_crypt_ecb(&ctx, data + i, data + i);
-	mbedtls_des_free(&ctx);
-}
-
-// --- DES CBC ---
-void oscam_des_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len)
-{
-	mbedtls_des_context ctx;
-	unsigned char iv_copy[8];
-	memcpy(iv_copy, iv, 8);
-
-	mbedtls_des_init(&ctx);
-	mbedtls_des_setkey_enc(&ctx, key);
-	mbedtls_des_crypt_cbc(&ctx, MBEDTLS_DES_ENCRYPT, len & ~7, iv_copy, data, data);
-	mbedtls_des_free(&ctx);
-}
-
-void des_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len)
-{
-	mbedtls_des_context ctx;
-	unsigned char iv_copy[8];
-	memcpy(iv_copy, iv, 8);
-
-	mbedtls_des_init(&ctx);
-	mbedtls_des_setkey_dec(&ctx, key);
-	mbedtls_des_crypt_cbc(&ctx, MBEDTLS_DES_DECRYPT, len & ~7, iv_copy, data, data);
-	mbedtls_des_free(&ctx);
-}
-
-// --- 2-key 3DES (EDE2) CBC ---
-void oscam_des_ede2_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1, const uint8_t *key2, int32_t len)
-{
-	mbedtls_des3_context ctx;
-	unsigned char iv_copy[8];
-	unsigned char key24[24];
-	size_t n = (size_t)len & ~7u;
-
-	memcpy(iv_copy, iv, 8);
-	memcpy(key24,       key1, 8);
-	memcpy(key24 + 8,   key2, 8);
-	memcpy(key24 + 16,  key1, 8); /* repeat key1 for 2-key 3DES */
-
-	mbedtls_des3_init(&ctx);
-	mbedtls_des3_set3key_enc(&ctx, key24);
-	mbedtls_des3_crypt_cbc(&ctx, MBEDTLS_DES_ENCRYPT, n, iv_copy, data, data);
-	mbedtls_des3_free(&ctx);
-}
-
-void des_ede2_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1, const uint8_t *key2, int32_t len)
-{
-	mbedtls_des3_context ctx;
-	unsigned char iv_copy[8];
-	unsigned char key24[24];
-	size_t n = (size_t)len & ~7u;
-
-	memcpy(iv_copy, iv, 8);
-	memcpy(key24,       key1, 8);
-	memcpy(key24 + 8,   key2, 8);
-	memcpy(key24 + 16,  key1, 8);
-
-	mbedtls_des3_init(&ctx);
-	mbedtls_des3_set3key_dec(&ctx, key24);
-	mbedtls_des3_crypt_cbc(&ctx, MBEDTLS_DES_DECRYPT, n, iv_copy, data, data);
-	mbedtls_des3_free(&ctx);
-}
-
-// --- 3DES ECB ---
-void des_ecb3_decrypt(uint8_t *data, const uint8_t *key)
-{
-	mbedtls_des3_context ctx;
-	mbedtls_des3_init(&ctx);
-
-	/* 2-key EDE2 mode (16-byte key). For true 3-key EDE3 (24 bytes),
-	use mbedtls_des3_set3key_dec() instead. */
-	mbedtls_des3_set2key_dec(&ctx, key);
-	mbedtls_des3_crypt_ecb(&ctx, data, data);
-
-	mbedtls_des3_free(&ctx);
-}
-
-void oscam_des_ecb3_encrypt(uint8_t *data, const uint8_t *key)
-{
-	mbedtls_des3_context ctx;
-	mbedtls_des3_init(&ctx);
-
-	/* 2-key EDE2 mode (16-byte key). For true 3-key EDE3 (24 bytes),
-	use mbedtls_des3_set3key_enc() instead. */
-	mbedtls_des3_set2key_enc(&ctx, key);
-	mbedtls_des3_crypt_ecb(&ctx, data, data);
-
-	mbedtls_des3_free(&ctx);
-}
-#endif/* WITH_LIB_DES */
+/* DES: standalone implementation in oscam-crypto.c (removed from mbedTLS 4.0) */
 
 /* ----------------------------------------------------------------------
  * SHA1
