@@ -10108,6 +10108,18 @@ static void *http_server(void *UNUSED(d))
 				continue;
 			}
 			setTCPTimeouts(s);
+
+			// Override SO_RCVTIMEO for WebIf: 10s is enough for any HTTP request.
+			// The default 600s from setTCPTimeouts() would allow Slowloris-style
+			// attacks to tie up WebIf threads for too long.
+			struct timeval webif_tv;
+			webif_tv.tv_sec = 10;
+			webif_tv.tv_usec = 0;
+			if(setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &webif_tv, sizeof(struct timeval)) && errno != EBADF)
+			{
+				cs_log("WebIf: Setting SO_RCVTIMEO failed, errno=%d, %s", errno, strerror(errno));
+			}
+
 			cur_client()->last = time((time_t *)0); //reset last busy time
 			conn->cl = cur_client();
 #ifdef IPV6SUPPORT
