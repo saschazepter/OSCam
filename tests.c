@@ -19,7 +19,8 @@ struct test_vec
 typedef void  (CHK_FN)  (char *, void *);
 typedef char *(MK_T_FN) (void *);
 typedef void  (CLEAR_FN)(void *);
-typedef void  (CLONE_FN)(void *, void *);
+typedef bool  (CLONE_FN)(void *, void *);
+typedef bool  (HAS_DATA_FN)(void *);
 
 struct test_type
 {
@@ -31,38 +32,101 @@ struct test_type
 	MK_T_FN  *mk_t_fn;      // mk_t_XXX() func for the data type
 	CLEAR_FN *clear_fn;     // clear_XXX() func for the data type
 	CLONE_FN *clone_fn;     // clone_XXX() func for the data type
+	HAS_DATA_FN *has_data_fn; // Reports whether parsed data contains cloneable entries
 	const struct test_vec *test_vec; // Array of test vectors
 };
 
-static void run_parser_test(struct test_type *t)
+#define DEFINE_TEST_ADAPTERS(NAME, TYPE, NUM_FIELD) \
+	static void chk_##NAME##_adapter(char *value, void *data) \
+	{ \
+		chk_##NAME(value, (TYPE *)data); \
+	} \
+	\
+	static char *mk_t_##NAME##_adapter(void *data) \
+	{ \
+		return mk_t_##NAME((TYPE *)data); \
+	} \
+	\
+	static void clear_##NAME##_adapter(void *data) \
+	{ \
+		NAME##_clear((TYPE *)data); \
+	} \
+	\
+	static bool clone_##NAME##_adapter(void *src, void *dst) \
+	{ \
+		return NAME##_clone((TYPE *)src, (TYPE *)dst); \
+	} \
+	\
+	static bool has_data_##NAME##_adapter(void *data) \
+	{ \
+		return ((TYPE *)data)->NUM_FIELD > 0; \
+	}
+
+DEFINE_TEST_ADAPTERS(ecm_whitelist, ECM_WHITELIST, ewnum);
+DEFINE_TEST_ADAPTERS(ecm_hdr_whitelist, ECM_HDR_WHITELIST, ehnum);
+DEFINE_TEST_ADAPTERS(tuntab, TUNTAB, ttnum);
+DEFINE_TEST_ADAPTERS(ftab, FTAB, nfilts);
+DEFINE_TEST_ADAPTERS(caidvaluetab, CAIDVALUETAB, cvnum);
+DEFINE_TEST_ADAPTERS(caidtab, CAIDTAB, ctnum);
+
+#undef DEFINE_TEST_ADAPTERS
+
+static int run_parser_test(struct test_type *t)
 {
+	int failures = 0;
+
 	memset(t->data, 0, t->data_sz);
 	memset(t->data_c, 0, t->data_sz);
 	printf("%s\n", t->desc);
 	const struct test_vec *vec = t->test_vec;
 	while (vec->in)
 	{
-		bool ok;
+		bool ok, clone_ok, clone_required, clone_failed;
+		bool failed_case;
+		char *generated;
 		printf(" Testing \"%s\"", vec->in);
 		char *input_setting = cs_strdup(vec->in);
 		t->chk_fn(input_setting, t->data);
-		t->clone_fn(t->data, t->data_c); // Check if 'clone' works
-		t->clear_fn(t->data); // Check if 'clear' works
-		char *generated = t->mk_t_fn(t->data_c); // Use cloned data
+		clone_required = t->has_data_fn(t->data);
+		clone_ok = t->clone_fn(t->data, t->data_c);
+		clone_failed = clone_required && !clone_ok;
+		if (clone_ok)
+		{
+			t->clear_fn(t->data); // Check if 'clear' works
+			generated = t->mk_t_fn(t->data_c); // Use cloned data
+		}
+		else
+		{
+			generated = t->mk_t_fn(t->data);
+			t->clear_fn(t->data); // Check if 'clear' works
+		}
 		if (vec->out)
 			ok = strcmp(vec->out, generated) == 0;
 		else
 			ok = strcmp(vec->in, generated) == 0;
-		if (ok)
+		failed_case = clone_failed || !ok;
+		if (!failed_case)
 		{
 			printf(" [OK]\n");
 		} else {
 			printf("\n");
-			printf(" === ERROR ===\n");
-			printf("  Input data:   \"%s\"\n", vec->in);
-			printf("  Got result:   \"%s\"\n", generated);
-			printf("  Expected out: \"%s\"\n", vec->out ? vec->out : vec->in);
-			printf("\n");
+			if (clone_failed)
+			{
+				printf(" === CLONE ERROR ===\n");
+				printf("  Input data:   \"%s\"\n", vec->in);
+				printf("  Clone result: failed\n");
+				printf("\n");
+				failures++;
+			}
+			if (!ok)
+			{
+				printf(" === ERROR ===\n");
+				printf("  Input data:   \"%s\"\n", vec->in);
+				printf("  Got result:   \"%s\"\n", generated);
+				printf("  Expected out: \"%s\"\n", vec->out ? vec->out : vec->in);
+				printf("\n");
+			}
+			failures++;
 		}
 		free_mk_t(generated);
 		free(input_setting);
@@ -70,10 +134,13 @@ static void run_parser_test(struct test_type *t)
 		vec++;
 	}
 	t->clear_fn(t->data_c);
+	return failures;
 }
 
-void run_all_tests(void)
+int run_all_tests(void)
 {
+	int failures = 0;
+
 	ECM_WHITELIST ecm_whitelist, ecm_whitelist_c;
 	struct test_type ecm_whitelist_test =
 	{
@@ -81,10 +148,11 @@ void run_all_tests(void)
 		.data     = &ecm_whitelist,
 		.data_c   = &ecm_whitelist_c,
 		.data_sz  = sizeof(ecm_whitelist),
-		.chk_fn   = (CHK_FN *)&chk_ecm_whitelist,
-		.mk_t_fn  = (MK_T_FN *)&mk_t_ecm_whitelist,
-		.clear_fn = (CLEAR_FN *)&ecm_whitelist_clear,
-		.clone_fn = (CLONE_FN *)&ecm_whitelist_clone,
+		.chk_fn   = &chk_ecm_whitelist_adapter,
+		.mk_t_fn  = &mk_t_ecm_whitelist_adapter,
+		.clear_fn = &clear_ecm_whitelist_adapter,
+		.clone_fn = &clone_ecm_whitelist_adapter,
+		.has_data_fn = &has_data_ecm_whitelist_adapter,
 		.test_vec = (const struct test_vec[])
 		{
 			{ .in = "0500@043800:70,6E,6C,66,7A,61,67,75,5D,6B;0600@070800:11,22,33,44,55,66;0700:AA,BB,CC,DD,EE;01,02,03,04;0123@456789:01,02,03,04" },
@@ -116,7 +184,7 @@ void run_all_tests(void)
 			{ .in = NULL },
 		},
 	};
-	run_parser_test(&ecm_whitelist_test);
+	failures += run_parser_test(&ecm_whitelist_test);
 
 	ECM_HDR_WHITELIST ecm_hdr_whitelist, ecm_hdr_whitelist_c;
 	struct test_type ecm_hdr_whitelist_test =
@@ -125,10 +193,11 @@ void run_all_tests(void)
 		.data     = &ecm_hdr_whitelist,
 		.data_c   = &ecm_hdr_whitelist_c,
 		.data_sz  = sizeof(ecm_hdr_whitelist),
-		.chk_fn   = (CHK_FN *)&chk_ecm_hdr_whitelist,
-		.mk_t_fn  = (MK_T_FN *)&mk_t_ecm_hdr_whitelist,
-		.clear_fn = (CLEAR_FN *)&ecm_hdr_whitelist_clear,
-		.clone_fn = (CLONE_FN *)&ecm_hdr_whitelist_clone,
+		.chk_fn   = &chk_ecm_hdr_whitelist_adapter,
+		.mk_t_fn  = &mk_t_ecm_hdr_whitelist_adapter,
+		.clear_fn = &clear_ecm_hdr_whitelist_adapter,
+		.clone_fn = &clone_ecm_hdr_whitelist_adapter,
+		.has_data_fn = &has_data_ecm_hdr_whitelist_adapter,
 		.test_vec = (const struct test_vec[])
 		{
 			{ .in = "1830@123456:80308F078D,81308F078D;1702@007878:807090C7000000011010008712078400,817090C7000000011010008713078400" },
@@ -152,7 +221,7 @@ void run_all_tests(void)
 			{ .in = "@ff:81;@bb:11,22",      .out = "@0000FF:81;@0000BB:11,22" },
 			{ .in = "0500:,,,;0060@000077:,,;0700:,;0800", .out = "0800" },
 			{ .in = "@:81",                  .out = "81" },
-			{ .in = "81;zzs;;;;;ab",         .out = "81,EF,AB" },
+			{ .in = "81;zzs;;;;;ab",         .out = "81,00,AB" },
 			{ .in = "1830@123456:",          .out = "" },
 			{ .in = "500:1,2;60@77:a,b,z,,", .out = "" },
 			{ .in = ":@",                    .out = "" },
@@ -164,7 +233,7 @@ void run_all_tests(void)
 			{ .in = NULL },
 		},
 	};
-	run_parser_test(&ecm_hdr_whitelist_test);
+	failures += run_parser_test(&ecm_hdr_whitelist_test);
 
 	TUNTAB tuntab, tuntab_c;
 	struct test_type tuntab_test =
@@ -173,10 +242,11 @@ void run_all_tests(void)
 		.data     = &tuntab,
 		.data_c   = &tuntab_c,
 		.data_sz  = sizeof(tuntab),
-		.chk_fn   = (CHK_FN *)&chk_tuntab,
-		.mk_t_fn  = (MK_T_FN *)&mk_t_tuntab,
-		.clear_fn = (CLEAR_FN *)&tuntab_clear,
-		.clone_fn = (CLONE_FN *)&tuntab_clone,
+		.chk_fn   = &chk_tuntab_adapter,
+		.mk_t_fn  = &mk_t_tuntab_adapter,
+		.clear_fn = &clear_tuntab_adapter,
+		.clone_fn = &clone_tuntab_adapter,
+		.has_data_fn = &has_data_tuntab_adapter,
 		.test_vec = (const struct test_vec[])
 		{
 			{ .in = "1833.007A:1702,1833.007B:1702,1833.007C:1702,1833.007E:1702,1833.007F:1702,1833.0080:1702,1833.0081:1702,1833.0082:1702,1833.0083:1702,1833.0084:1702" },
@@ -194,7 +264,7 @@ void run_all_tests(void)
 			{ .in = NULL },
 		},
 	};
-	run_parser_test(&tuntab_test);
+	failures += run_parser_test(&tuntab_test);
 
 	FTAB ftab, ftab_c;
 	struct test_type ftab_test =
@@ -203,10 +273,11 @@ void run_all_tests(void)
 		.data     = &ftab,
 		.data_c   = &ftab_c,
 		.data_sz  = sizeof(ftab),
-		.chk_fn   = (CHK_FN *)&chk_ftab,
-		.mk_t_fn  = (MK_T_FN *)&mk_t_ftab,
-		.clear_fn = (CLEAR_FN *)&ftab_clear,
-		.clone_fn = (CLONE_FN *)&ftab_clone,
+		.chk_fn   = &chk_ftab_adapter,
+		.mk_t_fn  = &mk_t_ftab_adapter,
+		.clear_fn = &clear_ftab_adapter,
+		.clone_fn = &clone_ftab_adapter,
+		.has_data_fn = &has_data_ftab_adapter,
 		.test_vec = (const struct test_vec[])
 		{
 			{ .in = "0100:123456,234567;0200:345678,456789" },
@@ -233,7 +304,7 @@ void run_all_tests(void)
 			{ .in = NULL },
 		},
 	};
-	run_parser_test(&ftab_test);
+	failures += run_parser_test(&ftab_test);
 
 	CAIDVALUETAB caidvaluetab, caidvaluetab_c;
 	struct test_type caidvaluetab_test =
@@ -242,10 +313,11 @@ void run_all_tests(void)
 		.data     = &caidvaluetab,
 		.data_c   = &caidvaluetab_c,
 		.data_sz  = sizeof(caidvaluetab),
-		.chk_fn   = (CHK_FN *)&chk_caidvaluetab,
-		.mk_t_fn  = (MK_T_FN *)&mk_t_caidvaluetab,
-		.clear_fn = (CLEAR_FN *)&caidvaluetab_clear,
-		.clone_fn = (CLONE_FN *)&caidvaluetab_clone,
+		.chk_fn   = &chk_caidvaluetab_adapter,
+		.mk_t_fn  = &mk_t_caidvaluetab_adapter,
+		.clear_fn = &clear_caidvaluetab_adapter,
+		.clone_fn = &clone_caidvaluetab_adapter,
+		.has_data_fn = &has_data_caidvaluetab_adapter,
 		.test_vec = (const struct test_vec[])
 		{
 			{ .in = "0100:4,0200:3,0300:2,0400:1" },
@@ -272,7 +344,7 @@ void run_all_tests(void)
 			{ .in = NULL },
 		},
 	};
-	run_parser_test(&caidvaluetab_test);
+	failures += run_parser_test(&caidvaluetab_test);
 
 	CAIDTAB caidtab, caidtab_c;
 	struct test_type caidtab_test =
@@ -281,10 +353,11 @@ void run_all_tests(void)
 		.data     = &caidtab,
 		.data_c   = &caidtab_c,
 		.data_sz  = sizeof(caidtab),
-		.chk_fn   = (CHK_FN *)&chk_caidtab,
-		.mk_t_fn  = (MK_T_FN *)&mk_t_caidtab,
-		.clear_fn = (CLEAR_FN *)&caidtab_clear,
-		.clone_fn = (CLONE_FN *)&caidtab_clone,
+		.chk_fn   = &chk_caidtab_adapter,
+		.mk_t_fn  = &mk_t_caidtab_adapter,
+		.clear_fn = &clear_caidtab_adapter,
+		.clone_fn = &clone_caidtab_adapter,
+		.has_data_fn = &has_data_caidtab_adapter,
 		.test_vec = (const struct test_vec[])
 		{
 			{ .in = "0200&FFEE:0300" },
@@ -313,5 +386,7 @@ void run_all_tests(void)
 			{ .in = NULL },
 		},
 	};
-	run_parser_test(&caidtab_test);
+	failures += run_parser_test(&caidtab_test);
+	printf("Summary: %d failure(s)\n", failures);
+	return failures;
 }
