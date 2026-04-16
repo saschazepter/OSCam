@@ -125,8 +125,8 @@ static int run_parser_test(struct test_type *t)
 				printf("  Got result:   \"%s\"\n", generated);
 				printf("  Expected out: \"%s\"\n", vec->out ? vec->out : vec->in);
 				printf("\n");
+				failures++;
 			}
-			failures++;
 		}
 		free_mk_t(generated);
 		free(input_setting);
