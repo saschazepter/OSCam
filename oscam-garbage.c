@@ -130,14 +130,14 @@ void add_garbage(void *data)
 		{
 			if(garbagecheck->data == data)
 			{
-					cs_log("Found a try to add garbage twice. Not adding the element to garbage list...");
-					cs_log("Current garbage addition: %s, line %d.", file, line);
-					cs_log("Original garbage addition: %s, line %d.", garbagecheck->file, garbagecheck->line);
-					cs_writeunlock(__func__, &garbage_lock[bucket]);
-					garbage_add_unref();
-					NULLFREE(garbage);
-					return;
-				}
+				cs_log("Found a try to add garbage twice. Not adding the element to garbage list...");
+				cs_log("Current garbage addition: %s, line %d.", file, line);
+				cs_log("Original garbage addition: %s, line %d.", garbagecheck->file, garbagecheck->line);
+				cs_writeunlock(__func__, &garbage_lock[bucket]);
+				garbage_add_unref();
+				NULLFREE(garbage);
+				return;
+			}
 			garbagecheck = garbagecheck->next;
 		}
 	}
@@ -233,6 +233,8 @@ void stop_garbage_collector(void)
 	{
 		int32_t i;
 
+		/* Set inactive and wait under the same lock so no new adders can race
+		 * in between the flag flip and the inflight-drain check. */
 		SAFE_MUTEX_LOCK(&garbage_state_lock);
 		garbage_collector_active = 0;
 		while(garbage_adders_inflight > 0)
