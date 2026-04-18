@@ -20,13 +20,65 @@ struct cs_garbage
 	struct cs_garbage *next;
 };
 
-static int32_t counter = 0;
-static pthread_mutex_t add_lock;
 static struct cs_garbage *garbage_first[HASH_BUCKETS];
 static CS_MUTEX_LOCK garbage_lock[HASH_BUCKETS];
 static pthread_t garbage_thread;
+static uint32_t garbage_counter;
 static int32_t garbage_collector_active;
+static int32_t garbage_adders_inflight;
 static int32_t garbage_debug;
+static pthread_mutex_t garbage_add_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t garbage_state_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t garbage_state_cond = PTHREAD_COND_INITIALIZER;
+
+static uint32_t garbage_next_bucket(void)
+{
+	uint32_t bucket;
+	SAFE_MUTEX_LOCK(&garbage_add_lock);
+	bucket = garbage_counter++ & BUCKET_MASK;
+	SAFE_MUTEX_UNLOCK(&garbage_add_lock);
+	return bucket;
+}
+
+static int32_t garbage_collector_is_active(void)
+{
+	int32_t active;
+	SAFE_MUTEX_LOCK(&garbage_state_lock);
+	active = garbage_collector_active;
+	SAFE_MUTEX_UNLOCK(&garbage_state_lock);
+	return active;
+}
+
+static void garbage_collector_set_active(int32_t active)
+{
+	SAFE_MUTEX_LOCK(&garbage_state_lock);
+	garbage_collector_active = active;
+	SAFE_MUTEX_UNLOCK(&garbage_state_lock);
+}
+
+static int32_t garbage_add_ref(void)
+{
+	int32_t active;
+	SAFE_MUTEX_LOCK(&garbage_state_lock);
+	active = garbage_collector_active;
+	if(active)
+	{
+		garbage_adders_inflight++;
+	}
+	SAFE_MUTEX_UNLOCK(&garbage_state_lock);
+	return active;
+}
+
+static void garbage_add_unref(void)
+{
+	SAFE_MUTEX_LOCK(&garbage_state_lock);
+	garbage_adders_inflight--;
+	if(!garbage_collector_active && garbage_adders_inflight == 0)
+	{
+		SAFE_COND_SIGNAL(&garbage_state_cond);
+	}
+	SAFE_MUTEX_UNLOCK(&garbage_state_lock);
+}
 
 #ifdef WITH_DEBUG
 void add_garbage_debug(void *data, char *file, uint32_t line)
@@ -38,24 +90,29 @@ void add_garbage(void *data)
 	if(!data)
 		{ return; }
 
-	if(!garbage_collector_active || garbage_debug == 1)
+	if(garbage_debug == 1)
 	{
 		NULLFREE(data);
 		return;
 	}
 
-	SAFE_MUTEX_LOCK(&add_lock);
-	int32_t bucket = counter++ & BUCKET_MASK;
-	SAFE_MUTEX_UNLOCK(&add_lock);
+	if(!garbage_add_ref())
+	{
+		NULLFREE(data);
+		return;
+	}
+
+	uint32_t bucket = garbage_next_bucket();
 
 	struct cs_garbage *garbage = (struct cs_garbage*)malloc(sizeof(struct cs_garbage));
 	if(garbage == NULL)
 	{
 		cs_log("*** MEMORY FULL -> FREEING DIRECT MAY LEAD TO INSTABILITY!!! ***");
+		garbage_add_unref();
 		NULLFREE(data);
 		return;
 	}
-	garbage->time = time(NULL);
+	garbage->time = cs_time();
 	garbage->data = data;
 	garbage->next = NULL;
 #ifdef WITH_DEBUG
@@ -73,13 +130,14 @@ void add_garbage(void *data)
 		{
 			if(garbagecheck->data == data)
 			{
-				cs_log("Found a try to add garbage twice. Not adding the element to garbage list...");
-				cs_log("Current garbage addition: %s, line %d.", file, line);
-				cs_log("Original garbage addition: %s, line %d.", garbagecheck->file, garbagecheck->line);
-				cs_writeunlock(__func__, &garbage_lock[bucket]);
-				NULLFREE(garbage);
-				return;
-			}
+					cs_log("Found a try to add garbage twice. Not adding the element to garbage list...");
+					cs_log("Current garbage addition: %s, line %d.", file, line);
+					cs_log("Original garbage addition: %s, line %d.", garbagecheck->file, garbagecheck->line);
+					cs_writeunlock(__func__, &garbage_lock[bucket]);
+					garbage_add_unref();
+					NULLFREE(garbage);
+					return;
+				}
 			garbagecheck = garbagecheck->next;
 		}
 	}
@@ -89,6 +147,7 @@ void add_garbage(void *data)
 	garbage_first[bucket] = garbage;
 
 	cs_writeunlock(__func__, &garbage_lock[bucket]);
+	garbage_add_unref();
 }
 
 static pthread_cond_t sleep_cond;
@@ -100,9 +159,14 @@ static void garbage_collector(void)
 	struct cs_garbage *garbage, *next, *prev;
 	set_thread_name(__func__);
 
-	while(garbage_collector_active)
+	while(garbage_collector_is_active())
 	{
-		time_t deltime = time(NULL) - MAX(26, 2 * cfg.ctimeout / 1000 + 6);
+		uint64_t retention = ((uint64_t)cfg.ctimeout * 2) / 1000 + 6;
+		if(retention < 26)
+		{
+			retention = 26;
+		}
+		time_t deltime = cs_time() - (time_t)retention;
 
 		for(i = 0; i < HASH_BUCKETS; ++i)
 		{
@@ -144,8 +208,8 @@ void start_garbage_collector(int32_t debug)
 {
 	int32_t i;
 	garbage_debug = debug;
-
-	SAFE_MUTEX_INIT(&add_lock, NULL);
+	garbage_counter = 0;
+	garbage_adders_inflight = 0;
 
 	for(i = 0; i < HASH_BUCKETS; ++i)
 	{
@@ -155,7 +219,7 @@ void start_garbage_collector(int32_t debug)
 
 	cs_pthread_cond_init(__func__, &sleep_cond_mutex, &sleep_cond);
 
-	garbage_collector_active = 1;
+	garbage_collector_set_active(1);
 
 	if(start_thread("garbage", (void *)&garbage_collector, NULL, &garbage_thread, 0, 1))
 	{
@@ -165,11 +229,18 @@ void start_garbage_collector(int32_t debug)
 
 void stop_garbage_collector(void)
 {
-	if(garbage_collector_active)
+	if(garbage_collector_is_active())
 	{
 		int32_t i;
 
+		SAFE_MUTEX_LOCK(&garbage_state_lock);
 		garbage_collector_active = 0;
+		while(garbage_adders_inflight > 0)
+		{
+			SAFE_COND_WAIT(&garbage_state_cond, &garbage_state_lock);
+		}
+		SAFE_MUTEX_UNLOCK(&garbage_state_lock);
+
 		SAFE_COND_SIGNAL(&sleep_cond);
 		cs_sleepms(300);
 		SAFE_COND_SIGNAL(&sleep_cond);
@@ -195,7 +266,6 @@ void stop_garbage_collector(void)
 			cs_lock_destroy(__func__, &garbage_lock[i]);
 		}
 
-		pthread_mutex_destroy(&add_lock);
 		pthread_cond_destroy(&sleep_cond);
 		pthread_mutex_destroy(&sleep_cond_mutex);
 	}
