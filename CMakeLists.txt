@@ -12,6 +12,22 @@ if(POLICY CMP0054)
   cmake_policy(SET CMP0054 NEW)
 endif()
 
+#----------------------- static link options ------------------------------
+# Declare the optional static-link flags as cache variables so that setting
+# them via -D does not produce "Manually-specified variables were not used"
+# warnings when the corresponding feature (HAVE_*) is disabled. Declared
+# here (before system detection) so they don't override the macOS-specific
+# set(STATIC_LIBUSB True) further down.
+
+option (STATIC_PCSC       "Link libpcsclite statically" OFF)
+option (STATIC_LIBUSB     "Link libusb statically"      OFF)
+option (STATIC_LIBCRYPTO  "Link libcrypto statically"   OFF)
+option (STATIC_SSL        "Link libssl statically"      OFF)
+option (STATIC_LIBDVBCSA  "Link libdvbcsa statically"   OFF)
+
+set (LIBCRYPTO_LIB "" CACHE STRING "Full path to libcrypto (overrides detection)")
+set (SSL_LIB       "" CACHE STRING "Full path to libssl (overrides detection)")
+
 #----------------------- detect system ------------------------------
 
 if (CMAKE_CROSSCOMPILING)
