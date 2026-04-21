@@ -451,7 +451,7 @@ void oscam_idea_ecb_encrypt(const unsigned char *in, unsigned char *out, IDEA_KE
 	d[0] = d[1] = 0;
 }
 
-void oscam_idea_cbc_encrypt(const unsigned char *in, unsigned char *out, long length, IDEA_KEY_SCHEDULE *ks, unsigned char *iv, int encrypt)
+void oscam_idea_cbc_encrypt(const unsigned char *in, unsigned char *out, long length, IDEA_KEY_SCHEDULE *ks, unsigned char *iv, int enc)
 {
 	uint32_t tin0 = 0, tin1 = 0;
 	uint32_t tout0 = 0, tout1 = 0;
@@ -459,7 +459,7 @@ void oscam_idea_cbc_encrypt(const unsigned char *in, unsigned char *out, long le
 	long l = length;
 	unsigned long d[2];
 
-	if (encrypt) {
+	if (enc) {
 		n2l(iv, tout0);
 		n2l(iv, tout1);
 		iv -= 8;
@@ -815,7 +815,7 @@ static void des_make_subkeys(const uint8_t key[8], uint8_t subkeys[16][6])
 }
 
 static void des_crypt_block(const uint8_t in[8], uint8_t out[8],
-							const uint8_t subkeys[16][6], int encrypt)
+							uint8_t subkeys[16][6], int enc)
 {
 	uint8_t ip_out[8];
 	des_permute(in, ip_out, des_ip, 64);
@@ -826,7 +826,7 @@ static void des_crypt_block(const uint8_t in[8], uint8_t out[8],
 				 ((uint32_t)ip_out[6] << 8)  | (uint32_t)ip_out[7];
 
 	for (int round = 0; round < 16; round++) {
-		int ki = encrypt ? round : (15 - round);
+		int ki = enc ? round : (15 - round);
 		uint32_t old_l = l;
 		l = r;
 
