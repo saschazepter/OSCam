@@ -398,7 +398,7 @@ int AesDecrypt(AesCtx *c, const unsigned char *in, unsigned char *out, int len)
 	size_t out_len = 0;
 	if (C->mode == CBC) {
 		uint8_t iv_local[16]; memcpy(iv_local, C->iv, 16);
-		uint8_t last_cipher[16];
+		uint8_t last_cipher[16] = {0};
 		if (len >= 16) memcpy(last_cipher, in + len - 16, 16);
 		if (psa_aes_run(C->key, C->keylen, PSA_ALG_CBC_NO_PADDING, 0,
 						iv_local, 16, in, len, out, len + 16, &out_len) != PSA_SUCCESS)
@@ -475,7 +475,7 @@ int AES_cbc_encrypt(const unsigned char *in, unsigned char *out,
 	if (!key || !ivec) return -1;
 	oscam_psa_aeskey *K = AK(key);
 	size_t out_len = 0;
-	uint8_t last_cipher[16];
+	uint8_t last_cipher[16] = {0};
 	if (!enc && length >= 16) memcpy(last_cipher, in + length - 16, 16);
 
 	if (psa_aes_run(K->key, K->keylen, PSA_ALG_CBC_NO_PADDING, enc,
@@ -546,7 +546,7 @@ void aes_cbc_decrypt(void *aes, uint8_t *buf, int32_t n, uint8_t *iv)
 {
 	oscam_psa_aeskey *p = (oscam_psa_aeskey *)aes;
 	size_t out_len = 0;
-	uint8_t last_cipher[16];
+	uint8_t last_cipher[16] = {0};
 	if (n >= 16) memcpy(last_cipher, buf + n - 16, 16);
 	psa_aes_run(p->key, p->keylen, PSA_ALG_CBC_NO_PADDING, 0,
 				iv, 16, buf, n, buf, n + 16, &out_len);
