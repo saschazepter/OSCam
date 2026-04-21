@@ -569,18 +569,6 @@ SRC := $(subst config.c,$(OBJDIR)/config.c,$(SRC))
 all: submodules
 	@./config.sh --use-flags "$(USE_FLAGS)" --objdir "$(OBJDIR)" --make-config.mak
 	@-mkdir -p $(OBJDIR)/csctapi $(OBJDIR)/minilzo $(OBJDIR)/webif $(OBJDIR)/signing $(OBJDIR)/$(MBEDTLS_DIR)/library $(OBJDIR)/$(MBEDTLS_BUILTIN)/src $(OBJDIR)/$(MBEDTLS_TF_PSA)/core $(OBJDIR)/$(MBEDTLS_TF_PSA)/utilities $(OBJDIR)/$(MBEDTLS_TF_PSA)/extras $(OBJDIR)/$(MBEDTLS_TF_PSA)/platform
-ifeq ($(USE_MBEDTLS),1)
-	@test -f $(MBEDTLS_DIR)/library/mbedtls_config_check_before.h || \
-		(cd $(MBEDTLS_DIR) && python3 scripts/generate_config_checks.py 2>/dev/null)
-	@test -f $(MBEDTLS_TF_PSA)/core/tf_psa_crypto_config_check_before.h || \
-		(cd $(MBEDTLS_DIR) && python3 tf-psa-crypto/scripts/generate_config_checks.py 2>/dev/null)
-	@test -f $(MBEDTLS_TF_PSA)/core/psa_crypto_driver_wrappers.h || \
-		(cd $(MBEDTLS_DIR) && python3 tf-psa-crypto/scripts/generate_driver_wrappers.py 2>/dev/null)
-	@test -f $(MBEDTLS_DIR)/library/error.c || \
-		(cd $(MBEDTLS_DIR) && perl scripts/generate_errors.pl 2>/dev/null)
-	@test -f $(MBEDTLS_DIR)/library/ssl_debug_helpers_generated.c || \
-		(cd $(MBEDTLS_DIR) && python3 framework/scripts/generate_ssl_debug_helpers.py 2>/dev/null)
-endif
 	@-printf "\
 +-------------------------------------------------------------------------------\n\
 | OSCam Ver.: $(VER) sha: $(GIT_SHA) target: $(TARGET)\n\
