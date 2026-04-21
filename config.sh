@@ -982,6 +982,24 @@ do
 					echo "Warning: failed to update submodule. Using existing version." >&2
 				}
 			fi
+			# mbedtls 4.x needs two nested submodules (framework, tf-psa-crypto)
+			# to build: the first provides generator scripts, the second the
+			# crypto sources. Only those two — not transitive children like
+			# pqcp/mldsa-native. Force fetchJobs=1 to avoid a parallel-clone
+			# race in git that fails to mkdir the nested .git/modules/ path
+			# before writing pack files.
+			if [ "$name" = "mbedtls" ] && [ -f mbedtls/.gitmodules ]; then
+				(cd mbedtls && git -c submodule.fetchJobs=1 submodule update --init framework tf-psa-crypto) || {
+					echo "Warning: failed to update mbedtls nested submodules." >&2
+				}
+				# tf-psa-crypto has its own nested framework submodule
+				# (same URL as mbedtls/framework) required for its generator scripts.
+				if [ -d mbedtls/tf-psa-crypto ] && [ -f mbedtls/tf-psa-crypto/.gitmodules ]; then
+					(cd mbedtls/tf-psa-crypto && git -c submodule.fetchJobs=1 submodule update --init framework) || {
+						echo "Warning: failed to update tf-psa-crypto/framework." >&2
+					}
+				fi
+			fi
 		else
 			url=`echo "$section" | grep 'url = ' | sed 's/.*url = //'`
 			if [ -z "$url" ]; then
