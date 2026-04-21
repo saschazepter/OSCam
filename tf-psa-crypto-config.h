@@ -45,10 +45,9 @@ int   oscam_mbedtls_snprintf(char *buf, size_t buflen, const char *fmt, ...);
 #undef MBEDTLS_PLATFORM_TIME_ALT
 #undef MBEDTLS_PLATFORM_GMTIME_R_ALT
 
-/* ============================================================================
- *  Expose private/internal identifiers (needed for low-level hash/AES/bignum)
- * ========================================================================== */
-#define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+/* MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS is no longer set globally.
+ * Hashes and AES use the PSA Crypto API; only oscam-crypto-mbedtls.c
+ * still needs private access (for bignum) and defines the macro locally. */
 
 /* ============================================================================
  *  Entropy / RNG (mbedTLS 4.x: PSA provides entropy, no HARDWARE_ALT)

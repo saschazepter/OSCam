@@ -265,6 +265,14 @@ int oscam_ssl_global_init(void)
 		return OSCAM_SSL_OK;
 
 	mbedtls_platform_setup(NULL);
+
+	/* Initialize PSA crypto — required for all PSA-based operations
+	 * in mbedTLS 4.x (TLS, X.509, and our crypto shim). */
+	if (psa_crypto_init() != PSA_SUCCESS) {
+		g_init_ref = 0;
+		return OSCAM_SSL_ERR;
+	}
+
 	mbedtls_entropy_init(&g_entropy);
 	mbedtls_ctr_drbg_init(&g_drbg);
 
@@ -296,6 +304,9 @@ void oscam_ssl_global_free(void)
 		/* Free global MbedTLS contexts */
 		mbedtls_ctr_drbg_free(&g_drbg);
 		mbedtls_entropy_free(&g_entropy);
+
+		/* Shut down PSA crypto (counterpart to psa_crypto_init) */
+		mbedtls_psa_crypto_free();
 
 		/* Deinitialize custom platform layer (static allocator, hooks, etc.) */
 		mbedtls_platform_teardown(NULL);
