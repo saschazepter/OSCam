@@ -8,6 +8,5 @@
 [submodule "mbedtls"]
 	path = mbedtls
 	url = https://github.com/Mbed-TLS/mbedtls.git
-	branch = mbedtls-4.1
 	shallow = true
 	depends = USE_MBEDTLS
