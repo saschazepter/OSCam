@@ -971,6 +971,29 @@ do
 					echo "Warning: failed to update submodule. Using existing version." >&2
 				}
 			fi
+			# mbedtls 4.x needs two nested submodules (framework, tf-psa-crypto)
+			# to build: the first provides generator scripts, the second the
+			# crypto sources. Only those two — not transitive children like
+			# pqcp/mldsa-native. Force fetchJobs=1 to avoid a parallel-clone
+			# race in git that fails to mkdir the nested .git/modules/ path
+			# before writing pack files.
+			if [ "$name" = "mbedtls" ] && [ -f mbedtls/.gitmodules ]; then
+				(cd mbedtls && git -c submodule.fetchJobs=1 submodule update --init framework tf-psa-crypto) || {
+					echo "Warning: failed to update mbedtls nested submodules." >&2
+				}
+				# tf-psa-crypto has its own nested framework submodule
+				# (same URL as mbedtls/framework) required for its generator scripts.
+				if [ -d mbedtls/tf-psa-crypto ] && [ -f mbedtls/tf-psa-crypto/.gitmodules ]; then
+					(cd mbedtls/tf-psa-crypto && git -c submodule.fetchJobs=1 submodule update --init framework) || {
+						echo "Warning: failed to update tf-psa-crypto/framework." >&2
+					}
+				fi
+				# Generate mbedTLS source files that are no longer committed
+				# in 4.x (config checks, driver wrappers, error.c, ssl debug).
+				# Needs python3 + perl on the build host; 'generate_driver_wrappers.py'
+				# additionally needs the python modules jsonschema and jinja2.
+				$0 --mbedtls-generate-sources
+			fi
 		else
 			url=`echo "$section" | grep 'url = ' | sed 's/.*url = //'`
 			if [ -z "$url" ]; then
@@ -1005,6 +1028,65 @@ do
 		done
 		echo Cant_find_OSX_SDK
 		break
+	;;
+	'--mbedtls-generate-sources')
+		# Generate mbedTLS files that are not committed in 4.x (but were in 3.x).
+		# Build-host deps: python3 (+ jsonschema + jinja2), perl.
+		# Target toolchain does NOT need these — the output is just C/header files.
+		mbedtls_dir="mbedtls"
+		tf_psa_dir="$mbedtls_dir/tf-psa-crypto"
+		[ -d "$mbedtls_dir" ] || exit 0
+
+		# Resolve python3 once and reuse the exact same interpreter for
+		# both pip-install and generator execution. Prevents the classic
+		# 'pip3 installs into python A, python3 command runs B' mismatch
+		# where modules are installed but not importable.
+		PY3=${PYTHON3:-$(command -v python3 2>/dev/null)}
+		if [ -z "$PY3" ] || [ ! -x "$PY3" ]; then
+			echo "Error: python3 not found in PATH (or \$PYTHON3 invalid)." >&2
+			exit 1
+		fi
+		# Follow symlinks so pip-install writes into the user-site dir
+		# that this same interpreter will search at import time.
+		PY3=`readlink -f "$PY3" 2>/dev/null || echo "$PY3"`
+
+		# library/mbedtls_config_check_*.h  (python, stdlib only)
+		if [ ! -f "$mbedtls_dir/library/mbedtls_config_check_before.h" ]; then
+			(cd "$mbedtls_dir" && PYTHONPATH=framework/scripts "$PY3" scripts/generate_config_checks.py)
+		fi
+
+		# tf-psa-crypto/core/tf_psa_crypto_config_check_*.h  (python, stdlib only)
+		if [ ! -f "$tf_psa_dir/core/tf_psa_crypto_config_check_before.h" ]; then
+			(cd "$tf_psa_dir" && PYTHONPATH=framework/scripts "$PY3" scripts/generate_config_checks.py)
+		fi
+
+		# tf-psa-crypto/core/psa_crypto_driver_wrappers.{h,c}
+		# (python + jsonschema + jinja2 — auto-installed via the same
+		# interpreter that will run the generator)
+		if [ ! -f "$tf_psa_dir/core/psa_crypto_driver_wrappers.h" ]; then
+			if ! "$PY3" -c 'import jsonschema, jinja2' 2>/dev/null; then
+				# Detect whether pip supports --break-system-packages (PEP 668,
+				# pip >=23.0.1); older pip (e.g. python3.6 on some buildhosts)
+				# errors with a full usage dump when the flag is unknown.
+				pip_flags=''
+				if "$PY3" -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'; then
+					pip_flags='--break-system-packages'
+				fi
+				"$PY3" -m pip install --user $pip_flags jsonschema jinja2
+			fi
+			(cd "$tf_psa_dir" && PYTHONPATH=framework/scripts "$PY3" scripts/generate_driver_wrappers.py)
+		fi
+
+		# library/error.c  (perl)
+		if [ ! -f "$mbedtls_dir/library/error.c" ]; then
+			(cd "$mbedtls_dir" && perl scripts/generate_errors.pl)
+		fi
+
+		# library/ssl_debug_helpers_generated.c  (python, stdlib only)
+		if [ ! -f "$mbedtls_dir/library/ssl_debug_helpers_generated.c" ]; then
+			(cd "$mbedtls_dir" && PYTHONPATH=framework/scripts "$PY3" framework/scripts/generate_ssl_debug_helpers.py --mbedtls-root . library/)
+		fi
+		exit 0
 	;;
 	'-l'|'--list-config')
 		list_config
