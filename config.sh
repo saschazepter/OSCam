@@ -973,12 +973,12 @@ do
 		if [ "`git rev-parse --show-toplevel 2>/dev/null`" = "`pwd`" ]; then
 			if echo "$section" | grep -q 'branch = '; then
 				echo "Updating git submodule '$name' (tracking)..."
-				git submodule update --init --remote "$name" || {
+				git submodule update --init --recursive --remote "$name" || {
 					echo "Warning: failed to update submodule. Using existing version." >&2
 				}
 			else
 				echo "Updating git submodule '$name' (pinned)..."
-				git submodule update --init "$name" || {
+				git submodule update --init --recursive "$name" || {
 					echo "Warning: failed to update submodule. Using existing version." >&2
 				}
 			fi
