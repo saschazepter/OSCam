@@ -315,7 +315,7 @@ typedef struct {
 
 static psa_status_t psa_aes_run(const uint8_t *key, size_t keylen,
 								psa_algorithm_t alg,
-								int encrypt,
+								int enc,
 								const uint8_t *iv, size_t iv_len,
 								const uint8_t *in, size_t in_len,
 								uint8_t *out, size_t out_size,
@@ -335,7 +335,7 @@ static psa_status_t psa_aes_run(const uint8_t *key, size_t keylen,
 	st = psa_import_key(&attr, key, keylen, &kid);
 	if (st != PSA_SUCCESS) return st;
 
-	if (encrypt)
+	if (enc)
 		st = psa_cipher_encrypt_setup(&op, kid, alg);
 	else
 		st = psa_cipher_decrypt_setup(&op, kid, alg);
