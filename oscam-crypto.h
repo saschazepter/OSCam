@@ -275,7 +275,7 @@ void oscam_des_ecb3_decrypt(uint8_t *data, const uint8_t *key);
 #endif
 
 struct SHA_CTX {
-	unsigned char opaque[128];
+	unsigned char opaque[256];  /* Must fit psa_hash_operation_t (232 bytes on mbedTLS 4.x) */
 };
 
 int SHA1_Init(SHA_CTX *c);
