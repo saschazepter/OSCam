@@ -682,6 +682,9 @@ distclean: clean
 
 submodules:
 	@./config.sh --use-flags "$(USE_FLAGS)" --submodule
+ifeq ($(USE_MBEDTLS),1)
+	@./config.sh --mbedtls-fetch
+endif
 
 README.build:
 	@echo "Extracting 'make help' into $@ file."
