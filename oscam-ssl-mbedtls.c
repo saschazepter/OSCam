@@ -360,7 +360,7 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 
 #if defined(MBEDTLS_DEBUG_C)
 	mbedtls_ssl_conf_dbg(&conf->ssl_conf, oscam_ssl_debug, NULL);
-	mbedtls_debug_set_threshold(4);  // 0 = off, 1..4 = increasing verbosity
+	mbedtls_debug_set_threshold(0);  // 0 = off, 1..4 = increasing verbosity
 #endif
 
 	/* ---- Common defaults ---- */
