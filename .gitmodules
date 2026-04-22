@@ -4,9 +4,3 @@
 	branch = main
 	shallow = true
 	depends = WEBIF_WIKI
-
-[submodule "mbedtls"]
-	path = mbedtls
-	url = https://github.com/Mbed-TLS/mbedtls.git
-	shallow = true
-	depends = USE_MBEDTLS
