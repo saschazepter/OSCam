@@ -363,12 +363,28 @@ if (WITH_SSL EQUAL 1)
 	add_definitions ("-DWITH_SSL")
 endif (WITH_SSL EQUAL 1)
 
-# MbedTLS 4.x: library/ = TLS+X.509, tf-psa-crypto/ = crypto (separate submodule)
+# MbedTLS 4.x: library/ = TLS+X.509, tf-psa-crypto/ = crypto (sub-tree of the
+# official release tarball). We fetch the tarball pinned via mbedtls/version.conf
+# instead of using a git submodule — the release tarball already ships tf-psa-crypto,
+# the framework sub-tree and all pre-generated source files, so no Python, Perl,
+# jsonschema or jinja2 are needed at build time.
 if (SECURITY_BACKEND STREQUAL "MBEDTLS")
 	execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --show-enabled libraries WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} OUTPUT_VARIABLE CONFIG_ENABLED_LIBS OUTPUT_STRIP_TRAILING_WHITESPACE)
 	set (MBEDTLS_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/mbedtls")
 	set (MBEDTLS_TF_PSA  "${MBEDTLS_DIR}/tf-psa-crypto")
 	set (MBEDTLS_BUILTIN "${MBEDTLS_TF_PSA}/drivers/builtin")
+
+	# Fetch/extract the mbedTLS release tarball (idempotent: skipped if the
+	# pinned version is already extracted).
+	execute_process(
+		COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --mbedtls-fetch
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+		RESULT_VARIABLE _MBEDTLS_FETCH_RC
+	)
+	if (NOT _MBEDTLS_FETCH_RC EQUAL 0)
+		message(FATAL_ERROR "Failed to fetch mbedTLS tarball (rc=${_MBEDTLS_FETCH_RC}). Check mbedtls/version.conf and network access.")
+	endif()
+
 	if (NOT "${CONFIG_ENABLED_LIBS}" STREQUAL "")
 		include_directories("${MBEDTLS_DIR}/include")
 		include_directories("${MBEDTLS_DIR}/library")
@@ -394,18 +410,6 @@ if (SECURITY_BACKEND STREQUAL "MBEDTLS")
 			if (MBEDTLS_VERSION_LINE)
 				string(REGEX REPLACE ".*\"(.*)\".*" "\\1" MBEDTLS_VERSION_STRING "${MBEDTLS_VERSION_LINE}")
 			endif()
-		endif()
-
-		# Run mbedTLS generators (config checks, driver wrappers, error.c,
-		# ssl_debug_helpers). Needs python3 + perl on the build host;
-		# driver_wrappers additionally needs jsonschema + jinja2.
-		execute_process(
-			COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --mbedtls-generate-sources
-			WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-			RESULT_VARIABLE _MBEDTLS_GEN_RC
-		)
-		if (NOT _MBEDTLS_GEN_RC EQUAL 0)
-			message(FATAL_ERROR "Failed to generate mbedTLS source files (${_MBEDTLS_GEN_RC})")
 		endif()
 
 		set(MBEDTLS_SRC_BASE "${CMAKE_CURRENT_SOURCE_DIR}/mbedtls_platform.c")
