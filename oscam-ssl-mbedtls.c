@@ -304,13 +304,6 @@ void oscam_ssl_global_free(void)
 		/* Free global MbedTLS contexts */
 		mbedtls_ctr_drbg_free(&g_drbg);
 		mbedtls_entropy_free(&g_entropy);
-
-		/* Shut down PSA crypto (counterpart to psa_crypto_init) */
-		mbedtls_psa_crypto_free();
-
-		/* Deinitialize custom platform layer (static allocator, hooks, etc.) */
-		mbedtls_platform_teardown(NULL);
-
 		/* defensive cleanup to ensure contexts aren’t reused */
 		memset(&g_drbg, 0, sizeof(g_drbg));
 		memset(&g_entropy, 0, sizeof(g_entropy));
@@ -461,11 +454,6 @@ oscam_ssl_conf_t *oscam_ssl_conf_build(oscam_ssl_mode_t mode)
 											mbedtls_ssl_ticket_parse,
 											&ticket_ctx);
 	}
-#endif
-
-#if defined(MBEDTLS_DEBUG_C)
-	cs_log("SSL: loaded %s key (%zu bits)",
-		pk_type_name(&conf->own_key), mbedtls_pk_get_bitlen(&conf->own_key));
 #endif
 
 	return conf;
