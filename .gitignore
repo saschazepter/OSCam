@@ -12,6 +12,12 @@ Distribution/list_smargo-*
 # build directories
 /build/
 
+# mbedTLS is fetched as a tarball on demand — ignore everything in
+# mbedtls/ except the version pin file.
+/mbedtls/*
+!/mbedtls/version.conf
+/.mbedtls-cache/
+
 # Currently enabled config items
 webif/is_defined.txt
 
