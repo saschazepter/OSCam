@@ -252,7 +252,7 @@ struct oscam_des_key_schedule {
 
 void oscam_des_set_key(const uint8_t *key, des_key_schedule *schedule);
 void oscam_des(uint8_t *data, des_key_schedule *schedule, int enc);
-void des_set_odd_parity(uint8_t key8[8]);
+void des_set_odd_parity(uint8_t *key);
 void des_set_odd_parity_all(uint8_t *key, size_t len);
 
 void oscam_des_ecb_encrypt(uint8_t *data, const uint8_t *key, int32_t len);
