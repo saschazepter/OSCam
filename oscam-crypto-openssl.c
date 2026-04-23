@@ -229,9 +229,9 @@ void oscam_des_set_key(const uint8_t *key, des_key_schedule *schedule)
 	DES_set_key_unchecked((const_DES_cblock *)key, schedule);
 }
 
-void oscam_des_set_odd_parity(uint8_t key8[8])
+void oscam_des_set_odd_parity(uint8_t *key)
 {
-	DES_set_odd_parity((DES_cblock *)key8);
+	DES_set_odd_parity((DES_cblock *)key);
 }
 
 void oscam_des_set_odd_parity_all(uint8_t *key, size_t len)
