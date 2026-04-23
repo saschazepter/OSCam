@@ -54,6 +54,15 @@ int   oscam_mbedtls_snprintf(char *buf, size_t buflen, const char *fmt, ...);
  * ========================================================================== */
 #define MBEDTLS_CTR_DRBG_C
 
+/* mbedTLS 4.x first tries the getrandom() syscall. On Linux kernels
+ * < 3.17 (typical on STBs such as DM900, kernel 3.14) that returns
+ * ENOSYS and mbedTLS falls back to fopen(MBEDTLS_PLATFORM_DEV_RANDOM) —
+ * default /dev/random, which blocks forever when the embedded kernel
+ * has no hardware entropy source. Route the fallback to /dev/urandom:
+ * non-blocking and cryptographically sound after the kernel has seeded
+ * its CSPRNG (always true by the time oscam runs). */
+#define MBEDTLS_PLATFORM_DEV_RANDOM "/dev/urandom"
+
 /* ============================================================================
  *  Disable features not needed by OSCam
  * ========================================================================== */
