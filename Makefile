@@ -312,9 +312,6 @@ ifeq ($(USE_MBEDTLS),1)
 				$(MBEDTLS_BUILTIN)/src/aesce.c \
 				$(MBEDTLS_BUILTIN)/src/aesni.c
 		endif
-		ifeq ($(or $(shell ./config.sh --enabled WITH_LIB_DES),$(shell ./config.sh --enabled WITH_LIB_MDC2)),Y)
-			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_BUILTIN)/src/des.c
-		endif
 		ifeq "$(shell ./config.sh --enabled WITH_LIB_MD5)" "Y"
 			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_BUILTIN)/src/md5.c
 		endif
