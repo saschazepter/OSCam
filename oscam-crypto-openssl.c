@@ -455,37 +455,23 @@ int AesDecrypt(AesCtx *c, const unsigned char *in, unsigned char *out, int len)
 	}
 }
 
-/* Pair used by per-reader AES key list */
+/* Per-reader AES key pair — same layout as master's cscrypt/oscam-aes.c
+ * uses: two AES_KEYs (one enc-scheduled, one dec-scheduled), then call
+ * the stateless AES_* primitives per block / per CBC run. Previous EVP
+ * implementation here re-inited the same ctx across ECB/CBC which does
+ * not reliably switch mode → wrote input unchanged. */
 typedef struct {
-	EVP_CIPHER_CTX *enc;  /* ECB, no padding */
-	EVP_CIPHER_CTX *dec;  /* ECB, no padding */
-	int             key_bits;
+	AES_KEY aeskey_encrypt;
+	AES_KEY aeskey_decrypt;
 } ossl_pair;
-
-static int pair_init(ossl_pair *p, const unsigned char *key, int key_bits)
-{
-	const EVP_CIPHER *ecb = aes_ecb_cipher(key_bits);
-	if (!ecb) return -1;
-
-	p->enc = EVP_CIPHER_CTX_new();
-	p->dec = EVP_CIPHER_CTX_new();
-	if (!p->enc || !p->dec) return -1;
-
-	if (!EVP_EncryptInit_ex(p->enc, ecb, NULL, key, NULL)) return -1;
-	if (!EVP_DecryptInit_ex(p->dec, ecb, NULL, key, NULL)) return -1;
-
-	EVP_CIPHER_CTX_set_padding(p->enc, 0);
-	EVP_CIPHER_CTX_set_padding(p->dec, 0);
-	p->key_bits = key_bits;
-	return 0;
-}
 
 void aes_set_key(void *aes, char *key)
 {
 	ossl_pair *p = (ossl_pair *)aes;
 	if (!p || !key) return;
 	/* existing code always uses 128-bit session keys here */
-	(void)pair_init(p, (unsigned char *)key, 128);
+	AES_set_encrypt_key((const unsigned char *)key, 128, &p->aeskey_encrypt);
+	AES_set_decrypt_key((const unsigned char *)key, 128, &p->aeskey_decrypt);
 }
 
 bool aes_set_key_alloc(aes_keys **aes, char *key)
@@ -500,40 +486,27 @@ bool aes_set_key_alloc(aes_keys **aes, char *key)
 void aes_decrypt(void *aes, uint8_t *buf, int32_t n)
 {
 	ossl_pair *p = (ossl_pair *)aes;
-	int outl;
 	for (int32_t i = 0; i < n; i += AES_BLOCK_SIZE)
-		EVP_DecryptUpdate(p->dec, buf + i, &outl, buf + i, AES_BLOCK_SIZE);
+		AES_decrypt(buf + i, buf + i, &p->aeskey_decrypt);
 }
 
 void aes_encrypt_idx(void *aes, uint8_t *buf, int32_t n)
 {
 	ossl_pair *p = (ossl_pair *)aes;
-	int outl;
 	for (int32_t i = 0; i < n; i += AES_BLOCK_SIZE)
-		EVP_EncryptUpdate(p->enc, buf + i, &outl, buf + i, AES_BLOCK_SIZE);
+		AES_encrypt(buf + i, buf + i, &p->aeskey_encrypt);
 }
 
 void aes_cbc_encrypt(void *aes, uint8_t *buf, int32_t n, uint8_t *iv)
 {
 	ossl_pair *p = (ossl_pair *)aes;
-	const EVP_CIPHER *cbc = aes_cbc_cipher(p->key_bits ? p->key_bits : 128);
-	int outl;
-
-	/* Reuse enc ctx with CBC + IV; no padding */
-	EVP_CipherInit_ex(p->enc, cbc, NULL, NULL, iv, 1);
-	EVP_CIPHER_CTX_set_padding(p->enc, 0);
-	EVP_CipherUpdate(p->enc, buf, &outl, buf, n);
+	AES_cbc_encrypt(buf, buf, n, &p->aeskey_encrypt, iv, AES_ENCRYPT);
 }
 
 void aes_cbc_decrypt(void *aes, uint8_t *buf, int32_t n, uint8_t *iv)
 {
 	ossl_pair *p = (ossl_pair *)aes;
-	const EVP_CIPHER *cbc = aes_cbc_cipher(p->key_bits ? p->key_bits : 128);
-	int outl;
-
-	EVP_CipherInit_ex(p->dec, cbc, NULL, NULL, iv, 0);
-	EVP_CIPHER_CTX_set_padding(p->dec, 0);
-	EVP_CipherUpdate(p->dec, buf, &outl, buf, n);
+	AES_cbc_encrypt(buf, buf, n, &p->aeskey_decrypt, iv, AES_DECRYPT);
 }
 
 /* --- List management for per-reader AES keys --- */
@@ -548,7 +521,8 @@ void add_aes_entry(AES_ENTRY **list, uint16_t caid, uint32_t ident, int32_t keyi
 	if (memcmp(aesKey, "\xFF\xFF", 2) != 0) {
 		ossl_pair *p;
 		if (!cs_malloc(&p, sizeof(*p))) { free(e); return; }
-		if (pair_init(p, aesKey, 128) != 0) { free(p); free(e); return; }
+		AES_set_encrypt_key(aesKey, 128, &p->aeskey_encrypt);
+		AES_set_decrypt_key(aesKey, 128, &p->aeskey_decrypt);
 		e->key = p;
 	} else {
 		e->key = NULL; /* dummy -> card decrypts */
@@ -620,12 +594,7 @@ void aes_clear_entries(AES_ENTRY **list)
 	AES_ENTRY *cur = *list, *nxt;
 	while (cur) {
 		nxt = cur->next;
-		if (cur->key) {
-			ossl_pair *p = (ossl_pair *)cur->key;
-			if (p->enc) EVP_CIPHER_CTX_free(p->enc);
-			if (p->dec) EVP_CIPHER_CTX_free(p->dec);
-			free(p);
-		}
+		free(cur->key);
 		free(cur);
 		cur = nxt;
 	}
@@ -664,9 +633,8 @@ int32_t aes_decrypt_from_list(AES_ENTRY *list, uint16_t caid, uint32_t provid, i
 	if (!cur->key) return 1; /* dummy */
 
 	ossl_pair *p = (ossl_pair *)cur->key;
-	int outl;
 	for (int32_t i = 0; i < n; i += AES_BLOCK_SIZE)
-		EVP_DecryptUpdate(p->dec, buf + i, &outl, buf + i, AES_BLOCK_SIZE);
+		AES_decrypt(buf + i, buf + i, &p->aeskey_decrypt);
 	return 1;
 }
 
