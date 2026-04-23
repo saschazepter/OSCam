@@ -305,8 +305,13 @@ void SHA256_Free(SHA256_CTX *c)
  * builtin AES internally so the per-call cost is modest.
  */
 
-/* Generic AES context: raw key + optional IV + mode flag. */
-typedef struct {
+/* Generic AES context: raw key + optional IV + mode flag.
+ * __may_alias__ is required because this struct is used as a type-punned
+ * view over AesCtx / AES_KEY / aes_keys (caller-owned storage declared as
+ * other types). Without it, GCC's TBAA at -O2 treats writes through this
+ * type as unrelated to the backing object, deleting the writes as dead
+ * stores and leaving later reads returning stale/zero bytes. */
+typedef struct __attribute__((__may_alias__)) {
 	uint8_t key[32];       /* up to AES-256 */
 	uint8_t iv[16];
 	uint8_t keylen;        /* 16, 24, or 32 */
@@ -380,13 +385,13 @@ int AesEncrypt(AesCtx *c, const unsigned char *in, unsigned char *out, int len)
 	if (C->mode == CBC) {
 		uint8_t iv_local[16]; memcpy(iv_local, C->iv, 16);
 		if (psa_aes_run(C->key, C->keylen, PSA_ALG_CBC_NO_PADDING, 1,
-						iv_local, 16, in, len, out, len + 16, &out_len) != PSA_SUCCESS)
+						iv_local, 16, in, len, out, len, &out_len) != PSA_SUCCESS)
 			return -1;
 		/* Preserve running IV: last block of ciphertext */
 		if (len >= 16) memcpy(C->iv, out + len - 16, 16);
 	} else {
 		if (psa_aes_run(C->key, C->keylen, PSA_ALG_ECB_NO_PADDING, 1,
-						NULL, 0, in, len, out, len + 16, &out_len) != PSA_SUCCESS)
+						NULL, 0, in, len, out, len, &out_len) != PSA_SUCCESS)
 			return -1;
 	}
 	return len;
@@ -401,20 +406,22 @@ int AesDecrypt(AesCtx *c, const unsigned char *in, unsigned char *out, int len)
 		uint8_t last_cipher[16] = {0};
 		if (len >= 16) memcpy(last_cipher, in + len - 16, 16);
 		if (psa_aes_run(C->key, C->keylen, PSA_ALG_CBC_NO_PADDING, 0,
-						iv_local, 16, in, len, out, len + 16, &out_len) != PSA_SUCCESS)
+						iv_local, 16, in, len, out, len, &out_len) != PSA_SUCCESS)
 			return -1;
 		/* Running IV: last ciphertext block */
 		if (len >= 16) memcpy(C->iv, last_cipher, 16);
 	} else {
 		if (psa_aes_run(C->key, C->keylen, PSA_ALG_ECB_NO_PADDING, 0,
-						NULL, 0, in, len, out, len + 16, &out_len) != PSA_SUCCESS)
+						NULL, 0, in, len, out, len, &out_len) != PSA_SUCCESS)
 			return -1;
 	}
 	return len;
 }
 
-/* ---- AES_KEY: OpenSSL-like API ---- */
-typedef struct {
+/* ---- AES_KEY: OpenSSL-like API ----
+ * __may_alias__: same rationale as oscam_psa_aes above — this is a
+ * type-punned view over caller's AES_KEY/aes_keys storage. */
+typedef struct __attribute__((__may_alias__)) {
 	uint8_t key[32];
 	uint8_t keylen;
 	uint8_t has_enc;
@@ -479,7 +486,7 @@ int AES_cbc_encrypt(const unsigned char *in, unsigned char *out,
 	if (!enc && length >= 16) memcpy(last_cipher, in + length - 16, 16);
 
 	if (psa_aes_run(K->key, K->keylen, PSA_ALG_CBC_NO_PADDING, enc,
-					ivec, 16, in, length, out, length + 16, &out_len) != PSA_SUCCESS)
+					ivec, 16, in, length, out, length, &out_len) != PSA_SUCCESS)
 		return -1;
 
 	/* Update the caller's IV to the last block, matching OpenSSL/mbedTLS semantics */
@@ -538,7 +545,7 @@ void aes_cbc_encrypt(void *aes, uint8_t *buf, int32_t n, uint8_t *iv)
 	oscam_psa_aeskey *p = (oscam_psa_aeskey *)aes;
 	size_t out_len = 0;
 	psa_aes_run(p->key, p->keylen, PSA_ALG_CBC_NO_PADDING, 1,
-				iv, 16, buf, n, buf, n + 16, &out_len);
+				iv, 16, buf, n, buf, n, &out_len);
 	if (n >= 16) memcpy(iv, buf + n - 16, 16);
 }
 
@@ -549,7 +556,7 @@ void aes_cbc_decrypt(void *aes, uint8_t *buf, int32_t n, uint8_t *iv)
 	uint8_t last_cipher[16] = {0};
 	if (n >= 16) memcpy(last_cipher, buf + n - 16, 16);
 	psa_aes_run(p->key, p->keylen, PSA_ALG_CBC_NO_PADDING, 0,
-				iv, 16, buf, n, buf, n + 16, &out_len);
+				iv, 16, buf, n, buf, n, &out_len);
 	if (n >= 16) memcpy(iv, last_cipher, 16);
 }
 
