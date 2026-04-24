@@ -655,6 +655,7 @@ void aes_clear_entries(AES_ENTRY **list)
 	*list = NULL;
 }
 
+#ifdef READER_VIACCESS
 void parse_aes_keys(struct s_reader *rdr, char *value)
 {
 	char *entry;
@@ -667,6 +668,7 @@ void parse_aes_keys(struct s_reader *rdr, char *value)
 	rdr->aes_list = newlist;
 	aes_clear_entries(&savelist);
 }
+#endif /* READER_VIACCESS */
 
 /* Helper function to find AES entry in list */
 static AES_ENTRY *aes_list_find(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t keyid)
