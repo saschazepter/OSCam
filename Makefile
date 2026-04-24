@@ -291,45 +291,23 @@ endif
 ifeq ($(USE_MBEDTLS),1)
 	MBEDTLS_SRC_BASE := mbedtls_platform.c
 
-	# MbedTLS all files (4.x: library/ = SSL/TLS/X.509, tf-psa-crypto/ = crypto)
+	# Crypto layer (tf-psa-crypto/) is ALWAYS needed whenever oscam-crypto-mbedtls.c
+	# references psa_hash_* / psa_cipher_* / psa_crypto_init etc. — that is true
+	# in every USE_MBEDTLS build (including `make tests` without USE_SSL).
+	MBEDTLS_SRC := $(wildcard $(MBEDTLS_BUILTIN)/src/*.c)
+	MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/core/*.c)
+	MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/utilities/*.c)
+	MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/extras/*.c)
+	MBEDTLS_SRC += $(filter-out \
+		$(MBEDTLS_TF_PSA)/platform/platform.c \
+		$(MBEDTLS_TF_PSA)/platform/memory_buffer_alloc.c, \
+		$(wildcard $(MBEDTLS_TF_PSA)/platform/*.c))
+
+	# SSL/TLS/X.509 layer (mbedtls/library/) is only pulled in when USE_SSL=1.
 	ifeq ($(USE_SSL),1)
-		MBEDTLS_SRC := $(filter-out \
+		MBEDTLS_SRC += $(filter-out \
 			$(MBEDTLS_DIR)/library/ssl_tls13_%.c, \
 			$(wildcard $(MBEDTLS_DIR)/library/*.c))
-		MBEDTLS_SRC += $(wildcard $(MBEDTLS_BUILTIN)/src/*.c)
-		MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/core/*.c)
-		MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/utilities/*.c)
-		MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/extras/*.c)
-		MBEDTLS_SRC += $(filter-out \
-			$(MBEDTLS_TF_PSA)/platform/platform.c \
-			$(MBEDTLS_TF_PSA)/platform/memory_buffer_alloc.c, \
-			$(wildcard $(MBEDTLS_TF_PSA)/platform/*.c))
-	else
-	# MbedTLS optional files (crypto-only, no SSL)
-		ifeq "$(shell ./config.sh --enabled WITH_LIB_AES)" "Y"
-			MBEDTLS_SRC_CRYPTO += \
-				$(MBEDTLS_BUILTIN)/src/aes.c \
-				$(MBEDTLS_BUILTIN)/src/aesce.c \
-				$(MBEDTLS_BUILTIN)/src/aesni.c
-		endif
-		ifeq "$(shell ./config.sh --enabled WITH_LIB_MD5)" "Y"
-			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_BUILTIN)/src/md5.c
-		endif
-		ifeq "$(shell ./config.sh --enabled WITH_LIB_SHA1)" "Y"
-			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_BUILTIN)/src/sha1.c
-		endif
-		ifeq "$(shell ./config.sh --enabled WITH_LIB_SHA256)" "Y"
-			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_BUILTIN)/src/sha256.c
-		endif
-		ifeq "$(shell ./config.sh --enabled WITH_LIB_BIGNUM)" "Y"
-			MBEDTLS_SRC_CRYPTO += \
-				$(MBEDTLS_BUILTIN)/src/bignum.c \
-				$(MBEDTLS_BUILTIN)/src/bignum_core.c \
-				$(MBEDTLS_BUILTIN)/src/bignum_mod.c
-		endif
-		ifneq ($(strip $(MBEDTLS_SRC_CRYPTO)),)
-			MBEDTLS_SRC += $(MBEDTLS_SRC_CRYPTO)
-		endif
 	endif
 endif
 
