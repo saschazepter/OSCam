@@ -1062,6 +1062,17 @@ if (OSCamOperatingSystem MATCHES "Windows/Cygwin")
 	set (CMAKE_EXE_LINKER_FLAGS "--enable-stdcall-fixup")
 endif (OSCamOperatingSystem MATCHES "Windows/Cygwin")
 
+# Drop unreferenced functions/data. Pairs with -ffunction-sections /
+# -fdata-sections set above. Matches the plain Makefile's default
+# LDFLAGS so both build systems produce comparably-sized binaries.
+# The Apple ld does not support --gc-sections; its equivalent is
+# -dead_strip.
+if (OSCamOperatingSystem MATCHES "Mac OS X")
+	set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-dead_strip")
+else ()
+	set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
+endif ()
+
 #----------------------- subdirectory list smargo ------------------------------
 
 if( HAVE_LIBRT OR HAVE_LIBRT_STATIC)
