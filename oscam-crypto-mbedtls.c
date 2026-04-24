@@ -57,6 +57,10 @@ int oscam_hash(oscam_hash_alg alg, const unsigned char *d1, size_t l1, const uns
 	if (!out)
 		return -1;
 
+#if !defined(WITH_LIB_SHA1) && !defined(WITH_LIB_SHA256)
+	(void)d1; (void)l1; (void)d2; (void)l2;
+#endif
+
 	switch (alg) {
 	case OSCAM_HASH_SHA1:
 #ifdef WITH_LIB_SHA1
