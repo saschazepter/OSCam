@@ -304,10 +304,9 @@ ifeq ($(USE_MBEDTLS),1)
 		$(wildcard $(MBEDTLS_TF_PSA)/platform/*.c))
 
 	# SSL/TLS/X.509 layer (mbedtls/library/) is only pulled in when USE_SSL=1.
+	# Includes ssl_tls13_*.c — TLS 1.3 is enabled in mbedtls-config.h.
 	ifeq ($(USE_SSL),1)
-		MBEDTLS_SRC += $(filter-out \
-			$(MBEDTLS_DIR)/library/ssl_tls13_%.c, \
-			$(wildcard $(MBEDTLS_DIR)/library/*.c))
+		MBEDTLS_SRC += $(wildcard $(MBEDTLS_DIR)/library/*.c)
 	endif
 endif
 
