@@ -68,12 +68,14 @@ int   oscam_mbedtls_snprintf(char *buf, size_t buflen, const char *fmt, ...);
 #define MBEDTLS_PLATFORM_DEV_RANDOM "/dev/urandom"
 
 /* ============================================================================
- *  Bignum  (required: oscam-crypto-mbedtls.c uses mbedtls_mpi_* directly
- *           because PSA has no equivalent public API)
+ *  Bignum
+ *
+ *  oscam-crypto-mbedtls.c uses mbedtls_mpi_* directly via
+ *  <mbedtls/private/bignum.h> because PSA has no equivalent public API.
+ *  In tf-psa-crypto 1.0+ the bignum module is a private implementation
+ *  detail and MBEDTLS_BIGNUM_C was removed — the symbols are always
+ *  linked in, there is nothing to toggle here.
  * ========================================================================== */
-#ifdef WITH_LIB_BIGNUM
-#define MBEDTLS_BIGNUM_C
-#endif
 
 /* ============================================================================
  *  PSA crypto: activate the builtin whitelist mechanism
