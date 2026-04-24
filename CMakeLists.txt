@@ -417,9 +417,9 @@ if (SECURITY_BACKEND STREQUAL "MBEDTLS")
 		if (WITH_SSL) # all sources (SSL+X.509 + full crypto)
 			message(STATUS "MbedTLS (full) will be built-in")
 			set(SECURITY_TYPE "ssl+crypto")
-			# library/ = SSL/TLS + X.509 (keep ssl_tls13_*, 4.x wires it up)
+			# library/ = SSL/TLS + X.509, including ssl_tls13_*.c
+			# (TLS 1.3 is enabled in mbedtls-config.h).
 			file(GLOB MBEDTLS_ALL "${MBEDTLS_DIR}/library/*.c")
-			list(FILTER MBEDTLS_ALL EXCLUDE REGEX "/ssl_tls13_.*\\.c$")
 			# tf-psa-crypto: crypto + PSA
 			file(GLOB TFPSA_BUILTIN "${MBEDTLS_BUILTIN}/src/*.c")
 			file(GLOB TFPSA_CORE    "${MBEDTLS_TF_PSA}/core/*.c")

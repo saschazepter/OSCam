@@ -46,15 +46,15 @@
 #define MBEDTLS_X509_CREATE_C
 
 /* ============================================================================
- *  TLS / SSL (TLS 1.2 only)
+ *  TLS / SSL (TLS 1.2 + TLS 1.3)
  * ========================================================================== */
 #define MBEDTLS_SSL_TLS_C
 #define MBEDTLS_SSL_SRV_C
 #define MBEDTLS_SSL_CLI_C
 #define MBEDTLS_SSL_PROTO_TLS1_2
-#undef  MBEDTLS_SSL_PROTO_TLS1_3
-#undef  MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_EPHEMERAL_ENABLED
-#undef  MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_PSK_EPHEMERAL_ENABLED
+#define MBEDTLS_SSL_PROTO_TLS1_3
+#define MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_EPHEMERAL_ENABLED
+#define MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_PSK_EPHEMERAL_ENABLED
 #define MBEDTLS_SSL_KEEP_PEER_CERTIFICATE
 #define MBEDTLS_SSL_MAX_CONTENT_LEN 4096
 #define MBEDTLS_SSL_TICKET_C
