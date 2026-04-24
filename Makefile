@@ -514,7 +514,9 @@ endif
 $(OSCAM_BIN).debug: $(OBJ)
 	$(SAY) "LINK	$@"
 	$(Q)$(CC) $(LDFLAGS) $(OBJ) $(LIBS) -o $@
+ifndef BUILD_TESTS
 	$(Q)$(SIGN_COMMAND_OSCAM)
+endif
 
 ifdef BUILD_TESTS
 # Tests: no strip/sign/upx — keep a plain unstripped ELF.
