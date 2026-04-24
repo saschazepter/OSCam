@@ -166,4 +166,20 @@ int   oscam_mbedtls_snprintf(char *buf, size_t buflen, const char *fmt, ...);
 #undef MBEDTLS_DEBUG_C
 //#define MBEDTLS_DEBUG_C
 
+/* ============================================================================
+ *  Toolchain workarounds
+ *
+ *  aesce.c (ARMv8-A AES Crypto Extensions accelerator) declares GCC 6.0
+ *  as its minimum, but the ghash NEON crypto intrinsics it uses —
+ *  vreinterpretq_u8_p128, vget_low_p64, vreinterpretq_p64_u8,
+ *  vmull_high_p64 — were only added to arm_neon.h in GCC 7. Building
+ *  with GCC 6.x on aarch64 (e.g. OE "pyro" 2017 toolchains) therefore
+ *  fails with "implicit declaration of function 'vreinterpretq_u8_p128'"
+ *  even though mbedtls' own check passes. Fall back to the generic AES
+ *  implementation on those toolchains.
+ * ========================================================================== */
+#if defined(__GNUC__) && !defined(__clang__) && (__GNUC__ < 7)
+#undef MBEDTLS_AESCE_C
+#endif
+
 #endif /* OSCAM_TF_PSA_CRYPTO_CONFIG_H */
