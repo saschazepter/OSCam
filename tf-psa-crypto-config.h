@@ -5,6 +5,15 @@
  * Platform and crypto-level overrides.  Included via
  * -DTF_PSA_CRYPTO_USER_CONFIG_FILE before the default crypto_config.h
  * is processed.
+ *
+ * Granularity follows oscam's own WITH_LIB_* feature matrix that
+ * config.sh derives from the enabled modules/readers — we only
+ * enable a PSA algorithm when the corresponding WITH_LIB_* is set.
+ * config.sh additionally force-enables those libs under WITH_SSL,
+ * so TLS builds automatically get MD5/SHA1/SHA256/AES/BIGNUM too.
+ *
+ * Everything else (RSA, ECC, HMAC, GCM, TLS KDFs, extra SHA sizes,
+ * …) is gated on WITH_SSL because TLS is the only consumer.
  */
 
 #ifndef OSCAM_TF_PSA_CRYPTO_CONFIG_H
@@ -45,23 +54,108 @@ int   oscam_mbedtls_snprintf(char *buf, size_t buflen, const char *fmt, ...);
 #undef MBEDTLS_PLATFORM_TIME_ALT
 #undef MBEDTLS_PLATFORM_GMTIME_R_ALT
 
-/* MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS is no longer set globally.
- * Hashes and AES use the PSA Crypto API; only oscam-crypto-mbedtls.c
- * still needs private access (for bignum) and defines the macro locally. */
-
 /* ============================================================================
  *  Entropy / RNG (mbedTLS 4.x: PSA provides entropy, no HARDWARE_ALT)
  * ========================================================================== */
 #define MBEDTLS_CTR_DRBG_C
 
-/* mbedTLS 4.x first tries the getrandom() syscall. On Linux kernels
- * < 3.17 (typical on STBs such as DM900, kernel 3.14) that returns
- * ENOSYS and mbedTLS falls back to fopen(MBEDTLS_PLATFORM_DEV_RANDOM) —
- * default /dev/random, which blocks forever when the embedded kernel
- * has no hardware entropy source. Route the fallback to /dev/urandom:
- * non-blocking and cryptographically sound after the kernel has seeded
- * its CSPRNG (always true by the time oscam runs). */
+/* On Linux kernels < 3.17 (typical on STBs such as DM900, kernel 3.14)
+ * getrandom() returns ENOSYS and mbedTLS falls back to
+ * MBEDTLS_PLATFORM_DEV_RANDOM (default /dev/random, blocks forever
+ * on embedded boards with no HW entropy source). Route the fallback
+ * to /dev/urandom: non-blocking and cryptographically sound after
+ * the kernel has seeded its CSPRNG. */
 #define MBEDTLS_PLATFORM_DEV_RANDOM "/dev/urandom"
+
+/* ============================================================================
+ *  Bignum  (required: oscam-crypto-mbedtls.c uses mbedtls_mpi_* directly
+ *           because PSA has no equivalent public API)
+ * ========================================================================== */
+#ifdef WITH_LIB_BIGNUM
+#define MBEDTLS_BIGNUM_C
+#endif
+
+/* ============================================================================
+ *  PSA crypto: activate the builtin whitelist mechanism
+ * ========================================================================== */
+#define MBEDTLS_PSA_CRYPTO_CONFIG
+
+/* Note: in tf-psa-crypto 4.x only PSA_WANT_* is user-settable.
+ * MBEDTLS_PSA_BUILTIN_* is derived internally and is explicitly
+ * rejected by tf_psa_crypto_config_check_user.h if defined here. */
+
+/* ----- Hash primitives, individually gated ----- */
+#ifdef WITH_LIB_MD5
+#define PSA_WANT_ALG_MD5                1
+#endif
+
+#ifdef WITH_LIB_SHA1
+#define PSA_WANT_ALG_SHA_1              1
+#endif
+
+#ifdef WITH_LIB_SHA256
+#define PSA_WANT_ALG_SHA_256            1
+#endif
+
+/* ----- Symmetric cipher (AES ECB + CBC) ----- */
+#ifdef WITH_LIB_AES
+#define PSA_WANT_KEY_TYPE_AES                   1
+#define PSA_WANT_ALG_ECB_NO_PADDING             1
+#define PSA_WANT_ALG_CBC_NO_PADDING             1
+#endif
+
+/* ============================================================================
+ *  SSL/TLS profile — adds RSA, ECC, ECDH(E), ECDSA, extra SHA sizes,
+ *  HMAC, GCM, TLS 1.2 KDFs
+ *
+ *  Note: config.sh already forces WITH_LIB_MD5, WITH_LIB_SHA1,
+ *  WITH_LIB_SHA256, WITH_LIB_AES and WITH_LIB_BIGNUM on whenever
+ *  WITH_SSL is set, so the core hash/cipher/bignum gates above
+ *  are guaranteed active here.
+ * ========================================================================== */
+#ifdef WITH_SSL
+
+/* Additional hashes used by TLS 1.2 cipher-suites / X.509 signatures */
+#define PSA_WANT_ALG_SHA_224                1
+#define PSA_WANT_ALG_SHA_384                1
+#define PSA_WANT_ALG_SHA_512                1
+
+/* MAC for TLS */
+#define PSA_WANT_ALG_HMAC                   1
+
+/* AEAD / GCM for modern TLS 1.2 suites */
+#define PSA_WANT_ALG_GCM                    1
+
+/* RSA (key exchange, PKCS#1 v1.5 and PSS for signatures) */
+#define PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_BASIC    1
+#define PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_IMPORT   1
+#define PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_EXPORT   1
+#define PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_GENERATE 1
+#define PSA_WANT_KEY_TYPE_RSA_PUBLIC_KEY        1
+#define PSA_WANT_ALG_RSA_PKCS1V15_CRYPT         1
+#define PSA_WANT_ALG_RSA_PKCS1V15_SIGN          1
+#define PSA_WANT_ALG_RSA_PSS                    1
+#define PSA_WANT_ALG_RSA_OAEP                   1
+
+/* ECC curves and algorithms (ECDHE-ECDSA / ECDHE-RSA) */
+#define PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_BASIC    1
+#define PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_IMPORT   1
+#define PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_EXPORT   1
+#define PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE 1
+#define PSA_WANT_KEY_TYPE_ECC_PUBLIC_KEY        1
+#define PSA_WANT_ALG_ECDH                       1
+#define PSA_WANT_ALG_ECDSA                      1
+#define PSA_WANT_ALG_DETERMINISTIC_ECDSA        1
+#define PSA_WANT_ECC_SECP_R1_256                1
+#define PSA_WANT_ECC_SECP_R1_384                1
+#define PSA_WANT_ECC_SECP_R1_521                1
+#define PSA_WANT_ECC_MONTGOMERY_255             1
+
+/* Key derivation used by TLS 1.2 */
+#define PSA_WANT_ALG_TLS12_PRF                  1
+#define PSA_WANT_ALG_TLS12_PSK_TO_MS            1
+
+#endif /* WITH_SSL */
 
 /* ============================================================================
  *  Disable features not needed by OSCam

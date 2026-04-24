@@ -4,10 +4,19 @@
  *
  * Crypto and platform settings are in tf-psa-crypto-config.h
  * (included via TF_PSA_CRYPTO_USER_CONFIG_FILE).
+ *
+ * This file is only meaningful for USE_SSL=1 builds. For a plain
+ * USE_MBEDTLS=1 (crypto-only) build, WITH_SSL is not defined and
+ * the SSL/TLS/X.509 layer is skipped entirely — the sources in
+ * mbedtls/library/ are already filtered out at the Makefile level.
  */
 
 #ifndef MBEDTLS_USER_CONFIG_H
 #define MBEDTLS_USER_CONFIG_H
+
+#include "config.h"
+
+#ifdef WITH_SSL
 
 /* ============================================================================
  *  ASN.1 / Utilities
@@ -54,5 +63,7 @@
 /* Key-exchange methods (TLS 1.2) */
 #define MBEDTLS_KEY_EXCHANGE_ECDHE_RSA_ENABLED
 #define MBEDTLS_KEY_EXCHANGE_ECDHE_ECDSA_ENABLED
+
+#endif /* WITH_SSL */
 
 #endif /* MBEDTLS_USER_CONFIG_H */
