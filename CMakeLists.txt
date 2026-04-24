@@ -414,63 +414,32 @@ if (SECURITY_BACKEND STREQUAL "MBEDTLS")
 
 		set(MBEDTLS_SRC_BASE "${CMAKE_CURRENT_SOURCE_DIR}/mbedtls_platform.c")
 
-		if (WITH_SSL) # all sources (SSL+X.509 + full crypto)
+		# tf-psa-crypto (crypto + PSA) is always needed whenever
+		# oscam-crypto-mbedtls.c references psa_hash_* / psa_cipher_* etc.
+		# — true in every USE_MBEDTLS build, with or without WITH_SSL.
+		# WITH_LIB_* feature selection is handled at compile time via
+		# PSA_WANT_* in tf-psa-crypto-config.h; individual driver files
+		# compile to near-empty objects when their algorithm is off.
+		file(GLOB TFPSA_BUILTIN "${MBEDTLS_BUILTIN}/src/*.c")
+		file(GLOB TFPSA_CORE    "${MBEDTLS_TF_PSA}/core/*.c")
+		file(GLOB TFPSA_UTILS   "${MBEDTLS_TF_PSA}/utilities/*.c")
+		file(GLOB TFPSA_EXTRAS  "${MBEDTLS_TF_PSA}/extras/*.c")
+		file(GLOB TFPSA_PLAT    "${MBEDTLS_TF_PSA}/platform/*.c")
+		# We provide our own calloc/free/printf in mbedtls_platform.c
+		list(FILTER TFPSA_PLAT EXCLUDE REGEX "/platform\\.c$")
+		list(FILTER TFPSA_PLAT EXCLUDE REGEX "/memory_buffer_alloc\\.c$")
+		set(MBEDTLS_SRC ${TFPSA_BUILTIN} ${TFPSA_CORE} ${TFPSA_UTILS} ${TFPSA_EXTRAS} ${TFPSA_PLAT})
+
+		if (WITH_SSL) # SSL/TLS/X.509 layer on top of crypto
 			message(STATUS "MbedTLS (full) will be built-in")
 			set(SECURITY_TYPE "ssl+crypto")
 			# library/ = SSL/TLS + X.509, including ssl_tls13_*.c
 			# (TLS 1.3 is enabled in mbedtls-config.h).
 			file(GLOB MBEDTLS_ALL "${MBEDTLS_DIR}/library/*.c")
-			# tf-psa-crypto: crypto + PSA
-			file(GLOB TFPSA_BUILTIN "${MBEDTLS_BUILTIN}/src/*.c")
-			file(GLOB TFPSA_CORE    "${MBEDTLS_TF_PSA}/core/*.c")
-			file(GLOB TFPSA_UTILS   "${MBEDTLS_TF_PSA}/utilities/*.c")
-			file(GLOB TFPSA_EXTRAS  "${MBEDTLS_TF_PSA}/extras/*.c")
-			file(GLOB TFPSA_PLAT    "${MBEDTLS_TF_PSA}/platform/*.c")
-			# We provide our own calloc/free/printf in mbedtls_platform.c
-			list(FILTER TFPSA_PLAT EXCLUDE REGEX "/platform\\.c$")
-			list(FILTER TFPSA_PLAT EXCLUDE REGEX "/memory_buffer_alloc\\.c$")
-			set(MBEDTLS_SRC ${MBEDTLS_ALL} ${TFPSA_BUILTIN} ${TFPSA_CORE} ${TFPSA_UTILS} ${TFPSA_EXTRAS} ${TFPSA_PLAT})
-		else() # sources files per library (crypto-only, no TLS)
+			list(APPEND MBEDTLS_SRC ${MBEDTLS_ALL})
+		else() # crypto-only, no TLS
 			message(STATUS "MbedTLS (light) will be built-in")
 			set(SECURITY_TYPE "crypto")
-			set(MBEDTLS_SRC_CRYPTO "")
-
-			execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled WITH_LIB_AES OUTPUT_VARIABLE WITH_LIB_AES OUTPUT_STRIP_TRAILING_WHITESPACE)
-			if ("${WITH_LIB_AES}" STREQUAL "Y")
-				list(APPEND MBEDTLS_SRC_CRYPTO
-					"${MBEDTLS_BUILTIN}/src/aes.c"
-					"${MBEDTLS_BUILTIN}/src/aesce.c"
-					"${MBEDTLS_BUILTIN}/src/aesni.c"
-				)
-			endif()
-
-			execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled WITH_LIB_MD5 OUTPUT_VARIABLE WITH_LIB_MD5 OUTPUT_STRIP_TRAILING_WHITESPACE)
-			if ("${WITH_LIB_MD5}" STREQUAL "Y")
-				list(APPEND MBEDTLS_SRC_CRYPTO "${MBEDTLS_BUILTIN}/src/md5.c")
-			endif()
-
-			execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled WITH_LIB_SHA1 OUTPUT_VARIABLE WITH_LIB_SHA1 OUTPUT_STRIP_TRAILING_WHITESPACE)
-			if ("${WITH_LIB_SHA1}" STREQUAL "Y")
-				list(APPEND MBEDTLS_SRC_CRYPTO "${MBEDTLS_BUILTIN}/src/sha1.c")
-			endif()
-
-			execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled WITH_LIB_SHA256 OUTPUT_VARIABLE WITH_LIB_SHA256 OUTPUT_STRIP_TRAILING_WHITESPACE)
-			if ("${WITH_LIB_SHA256}" STREQUAL "Y")
-				list(APPEND MBEDTLS_SRC_CRYPTO "${MBEDTLS_BUILTIN}/src/sha256.c")
-			endif()
-
-			execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled WITH_LIB_BIGNUM OUTPUT_VARIABLE WITH_LIB_BIGNUM OUTPUT_STRIP_TRAILING_WHITESPACE)
-			if ("${WITH_LIB_BIGNUM}" STREQUAL "Y")
-				list(APPEND MBEDTLS_SRC_CRYPTO
-					"${MBEDTLS_BUILTIN}/src/bignum.c"
-					"${MBEDTLS_BUILTIN}/src/bignum_core.c"
-					"${MBEDTLS_BUILTIN}/src/bignum_mod.c"
-				)
-			endif()
-
-			if (MBEDTLS_SRC_CRYPTO)
-				list(APPEND MBEDTLS_SRC ${MBEDTLS_SRC_CRYPTO})
-			endif()
 		endif()
 		add_library(mbedtls STATIC ${MBEDTLS_SRC_BASE} ${MBEDTLS_SRC})
 		# mbedtls_platform.c uses clock_gettime() which requires -lrt on older systems
