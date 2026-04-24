@@ -189,9 +189,12 @@ endif
 ifeq "$(LINKER_VER)" "20041121"
 	LDFLAGS :=
 endif
-# The OS X linker do not support --gc-sections
+# The OS X linker does not support --gc-sections. Its equivalent
+# is -dead_strip: strips symbols unreachable from the entry point,
+# pairs with the -ffunction-sections/-fdata-sections already set on
+# the compile side. Same net effect as GNU ld's --gc-sections.
 ifeq ($(uname_S),Darwin)
-	LDFLAGS :=
+	LDFLAGS := -Wl,-dead_strip
 endif
 
 # The compiler knows for what target it compiles, so use this information
