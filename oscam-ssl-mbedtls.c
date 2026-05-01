@@ -25,6 +25,7 @@
 #include "mbedtls/version.h"
 #include "mbedtls/asn1write.h"
 #include "mbedtls/private/rsa.h"
+#include "mbedtls/private/ecp.h"
 #include "psa/crypto.h"
 
 /* Opaque structs defined here (match header typedefs) */
@@ -839,34 +840,14 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *)pers, strlen(pers))) != 0)
 		goto cleanup;
 
-	/* Generate ECDSA P-256 key via PSA, import into PK context */
-	{
-		psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
-		mbedtls_svc_key_id_t key_id = MBEDTLS_SVC_KEY_ID_INIT;
-
-		psa_set_key_type(&attrs, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
-		psa_set_key_bits(&attrs, 256);
-		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_EXPORT);
-		psa_set_key_algorithm(&attrs, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
-
-		if (psa_generate_key(&attrs, &key_id) != PSA_SUCCESS) {
-			ret = MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
-			goto cleanup;
-		}
-
-		/* Export DER, parse into PK context, destroy PSA key */
-		unsigned char der_buf[256];
-		size_t der_len = 0;
-		psa_status_t st = psa_export_key(key_id, der_buf, sizeof(der_buf), &der_len);
-		psa_destroy_key(key_id);
-		if (st != PSA_SUCCESS || der_len == 0) {
-			ret = MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
-			goto cleanup;
-		}
-		ret = mbedtls_pk_parse_key(&key, der_buf, der_len, NULL, 0);
-		if (ret != 0)
-			goto cleanup;
-	}
+	/* Generate ECDSA P-256 key directly into the PK context */
+	ret = mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY));
+	if (ret != 0)
+		goto cleanup;
+	ret = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(key),
+							  mbedtls_ctr_drbg_random, &ctr_drbg);
+	if (ret != 0)
+		goto cleanup;
 
 	/* ---- CN = system nodename (hostname) ---- */
 	const char *cn = !uname(&buffer) ? buffer.nodename : "localhost";
