@@ -821,8 +821,8 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	mbedtls_entropy_context entropy;
 	mbedtls_ctr_drbg_context ctr_drbg;
 	unsigned char cert_buf[4096];
-	unsigned char key_buf[8192];  // larger buffer for 4096-bit RSA PEM
-	const char *pers = "oscam_selfsign_rsa";
+	unsigned char key_buf[1024];  // ECDSA P-256 PEM fits comfortably
+	const char *pers = "oscam_selfsign_ecdsa";
 	FILE *f = NULL;
 	char not_before[16], not_after[16];
 	time_t now = time(NULL);
@@ -839,15 +839,15 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, (const unsigned char *)pers, strlen(pers))) != 0)
 		goto cleanup;
 
-	/* ---- Generate RSA 4096-bit key via PSA, import into PK context ---- */
+	/* Generate ECDSA P-256 key via PSA, import into PK context */
 	{
 		psa_key_attributes_t attrs = PSA_KEY_ATTRIBUTES_INIT;
 		mbedtls_svc_key_id_t key_id = MBEDTLS_SVC_KEY_ID_INIT;
 
-		psa_set_key_type(&attrs, PSA_KEY_TYPE_RSA_KEY_PAIR);
-		psa_set_key_bits(&attrs, 4096);
+		psa_set_key_type(&attrs, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+		psa_set_key_bits(&attrs, 256);
 		psa_set_key_usage_flags(&attrs, PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_EXPORT);
-		psa_set_key_algorithm(&attrs, PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256));
+		psa_set_key_algorithm(&attrs, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
 
 		if (psa_generate_key(&attrs, &key_id) != PSA_SUCCESS) {
 			ret = MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
@@ -855,17 +855,15 @@ int oscam_ssl_generate_selfsigned(const char *path)
 		}
 
 		/* Export DER, parse into PK context, destroy PSA key */
-		unsigned char *der_buf = malloc(4096);
+		unsigned char der_buf[256];
 		size_t der_len = 0;
-		psa_status_t st = psa_export_key(key_id, der_buf, 4096, &der_len);
+		psa_status_t st = psa_export_key(key_id, der_buf, sizeof(der_buf), &der_len);
 		psa_destroy_key(key_id);
 		if (st != PSA_SUCCESS || der_len == 0) {
-			free(der_buf);
 			ret = MBEDTLS_ERR_PK_FEATURE_UNAVAILABLE;
 			goto cleanup;
 		}
 		ret = mbedtls_pk_parse_key(&key, der_buf, der_len, NULL, 0);
-		free(der_buf);
 		if (ret != 0)
 			goto cleanup;
 	}
