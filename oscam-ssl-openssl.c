@@ -22,6 +22,11 @@
 #include <openssl/pem.h>
 #include <openssl/bio.h>
 #include <openssl/opensslv.h>
+#include <openssl/opensslconf.h>
+#ifndef OPENSSL_NO_EC
+#include <openssl/ec.h>
+#include <openssl/obj_mac.h>
+#endif
 
 /* Some very old OpenSSL releases (0.9.8 / 1.0.0) don't define these.
  * Define them as 0 so SSL_CTX_set_options() still compiles. */
@@ -930,9 +935,8 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	EVP_PKEY *pkey = NULL;
 	X509 *crt = NULL;
 	FILE *f = NULL;
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
 	EVP_PKEY_CTX *kctx = NULL;
-#else
+#if defined(OPENSSL_NO_EC) && OPENSSL_VERSION_NUMBER < 0x30000000L
 	RSA *rsa = NULL;
 #endif
 
@@ -954,67 +958,76 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	 * KEY GENERATION
 	 * =============================================== */
 
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+#ifndef OPENSSL_NO_EC
 
-	/* ---- OpenSSL 3.x (modern API only) ---- */
+	/* ECDSA P-256 via EVP_PKEY_CTX paramgen+keygen (works on >=1.0.0) */
+	{
+		EVP_PKEY *params = NULL;
+		EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
+		if (!pctx)
+			goto cleanup;
+		if (EVP_PKEY_paramgen_init(pctx) <= 0 ||
+			EVP_PKEY_CTX_set_ec_paramgen_curve_nid(pctx, NID_X9_62_prime256v1) <= 0 ||
+			EVP_PKEY_paramgen(pctx, &params) <= 0)
+		{
+			EVP_PKEY_CTX_free(pctx);
+			goto cleanup;
+		}
+		EVP_PKEY_CTX_free(pctx);
+
+		kctx = EVP_PKEY_CTX_new(params, NULL);
+		EVP_PKEY_free(params);
+		if (!kctx)
+			goto cleanup;
+		if (EVP_PKEY_keygen_init(kctx) <= 0 ||
+			EVP_PKEY_keygen(kctx, &pkey) <= 0)
+			goto cleanup;
+		EVP_PKEY_CTX_free(kctx);
+		kctx = NULL;
+	}
+
+#elif OPENSSL_VERSION_NUMBER >= 0x30000000L
+
+	/* RSA-2048 fallback (no-ec build, OpenSSL 3.x) */
 	kctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
 	if (!kctx)
 		goto cleanup;
-
-	if (EVP_PKEY_keygen_init(kctx) <= 0)
+	if (EVP_PKEY_keygen_init(kctx) <= 0 ||
+		EVP_PKEY_CTX_set_rsa_keygen_bits(kctx, 2048) <= 0 ||
+		EVP_PKEY_keygen(kctx, &pkey) <= 0)
 		goto cleanup;
-	if (EVP_PKEY_CTX_set_rsa_keygen_bits(kctx, 4096) <= 0)
-		goto cleanup;
-	if (EVP_PKEY_keygen(kctx, &pkey) <= 0)
-		goto cleanup;
-
 	EVP_PKEY_CTX_free(kctx);
 	kctx = NULL;
 
-#else /* OPENSSL_VERSION_NUMBER < 0x30000000L */
+#else /* RSA-2048 fallback (no-ec build, legacy OpenSSL) */
 
-	/* ---- Legacy OpenSSL (<3.0) ----
-	 * Works on 0.9.8 .. 1.0.x .. 1.1.x
-	 */
-	BIGNUM *e = BN_new();
-	if (!e)
-		goto cleanup;
-
-	if (!BN_set_word(e, RSA_F4)) {
+	{
+		BIGNUM *e = BN_new();
+		if (!e)
+			goto cleanup;
+		if (!BN_set_word(e, RSA_F4)) {
+			BN_free(e);
+			goto cleanup;
+		}
+		rsa = RSA_new();
+		if (!rsa) {
+			BN_free(e);
+			goto cleanup;
+		}
+		if (!RSA_generate_key_ex(rsa, 2048, e, NULL)) {
+			BN_free(e);
+			goto cleanup;
+		}
 		BN_free(e);
-		goto cleanup;
-	}
-
-	rsa = RSA_new();
-	if (!rsa) {
-		BN_free(e);
-		goto cleanup;
-	}
-
-	if (!RSA_generate_key_ex(rsa, 4096, e, NULL)) {
-		BN_free(e);
-		goto cleanup;
-	}
-	BN_free(e);
-
-	if (!pkey) {
-		pkey = EVP_PKEY_new();
-		if (!pkey) {
+		if (!EVP_PKEY_assign_RSA(pkey, rsa)) {
 			RSA_free(rsa);
 			rsa = NULL;
 			goto cleanup;
 		}
+		rsa = NULL; /* ownership transferred to pkey */
 	}
 
-	if (!EVP_PKEY_assign_RSA(pkey, rsa)) {
-		RSA_free(rsa);
-		rsa = NULL;
-		goto cleanup;
-	}
-
-	rsa = NULL; /* ownership transferred to pkey */
-
-#endif /* OPENSSL_VERSION_NUMBER */
+#endif
 
 	/* ===============================================
 	 * CERTIFICATE BUILD
@@ -1198,9 +1211,8 @@ cleanup:
 	if (crt) X509_free(crt);
 	if (pkey) EVP_PKEY_free(pkey);
 
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
 	if (kctx) EVP_PKEY_CTX_free(kctx);
-#else
+#if defined(OPENSSL_NO_EC) && OPENSSL_VERSION_NUMBER < 0x30000000L
 	if (rsa) RSA_free(rsa);
 #endif
 
