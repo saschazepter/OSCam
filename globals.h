@@ -386,6 +386,12 @@
 #ifndef CS_TARGET
 # define CS_TARGET				"unknown"
 #endif
+#ifndef CS_BUILD_DATE
+# define CS_BUILD_DATE			"unknown"
+#endif
+#ifndef CS_BUILD_EPOCH
+# define CS_BUILD_EPOCH			0
+#endif
 #ifndef CS_CONFDIR
 #define CS_CONFDIR				"/usr/local/etc"
 #endif
