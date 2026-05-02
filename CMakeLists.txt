@@ -297,8 +297,8 @@ endif ((CONFIG_WITH_SIGNING MATCHES "Y" AND NOT WITH_SIGNING EQUAL 0) OR WITH_SI
 function(SIGN_COMMAND_OSCAM)
 	file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/signing)
 	add_custom_command(TARGET ${exe_name} POST_BUILD COMMAND sha256sum ${exe_name} | awk '{ print $$1 }' | tr -d '\\n' > ${SIGN_HASH}
-	                                                 COMMAND openssl x509 -pubkey -noout -in ${SIGN_CERT}         -out ${SIGN_PUBKEY}
-	                                                 COMMAND openssl dgst -sha256      -sign ${SIGN_PRIVKEY}      -out ${SIGN_DIGEST} ${SIGN_HASH}
+	                                                 COMMAND openssl x509 -pubkey -noout                 -in ${SIGN_CERT}    -out ${SIGN_PUBKEY}
+	                                                 COMMAND openssl dgst -sha256 -sigopt nonce-type:1 -sign ${SIGN_PRIVKEY} -out ${SIGN_DIGEST} ${SIGN_HASH} 2>/dev/null || openssl dgst -sha256 -sign ${SIGN_PRIVKEY} -out ${SIGN_DIGEST} ${SIGN_HASH}
 	                                                 COMMAND printf '[SIGN] SHA256\('\; ${STAT} -c %s ${SIGN_HASH} | tr -d '\\n'\; printf '\): '\; cat ${SIGN_HASH}\; printf ' -> '
 	                                                 COMMAND openssl dgst -sha256    -verify ${SIGN_PUBKEY} -signature ${SIGN_DIGEST} ${SIGN_HASH} | tr -d '\\n'
 	                                                 COMMAND test -f ${UPX_SPLIT_PREFIX}aa && cat ${UPX_SPLIT_PREFIX}aa > ${exe_name} || true
@@ -895,8 +895,13 @@ execute_process (COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --oscam-version C
 add_definitions ("-D'CS_VERSION=\"${CS_VERSION}\"'")
 execute_process (COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --oscam-commit COMMAND tr -d '\n' OUTPUT_VARIABLE CS_GIT_COMMIT)
 add_definitions ("-D'CS_GIT_COMMIT=\"${CS_GIT_COMMIT}\"'")
-string(TIMESTAMP CS_BUILD_DATE "%d.%m.%Y %H:%M:%S")
+execute_process (COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --oscam-epoch COMMAND tr -d '\n' OUTPUT_VARIABLE SOURCE_DATE_EPOCH)
+execute_process (COMMAND date -u -d @${SOURCE_DATE_EPOCH} "+%d.%m.%Y %H:%M:%S" OUTPUT_VARIABLE CS_BUILD_DATE OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if (NOT CS_BUILD_DATE)
+	execute_process (COMMAND date -u -r ${SOURCE_DATE_EPOCH} "+%d.%m.%Y %H:%M:%S" OUTPUT_VARIABLE CS_BUILD_DATE OUTPUT_STRIP_TRAILING_WHITESPACE)
+endif()
 add_definitions ("-D'CS_BUILD_DATE=\"${CS_BUILD_DATE}\"'")
+add_definitions ("-D'CS_BUILD_EPOCH=${SOURCE_DATE_EPOCH}'")
 
 execute_process(COMMAND ${CMAKE_C_COMPILER} -dumpmachine COMMAND tr -d '\n' OUTPUT_VARIABLE CS_TARGET)
 add_definitions ("-D'CS_TARGET=\"${CS_TARGET}\"'")
@@ -929,7 +934,7 @@ if (CMAKE_COMPILER_IS_GNUCC)
 	list(GET GCC_VERSION_COMPONENTS 0 GCC_MAJOR)
 	list(GET GCC_VERSION_COMPONENTS 0 GCC_MINOR)
 	add_definitions ("-W -Wall ")
-	set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -O2 -pipe -ffunction-sections -fdata-sections -fomit-frame-pointer -fno-schedule-insns")
+	set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -O2 -pipe -ffunction-sections -fdata-sections -fomit-frame-pointer -fno-schedule-insns -fdebug-prefix-map=${CMAKE_SOURCE_DIR}=.")
 	set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -O2")
 	set (CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O0 -ggdb")
 	set (CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0 -ggdb")
@@ -1063,7 +1068,9 @@ message (STATUS "  operating system: ${OSCamOperatingSystem}")
 message (STATUS "  target system: ${CS_TARGET}")
 message (STATUS "  revision: ${CS_VERSION}")
 message (STATUS "  commit: ${CS_GIT_COMMIT}")
-message (STATUS "  build date: ${CS_BUILD_DATE}")
+string (TIMESTAMP CS_COMPILE_DATE "%d.%m.%Y %H:%M:%S" UTC)
+message (STATUS "  build date:  ${CS_COMPILE_DATE}")
+message (STATUS "  source date: ${CS_BUILD_DATE}")
 if (USE_COMPRESS EQUAL 1)
 	message (STATUS "  packer: ${UPX_VER} (compression level ${COMP_LEVEL})")
 endif (USE_COMPRESS EQUAL 1)
