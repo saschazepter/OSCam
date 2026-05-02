@@ -4,9 +4,12 @@ SHELL = /bin/sh
 .SUFFIXES: .o .c
 .PHONY: all tests help README.build README.config simple default debug config menuconfig allyesconfig allnoconfig defconfig clean distclean submodules
 
-VER        := $(shell ./config.sh --oscam-version)
-GIT_SHA    := $(shell ./config.sh --oscam-commit)
-BUILD_DATE := $(shell date +"%d.%m.%Y %T")
+VER               := $(shell ./config.sh --oscam-version)
+GIT_SHA           := $(shell ./config.sh --oscam-commit)
+SOURCE_DATE_EPOCH := $(shell ./config.sh --oscam-epoch)
+COMPILE_DATE      := $(shell date +"%d.%m.%Y %T")
+BUILD_DATE        := $(shell date -u -d @$(SOURCE_DATE_EPOCH) +"%d.%m.%Y %T" 2>/dev/null \
+                     || date -u -r $(SOURCE_DATE_EPOCH) +"%d.%m.%Y %T")
 
 uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
 
@@ -54,6 +57,7 @@ override STD_LIBS := $(LIB_PTHREAD) $(LIB_DL)
 override STD_DEFS := -D'CS_VERSION="$(VER)"'
 override STD_DEFS += -D'CS_GIT_COMMIT="$(GIT_SHA)"'
 override STD_DEFS += -D'CS_BUILD_DATE="$(BUILD_DATE)"'
+override STD_DEFS += -D'CS_BUILD_EPOCH=$(SOURCE_DATE_EPOCH)'
 override STD_DEFS += -D'CS_CONFDIR="$(CONF_DIR)"'
 
 CC = $(CROSS_DIR)$(CROSS)gcc
@@ -75,6 +79,7 @@ ifneq (,$(findstring clang,$(CCVERSION)))
 else
 	CC_OPTS = -O2 -ggdb -pipe -ffunction-sections -fdata-sections -fomit-frame-pointer -fno-schedule-insns
 endif
+CC_OPTS += -fdebug-prefix-map=$(CURDIR)=.
 
 LDFLAGS = -Wl,--gc-sections
 
@@ -132,8 +137,8 @@ ifeq "$(shell ./config.sh --enabled WITH_SIGNING)" "Y"
 		override STD_DEFS += -DCERT_ALGO_$(shell ./config.sh --cert-info | head -n 5 | tail -n 1 | awk -F':|-' '{ print toupper($$2) }' | xargs)
 		SIGN_COMMAND_OSCAM += sha256sum $@ | awk '{ print $$1 }' | tr -d '\n' > $(SIGN_HASH);
 		SIGN_COMMAND_OSCAM += printf 'SIGN	SHA256('; $(STAT) -c %s $(SIGN_HASH) | tr -d '\n'; printf '): '; cat $(SIGN_HASH); printf ' -> ';
-		SIGN_COMMAND_OSCAM += $(SSL) x509 -pubkey -noout -in $(SIGN_CERT)         -out $(SIGN_PUBKEY);
-		SIGN_COMMAND_OSCAM += $(SSL) dgst -sha256      -sign $(SIGN_PRIVKEY)      -out $(SIGN_DIGEST) $(SIGN_HASH);
+		SIGN_COMMAND_OSCAM += $(SSL) x509 -pubkey -noout                 -in $(SIGN_CERT)    -out $(SIGN_PUBKEY);
+		SIGN_COMMAND_OSCAM += $(SSL) dgst -sha256 -sigopt nonce-type:1 -sign $(SIGN_PRIVKEY) -out $(SIGN_DIGEST) $(SIGN_HASH) 2>/dev/null || $(SSL) dgst -sha256 -sign $(SIGN_PRIVKEY) -out $(SIGN_DIGEST) $(SIGN_HASH);
 		SIGN_COMMAND_OSCAM += $(SSL) dgst -sha256    -verify $(SIGN_PUBKEY) -signature $(SIGN_DIGEST) $(SIGN_HASH) | tr -d '\n';
 		SIGN_COMMAND_OSCAM += [ -f $(UPX_SPLIT_PREFIX)aa ] && cat $(UPX_SPLIT_PREFIX)aa > $@;
 		SIGN_COMMAND_OSCAM += printf '$(SIGN_MARKER)' | cat - $(SIGN_DIGEST) >> $@;
@@ -476,7 +481,7 @@ all: submodules
 	@-printf "\
 +-------------------------------------------------------------------------------\n\
 | OSCam Ver.: $(VER) sha: $(GIT_SHA) target: $(TARGET)\n\
-| Build Date: $(BUILD_DATE)\n\
+| Build Date: $(COMPILE_DATE) (source: $(BUILD_DATE))\n\
 | Tools:\n\
 |  CROSS    = $(CROSS_DIR)$(CROSS)\n\
 |  CC       = $(CC)\n\

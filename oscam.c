@@ -988,37 +988,21 @@ bool boxname_is(const char *boxname)
 /* Checks if the date of the system is correct and waits if necessary. */
 static void init_check(void)
 {
-	char *ptr = __DATE__;
-	int32_t month, year = atoi(ptr + cs_strlen(ptr) - 4), day = atoi(ptr + 4);
-	if(day > 0 && day < 32 && year > 2010 && year < 9999)
+	if(CS_BUILD_EPOCH == 0) { return; }
+	time_t builddate = (time_t)CS_BUILD_EPOCH - 86400;
+	int32_t i = 0;
+	while(time((time_t *)0) < builddate)
 	{
-		struct tm timeinfo;
-		char months[12][4] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-		for(month = 0; month < 12; ++month)
+		if(i == 0) { cs_log("The current system time is smaller than the build date (%s). Waiting up to %d seconds for time to correct", CS_BUILD_DATE, cs_waittime); }
+		cs_sleepms(1000);
+		++i;
+		if(i > cs_waittime)
 		{
-			if(!strncmp(ptr, months[month], 3)) { break; }
+			cs_log("Waiting was not successful. OSCam will be started but is UNSUPPORTED this way. Do not report any errors with this version.");
+			break;
 		}
-		if(month > 11) { month = 0; }
-		memset(&timeinfo, 0, sizeof(timeinfo));
-		timeinfo.tm_mday = day;
-		timeinfo.tm_mon = month;
-		timeinfo.tm_year = year - 1900;
-		time_t builddate = mktime(&timeinfo) - 86400;
-		int32_t i = 0;
-		while(time((time_t *)0) < builddate)
-		{
-			if(i == 0) { cs_log("The current system time is smaller than the build date (%s). Waiting up to %d seconds for time to correct", ptr, cs_waittime); }
-			cs_sleepms(1000);
-			++i;
-			if(i > cs_waittime)
-			{
-				cs_log("Waiting was not successful. OSCam will be started but is UNSUPPORTED this way. Do not report any errors with this version.");
-				break;
-			}
-		}
-		// adjust login time of first client
-		if(i > 0) { first_client->login = time((time_t *)0); }
 	}
+	if(i > 0) { first_client->login = time((time_t *)0); }
 }
 
 #ifdef __linux__
