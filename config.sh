@@ -118,6 +118,7 @@ Usage: `basename $0` [parameters]
  -um, --upx-marker            Get Oscam binary upx marker.
  -v, --oscam-version          Display OSCam version.
  -c, --oscam-commit           Display OSCam GIT short commit sha 8-digits.
+ -t, --oscam-epoch            Unix timestamp of last git commit (SOURCE_DATE_EPOCH).
 
  -O, --detect-osx-sdk-version Find where OS X SDK is located
 
@@ -411,7 +412,7 @@ make_config_c() {
 		printf "const char *config_ssl = \"$($OPENSSL version | head -n 1 | awk -F'(' '{ print $1 }' | xargs)\";\n\n"
 		echo "const char *config_mak ="
 		printf "  \"\\\nCFG: strings FILE | sed -n 's/^CFG~//p' | openssl enc -d -base64 | gzip -d\\\n\"\n"
-		gzip -9 < $OBJDIR/config.mak | $OPENSSL enc -base64 | while read LINE
+		gzip -9n < $OBJDIR/config.mak | $OPENSSL enc -base64 | while read LINE
 		do
 			printf "  \"CFG~%s\\\\n\"\n" "$LINE"
 		done
@@ -955,8 +956,13 @@ do
 		break
 	;;
 	'-c'|'--oscam-commit')
-		sha=`git log 2>/dev/null | sed -n 1p | cut -d ' ' -f2 | cut -c1-8`
+		sha=`git log -1 --format=%h 2>/dev/null | cut -c1-8`
 		echo $sha
+		break
+	;;
+	'-t'|'--oscam-epoch')
+		epoch=`git log -1 --format=%ct 2>/dev/null`
+		echo ${epoch:-0}
 		break
 	;;
 	'-O'|'--detect-osx-sdk-version')
