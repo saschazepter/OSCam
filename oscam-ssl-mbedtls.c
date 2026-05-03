@@ -167,9 +167,11 @@ static int write_san_ext_and_attach(mbedtls_x509write_cert *crt, const char *cn)
 /* classify peer-abort alerts we want to silence in logs */
 static inline int is_benign_handshake_abort(int ret)
 {
-	return ret == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE /* -0x7780 */
-		|| ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY   /* -0x7880 */
-		|| ret == MBEDTLS_ERR_SSL_CONN_EOF;           /* -0x6100 */
+	return ret == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE   /* -0x7780 */
+		|| ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY     /* -0x7880 */
+		|| ret == MBEDTLS_ERR_SSL_CONN_EOF              /* -0x6100 */
+		|| ret == MBEDTLS_ERR_SSL_INVALID_RECORD        /* -0x7200, plain HTTP / port-scan */
+		|| ret == MBEDTLS_ERR_SSL_BAD_PROTOCOL_VERSION; /* -0x6F00, ancient client */
 }
 
 #if defined(MBEDTLS_DEBUG_C)
