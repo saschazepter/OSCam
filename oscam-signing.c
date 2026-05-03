@@ -127,18 +127,18 @@ static oscam_pk_context *verify_cert(void)
 	oscam_ssl_cert_serial_gets(crt, serial_hex, sizeof(serial_hex));
 	osi.cert_serial = cs_strdup(strtolower(serial_hex));
 
-	/* Fingerprint (SHA-1 of raw DER) */
+	/* Fingerprint (SHA-256 of raw DER) */
 	const unsigned char *der = NULL;
 	size_t der_len = 0;
 	oscam_ssl_cert_raw(crt, &der, &der_len);
 
 	if (der && der_len > 0)
 	{
-		unsigned char fp[SHA_DIGEST_LENGTH];
-		oscam_sha1(der, der_len, fp);
+		unsigned char fp[SHA256_DIGEST_LENGTH];
+		oscam_sha256(der, der_len, fp);
 
-		char fphex[2 * SHA_DIGEST_LENGTH + 1];
-		hex_encode(fp, fphex, SHA_DIGEST_LENGTH);
+		char fphex[2 * SHA256_DIGEST_LENGTH + 1];
+		hex_encode(fp, fphex, SHA256_DIGEST_LENGTH);
 		osi.cert_fingerprint = cs_strdup(strtolower(fphex));
 	}
 	else
