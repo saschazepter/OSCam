@@ -68,6 +68,12 @@ int   oscam_mbedtls_snprintf(char *buf, size_t buflen, const char *fmt, ...);
 #define MBEDTLS_PLATFORM_DEV_RANDOM "/dev/urandom"
 
 /* ============================================================================
+ *  Threading (PSA key store + ctr_drbg are shared across oscam threads)
+ * ========================================================================== */
+#define MBEDTLS_THREADING_C
+#define MBEDTLS_THREADING_PTHREAD
+
+/* ============================================================================
  *  Bignum
  *
  *  oscam-crypto-mbedtls.c uses mbedtls_mpi_* directly via
