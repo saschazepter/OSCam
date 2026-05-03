@@ -935,8 +935,10 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	EVP_PKEY *pkey = NULL;
 	X509 *crt = NULL;
 	FILE *f = NULL;
+#if OPENSSL_VERSION_NUMBER >= 0x10000000L
 	EVP_PKEY_CTX *kctx = NULL;
-#if defined(OPENSSL_NO_EC) && OPENSSL_VERSION_NUMBER < 0x30000000L
+#endif
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
 	RSA *rsa = NULL;
 #endif
 
@@ -958,9 +960,9 @@ int oscam_ssl_generate_selfsigned(const char *path)
 	 * KEY GENERATION
 	 * =============================================== */
 
-#ifndef OPENSSL_NO_EC
+#if !defined(OPENSSL_NO_EC) && OPENSSL_VERSION_NUMBER >= 0x10000000L
 
-	/* ECDSA P-256 via EVP_PKEY_CTX paramgen+keygen (works on >=1.0.0) */
+	/* ECDSA P-256 via EVP_PKEY_CTX paramgen+keygen (OpenSSL >= 1.0.0) */
 	{
 		EVP_PKEY *params = NULL;
 		EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
@@ -1211,8 +1213,10 @@ cleanup:
 	if (crt) X509_free(crt);
 	if (pkey) EVP_PKEY_free(pkey);
 
+#if OPENSSL_VERSION_NUMBER >= 0x10000000L
 	if (kctx) EVP_PKEY_CTX_free(kctx);
-#if defined(OPENSSL_NO_EC) && OPENSSL_VERSION_NUMBER < 0x30000000L
+#endif
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
 	if (rsa) RSA_free(rsa);
 #endif
 
