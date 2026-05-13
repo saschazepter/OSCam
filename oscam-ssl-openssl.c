@@ -333,17 +333,126 @@ int oscam_ssl_conf_use_own_cert_pem(oscam_ssl_conf_t *conf,
 }
 
 /* SSL connection */
+/* classify peer-abort cases we want to silence in logs */
+static inline int oscam_ssl_is_benign_accept_fail(int sslerr, int saved_errno, unsigned long sslreason)
+{
+	if (sslerr == SSL_ERROR_ZERO_RETURN)
+		return 1;
+	if (sslerr == SSL_ERROR_SYSCALL && (saved_errno == ECONNRESET || saved_errno == EPIPE || saved_errno == 0))
+		return 1;
+	if (sslerr == SSL_ERROR_SSL) {
+		int r = ERR_GET_REASON(sslreason);
+		/* malformed input from the peer */
+#ifdef SSL_R_HTTP_REQUEST
+		if (r == SSL_R_HTTP_REQUEST) return 1;
+#endif
+#ifdef SSL_R_HTTPS_PROXY_REQUEST
+		if (r == SSL_R_HTTPS_PROXY_REQUEST) return 1;
+#endif
+#ifdef SSL_R_WRONG_VERSION_NUMBER
+		if (r == SSL_R_WRONG_VERSION_NUMBER) return 1;
+#endif
+#ifdef SSL_R_UNSUPPORTED_PROTOCOL
+		if (r == SSL_R_UNSUPPORTED_PROTOCOL) return 1;
+#endif
+#ifdef SSL_R_UNKNOWN_PROTOCOL
+		if (r == SSL_R_UNKNOWN_PROTOCOL) return 1;
+#endif
+#ifdef SSL_R_UNEXPECTED_RECORD
+		if (r == SSL_R_UNEXPECTED_RECORD) return 1;
+#endif
+		/* TLS fatal alerts sent by the peer — peer's decision,
+		 * not our problem (typically: self-signed cert rejected).
+		 * OpenSSL 4 mixed-renamed these from SSL_R_TLSV1_ALERT_* to
+		 * SSL_R_TLS_ALERT_*; check both spellings so we cover every
+		 * release from 0.9.x through 4.x. */
+#ifdef SSL_R_TLSV1_ALERT_CERTIFICATE_UNKNOWN
+		if (r == SSL_R_TLSV1_ALERT_CERTIFICATE_UNKNOWN) return 1;
+#endif
+#ifdef SSL_R_TLS_ALERT_CERTIFICATE_UNKNOWN
+		if (r == SSL_R_TLS_ALERT_CERTIFICATE_UNKNOWN) return 1;
+#endif
+#ifdef SSL_R_TLSV1_ALERT_UNKNOWN_CA
+		if (r == SSL_R_TLSV1_ALERT_UNKNOWN_CA) return 1;
+#endif
+#ifdef SSL_R_TLS_ALERT_UNKNOWN_CA
+		if (r == SSL_R_TLS_ALERT_UNKNOWN_CA) return 1;
+#endif
+#ifdef SSL_R_TLSV1_ALERT_BAD_CERTIFICATE
+		if (r == SSL_R_TLSV1_ALERT_BAD_CERTIFICATE) return 1;
+#endif
+#ifdef SSL_R_TLS_ALERT_BAD_CERTIFICATE
+		if (r == SSL_R_TLS_ALERT_BAD_CERTIFICATE) return 1;
+#endif
+#ifdef SSL_R_TLSV1_ALERT_CERTIFICATE_EXPIRED
+		if (r == SSL_R_TLSV1_ALERT_CERTIFICATE_EXPIRED) return 1;
+#endif
+#ifdef SSL_R_TLS_ALERT_CERTIFICATE_EXPIRED
+		if (r == SSL_R_TLS_ALERT_CERTIFICATE_EXPIRED) return 1;
+#endif
+#ifdef SSL_R_TLSV1_ALERT_CERTIFICATE_REVOKED
+		if (r == SSL_R_TLSV1_ALERT_CERTIFICATE_REVOKED) return 1;
+#endif
+#ifdef SSL_R_TLS_ALERT_CERTIFICATE_REVOKED
+		if (r == SSL_R_TLS_ALERT_CERTIFICATE_REVOKED) return 1;
+#endif
+#ifdef SSL_R_TLSV1_ALERT_UNSUPPORTED_CERTIFICATE
+		if (r == SSL_R_TLSV1_ALERT_UNSUPPORTED_CERTIFICATE) return 1;
+#endif
+#ifdef SSL_R_TLS_ALERT_UNSUPPORTED_CERTIFICATE
+		if (r == SSL_R_TLS_ALERT_UNSUPPORTED_CERTIFICATE) return 1;
+#endif
+#ifdef SSL_R_TLSV1_ALERT_USER_CANCELLED
+		if (r == SSL_R_TLSV1_ALERT_USER_CANCELLED) return 1;
+#endif
+#ifdef SSL_R_TLS_ALERT_USER_CANCELLED
+		if (r == SSL_R_TLS_ALERT_USER_CANCELLED) return 1;
+#endif
+#ifdef SSL_R_TLSV1_ALERT_ACCESS_DENIED
+		if (r == SSL_R_TLSV1_ALERT_ACCESS_DENIED) return 1;
+#endif
+#ifdef SSL_R_TLS_ALERT_ACCESS_DENIED
+		if (r == SSL_R_TLS_ALERT_ACCESS_DENIED) return 1;
+#endif
+#ifdef SSL_R_TLSV1_ALERT_DECODE_ERROR
+		if (r == SSL_R_TLSV1_ALERT_DECODE_ERROR) return 1;
+#endif
+#ifdef SSL_R_TLS_ALERT_DECODE_ERROR
+		if (r == SSL_R_TLS_ALERT_DECODE_ERROR) return 1;
+#endif
+	}
+	return 0;
+}
+
 oscam_ssl_t *oscam_ssl_new(oscam_ssl_conf_t *conf, int fd)
 {
 	oscam_ssl_t *ssl = calloc(1, sizeof(*ssl));
 	if (!ssl) return NULL;
 
 	ssl->ssl = SSL_new(conf->ctx);
+	if (!ssl->ssl) {
+		cs_log("SSL: SSL_new() failed");
+		free(ssl);
+		return NULL;
+	}
 	ssl->fd = fd;
 	SSL_set_fd(ssl->ssl, fd);
 
 	int ret = SSL_accept(ssl->ssl);
 	if (ret <= 0) {
+		int sslerr = SSL_get_error(ssl->ssl, ret);
+		int saved_errno = errno;
+		unsigned long sslreason = ERR_peek_last_error();
+
+		if (oscam_ssl_is_benign_accept_fail(sslerr, saved_errno, sslreason)) {
+			cs_debug_mask(D_CLIENT, "SSL: benign peer abort during accept (e=%d errno=%d)", sslerr, saved_errno);
+		} else {
+			char buf[160] = {0};
+			if (sslreason) ERR_error_string_n(sslreason, buf, sizeof(buf));
+			cs_log("SSL: handshake failed (e=%d errno=%d: %s)",
+				sslerr, saved_errno, buf[0] ? buf : "no detail");
+		}
+		ERR_clear_error();
 		SSL_free(ssl->ssl);
 		free(ssl);
 		return NULL;
@@ -420,8 +529,12 @@ int oscam_ssl_get_peer_cn(oscam_ssl_t *ssl, char *out, size_t outlen)
 	int idx = X509_NAME_get_index_by_NID(subj, NID_commonName, -1);
 	if (idx < 0) { X509_free(peer); return OSCAM_SSL_ERR; }
 
-	X509_NAME_ENTRY *e = X509_NAME_get_entry(subj, idx);
-	ASN1_STRING     *cn = X509_NAME_ENTRY_get_data(e);
+	/* OpenSSL <3.0 returns non-const; OpenSSL >=3.0 returns const.
+	 * Cast away to silence -Wdiscarded-qualifiers on the new headers
+	 * and keep ASN1_STRING_to_UTF8() happy on the pre-1.1.0 headers
+	 * (where its second parameter was non-const). */
+	X509_NAME_ENTRY *e = (X509_NAME_ENTRY *)X509_NAME_get_entry(subj, idx);
+	ASN1_STRING     *cn = (ASN1_STRING *)X509_NAME_ENTRY_get_data(e);
 	unsigned char *utf8 = NULL;
 
 	int len = ASN1_STRING_to_UTF8(&utf8, cn);
