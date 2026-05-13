@@ -10139,7 +10139,6 @@ static void *http_server(void *UNUSED(d))
 				if(conn->ssl == NULL)
 				{
 					close(s);
-					cs_log("WebIf: Error calling SSL_new().");
 					continue;
 				}
 			}
