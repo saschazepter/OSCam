@@ -343,6 +343,7 @@ static const struct config_list global_opts[] =
 	DEF_OPT_UINT32("netprio"                       , OFS(netprio)                       , 0),
 	DEF_OPT_INT32("sleep"                          , OFS(tosleep)                       , 0),
 	DEF_OPT_INT32("unlockparental"                 , OFS(ulparent)                      , 0),
+	DEF_OPT_SSTR("dateformat"                      , OFS(dateformat)                    , "%Y-%m-%d %H:%M:%S", SIZEOF(dateformat)),
 	DEF_OPT_INT32("nice"                           , OFS(nice)                          , 99),
 	DEF_OPT_INT32("maxlogsize"                     , OFS(max_log_size)                  , 10),
 	DEF_OPT_INT8("waitforcards"                    , OFS(waitforcards)                  , 1),

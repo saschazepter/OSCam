@@ -6,6 +6,8 @@ int64_t comp_timebus(struct timeb *tpa, struct timeb *tpb);
 time_t cs_timegm(struct tm *tm);
 struct tm *cs_gmtime_r(const time_t *timep, struct tm *r);
 char *cs_ctime_r(const time_t *timep, char *buf);
+char *cs_format_time(time_t t, char *buf, size_t len);
+char *cs_format_date(time_t t, char *buf, size_t len);
 void cs_ftime(struct timeb *tp);
 void cs_ftimeus(struct timeb *tp);
 void cs_sleepms(uint32_t msec);
