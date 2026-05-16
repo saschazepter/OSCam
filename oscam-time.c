@@ -165,6 +165,34 @@ void cs_ftimeus(struct timeb *tp)
 	tp->millitm = tv.tv_usec;
 }
 
+char *cs_format_time(time_t t, char *buf, size_t len)
+{
+	struct tm st;
+	localtime_r(&t, &st);
+	const char *fmt = cfg.dateformat[0] ? cfg.dateformat : "%Y-%m-%d %H:%M:%S";
+	if(strftime(buf, len, fmt, &st) == 0)
+	{
+		strftime(buf, len, "%Y-%m-%d %H:%M:%S", &st);
+	}
+	return buf;
+}
+
+char *cs_format_date(time_t t, char *buf, size_t len)
+{
+	struct tm st;
+	localtime_r(&t, &st);
+	char datefmt[33];
+	snprintf(datefmt, sizeof(datefmt), "%s", cfg.dateformat[0] ? cfg.dateformat : "%Y-%m-%d %H:%M:%S");
+	char *sp = strchr(datefmt, ' ');
+	if(sp) { *sp = '\0'; }
+	if(strftime(buf, len, datefmt, &st) == 0)
+	{
+		strftime(buf, len, "%Y-%m-%d", &st);
+	}
+	return buf;
+}
+
+
 void cs_sleepms(uint32_t msec)
 {
 	// does not interfere with signals like sleep and usleep do
