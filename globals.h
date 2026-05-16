@@ -2233,6 +2233,7 @@ struct s_config
 	CAIDVALUETAB	ftimeouttab;
 	uint32_t		cmaxidle;
 	int32_t			ulparent;
+	char			dateformat[33];
 	uint32_t		delay;
 	int32_t			bindwait;
 	int32_t			tosleep;
