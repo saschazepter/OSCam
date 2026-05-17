@@ -4,6 +4,8 @@ cmake_minimum_required(VERSION 2.8.12...3.10)
 
 project (OSCam C)
 
+#----------------------- cmake policies to use ------------
+
 cmake_policy(SET CMP0003 NEW)
 if(POLICY CMP0042)
   cmake_policy(SET CMP0042 NEW)
@@ -11,22 +13,6 @@ endif()
 if(POLICY CMP0054)
   cmake_policy(SET CMP0054 NEW)
 endif()
-
-#----------------------- static link options ------------------------------
-# Declare the optional static-link flags as cache variables so that setting
-# them via -D does not produce "Manually-specified variables were not used"
-# warnings when the corresponding feature (HAVE_*) is disabled. Declared
-# here (before system detection) so they don't override the macOS-specific
-# set(STATIC_LIBUSB True) further down.
-
-option (STATIC_PCSC       "Link libpcsclite statically" OFF)
-option (STATIC_LIBUSB     "Link libusb statically"      OFF)
-option (STATIC_LIBCRYPTO  "Link libcrypto statically"   OFF)
-option (STATIC_SSL        "Link libssl statically"      OFF)
-option (STATIC_LIBDVBCSA  "Link libdvbcsa statically"   OFF)
-
-set (LIBCRYPTO_LIB "" CACHE STRING "Full path to libcrypto (overrides detection)")
-set (SSL_LIB       "" CACHE STRING "Full path to libssl (overrides detection)")
 
 #----------------------- detect system ------------------------------
 
@@ -117,7 +103,6 @@ set (OPTIONAL_INCLUDE_DIR "" CACHE STRING "Some optional include directories")
 if (OSCamOperatingSystem MATCHES "Windows/Cygwin")
 	include_directories (
 		${CMAKE_CURRENT_SOURCE_DIR}/csctapi
-		${CMAKE_CURRENT_SOURCE_DIR}/cscrypt
 		${CMAKE_CURRENT_SOURCE_DIR}/minilzo
 		${CMAKE_CURRENT_SOURCE_DIR}/extapi/cygwin
 		/usr/include/w32api
@@ -126,7 +111,6 @@ if (OSCamOperatingSystem MATCHES "Windows/Cygwin")
 else (OSCamOperatingSystem MATCHES "Windows/Cygwin")
 	include_directories (
 		${CMAKE_CURRENT_SOURCE_DIR}/csctapi
-		${CMAKE_CURRENT_SOURCE_DIR}/cscrypt
 		${CMAKE_CURRENT_SOURCE_DIR}/minilzo
 		${OPTIONAL_INCLUDE_DIR}
 		)
@@ -146,6 +130,39 @@ else (OSCamOperatingSystem MATCHES "Windows/Cygwin")
 endif (OSCamOperatingSystem MATCHES "Windows/Cygwin")
 
 #----------------------- global options ------------------------------
+
+# security backend support: can be overridden via -DUSE_OPENSSL=1
+option(USE_OPENSSL  "Enable OpenSSL backend" OFF)
+option(WITH_OPENSSL "Enable OpenSSL backend" OFF)
+
+if (WITH_OPENSSL AND NOT USE_OPENSSL)
+	set(USE_OPENSSL ON CACHE BOOL "Enable OpenSSL backend" FORCE)
+endif()
+
+if (USE_OPENSSL)
+	set(SECURITY_BACKEND "OPENSSL")
+	set(USE_LIBCRYPTO TRUE)
+else()
+	set(SECURITY_BACKEND "MBEDTLS")
+endif ()
+
+message(STATUS "Selecting security backend: ${SECURITY_BACKEND}")
+
+if (SECURITY_BACKEND STREQUAL "OPENSSL")
+	add_definitions(-DWITH_OPENSSL=1)
+elseif(SECURITY_BACKEND STREQUAL "MBEDTLS")
+	add_definitions(-DWITH_MBEDTLS=1)
+	set (mbedtls "mbedtls")
+else()
+	message(FATAL_ERROR "Invalid SECURITY_BACKEND ${SECURITY_BACKEND}")
+endif ()
+
+option(USE_SSL  "Enable SSL support" OFF)
+option(WITH_SSL "Enable SSL support" OFF)
+
+if (USE_SSL)
+	set(WITH_SSL ON CACHE BOOL "Enable SSL support" FORCE)
+endif()
 
 if (OSCamOperatingSystem MATCHES "Linux")
 	set (DEFAULT_CS_CONFDIR "/usr/local/etc")
@@ -222,11 +239,12 @@ add_definitions ("-DCS_CONFDIR=\"${CS_CONFDIR}\"")
 #----------------------- git submodule support ------------------------------
 
 execute_process(
-	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --submodule
+	COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --use-flags "USE_${SECURITY_BACKEND}" --submodule
 	WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
-# upx compression
+#----------------------- upx compression ------------------------------
+
 execute_process (COMMAND upx --version RESULT_VARIABLE UPX_RET ERROR_QUIET COMMAND head -n 1 OUTPUT_VARIABLE UPX_VER OUTPUT_STRIP_TRAILING_WHITESPACE)
 set(COMP_LEVEL "--best" CACHE STRING "${COMP_LEVEL}")
 
@@ -246,7 +264,8 @@ else (NOT USE_COMPRESS OR USE_COMPRESS EQUAL 0)
 	message (STATUS "COMPRESSION is added by You, upx compress binary after compiling")
 endif (NOT USE_COMPRESS OR USE_COMPRESS EQUAL 0)
 
-# binary signing
+#----------------------- binary signing ------------------------------
+
 find_program(STAT NAMES gnustat)
 find_program(STAT NAMES stat)
 find_program(SPLIT NAMES gsplit)
@@ -307,7 +326,8 @@ function(SIGN_COMMAND_OSCAM)
 	                                                 COMMAND printf ' <- DIGEST\('\; ${STAT} -c %s ${SIGN_DIGEST} | tr -d '\\n'\; printf '\)\\n'
 	)
 endfunction()
-#----------------------- subdirectories ------------------------------
+
+#----------------------- config options ------------------------------
 
 include (CheckIncludeFile)
 
@@ -319,62 +339,138 @@ elseif (HAVE_PTHREAD)
 	message(STATUS "  no pthread found. No smartreader ")
 endif (HAVE_PTHREAD)
 
-if (NOT DEFINED HAVE_LIBCRYPTO)
-	if (NOT WITH_SSL EQUAL 1)
-		set (HAVE_LIBCRYPTO 0)
-		message (STATUS "  libcrypto not requested (use -DWITH_SSL=1 or -DHAVE_LIBCRYPTO=1)")
-	endif (NOT WITH_SSL EQUAL 1)
-endif (NOT DEFINED HAVE_LIBCRYPTO)
+if (SECURITY_BACKEND STREQUAL "OPENSSL")
+	check_include_file ("openssl/aes.h" HAVE_LIBCRYPTO)
+	if (HAVE_LIBCRYPTO)
+		add_definitions ("-DWITH_LIBCRYPTO=1")
+		set (USE_LIBCRYPTO "USE_LIBCRYPTO")
+		set(SECURITY_TYPE "crypto")
+	else (HAVE_LIBCRYPTO)
+		message (STATUS " LIBCRYTO NOT FOUND OR DISABLED NO SSL SUPPORT POSSIBLE")
+	endif (HAVE_LIBCRYPTO)
+endif ()
 
-check_include_file ("openssl/aes.h" HAVE_LIBCRYPTO)
-if (HAVE_LIBCRYPTO)
-	add_definitions ("-DWITH_LIBCRYPTO=1")
-	set (USE_LIBCRYPTO "USE_LIBCRYPTO")
-else (HAVE_LIBCRYPTO)
-	message (STATUS " LIBCRYTO NOT FOUND OR DISABLED NO SSL SUPPORT POSSIBLE")
-endif (HAVE_LIBCRYPTO)
-
-if (WITH_SSL EQUAL 1)
-	message (STATUS " ssl is added by You compiling with ssl included")
-else ()
+execute_process (COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled WITH_SSL OUTPUT_VARIABLE CONFIG_WITH_SSL OUTPUT_STRIP_TRAILING_WHITESPACE)
+if (CONFIG_WITH_SSL MATCHES "N" AND WITH_SSL EQUAL 1)
+	message ( STATUS " ssl is added by You compiling with ssl included")
+elseif (CONFIG_WITH_SSL MATCHES "Y" AND WITH_SSL EQUAL 1)
+	message (STATUS " ssl is added by You but it was already enabled by config file")
+elseif (CONFIG_WITH_SSL MATCHES "N" AND NOT WITH_SSL EQUAL 1)
 	message (STATUS " SSL IS NOT INCLUDED IN THIS COMPILATION")
-endif (WITH_SSL EQUAL 1)
+endif (CONFIG_WITH_SSL MATCHES "N" AND WITH_SSL EQUAL 1)
 
 if (WITH_SSL EQUAL 1)
 	add_definitions ("-DWITH_SSL")
 endif (WITH_SSL EQUAL 1)
 
-if (HAVE_LIBCRYPTO)
-	if (STATIC_LIBCRYPTO EQUAL 1 OR STATIC_SSL EQUAL 1)
-		set(OPENSSL_USE_STATIC_LIBS TRUE)
-	endif (STATIC_LIBCRYPTO EQUAL 1 OR STATIC_SSL EQUAL 1)
+# MbedTLS 4.x: library/ = TLS+X.509, tf-psa-crypto/ = crypto (sub-tree of the
+# official release tarball). We fetch the tarball pinned via mbedtls/version.conf
+# instead of using a git submodule — the release tarball already ships tf-psa-crypto,
+# the framework sub-tree and all pre-generated source files, so no Python, Perl,
+# jsonschema or jinja2 are needed at build time.
+if (SECURITY_BACKEND STREQUAL "MBEDTLS")
+	execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --show-enabled libraries WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} OUTPUT_VARIABLE CONFIG_ENABLED_LIBS OUTPUT_STRIP_TRAILING_WHITESPACE)
+	set (MBEDTLS_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/mbedtls")
+	set (MBEDTLS_TF_PSA  "${MBEDTLS_DIR}/tf-psa-crypto")
+	set (MBEDTLS_BUILTIN "${MBEDTLS_TF_PSA}/drivers/builtin")
+
+	# Fetch/extract the mbedTLS release tarball (idempotent: skipped if the
+	# pinned version is already extracted).
+	execute_process(
+		COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --mbedtls-fetch
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+		RESULT_VARIABLE _MBEDTLS_FETCH_RC
+	)
+	if (NOT _MBEDTLS_FETCH_RC EQUAL 0)
+		message(FATAL_ERROR "Failed to fetch mbedTLS tarball (rc=${_MBEDTLS_FETCH_RC}). Check mbedtls/version.conf and network access.")
+	endif()
+
+	if (NOT "${CONFIG_ENABLED_LIBS}" STREQUAL "")
+		include_directories("${MBEDTLS_DIR}/include")
+		include_directories("${MBEDTLS_DIR}/library")
+		include_directories("${MBEDTLS_TF_PSA}/include")
+		include_directories("${MBEDTLS_TF_PSA}/core")
+		include_directories("${MBEDTLS_TF_PSA}/extras")
+		include_directories("${MBEDTLS_BUILTIN}/include")
+		include_directories("${MBEDTLS_BUILTIN}/src")
+		include_directories("${MBEDTLS_TF_PSA}/utilities")
+		include_directories("${MBEDTLS_TF_PSA}/dispatch")
+		include_directories("${MBEDTLS_TF_PSA}/platform")
+		include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
+		add_definitions (
+			"-DTF_PSA_CRYPTO_USER_CONFIG_FILE=\"tf-psa-crypto-config.h\""
+			"-DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\""
+		)
+
+		# get version
+		set(MBEDTLS_BUILD_INFO "${MBEDTLS_DIR}/include/mbedtls/build_info.h")
+		set(MBEDTLS_VERSION_STRING "n.a.")
+		if (EXISTS "${MBEDTLS_BUILD_INFO}")
+			file(STRINGS "${MBEDTLS_BUILD_INFO}" MBEDTLS_VERSION_LINE REGEX "^#define MBEDTLS_VERSION_STRING_FULL")
+			if (MBEDTLS_VERSION_LINE)
+				string(REGEX REPLACE ".*\"(.*)\".*" "\\1" MBEDTLS_VERSION_STRING "${MBEDTLS_VERSION_LINE}")
+			endif()
+		endif()
+
+		set(MBEDTLS_SRC_BASE "${CMAKE_CURRENT_SOURCE_DIR}/mbedtls_platform.c")
+
+		# tf-psa-crypto (crypto + PSA) is always needed whenever
+		# oscam-crypto-mbedtls.c references psa_hash_* / psa_cipher_* etc.
+		# — true in every USE_MBEDTLS build, with or without WITH_SSL.
+		# WITH_LIB_* feature selection is handled at compile time via
+		# PSA_WANT_* in tf-psa-crypto-config.h; individual driver files
+		# compile to near-empty objects when their algorithm is off.
+		file(GLOB TFPSA_BUILTIN "${MBEDTLS_BUILTIN}/src/*.c")
+		file(GLOB TFPSA_CORE    "${MBEDTLS_TF_PSA}/core/*.c")
+		file(GLOB TFPSA_UTILS   "${MBEDTLS_TF_PSA}/utilities/*.c")
+		file(GLOB TFPSA_EXTRAS  "${MBEDTLS_TF_PSA}/extras/*.c")
+		file(GLOB TFPSA_PLAT    "${MBEDTLS_TF_PSA}/platform/*.c")
+		# We provide our own calloc/free/printf in mbedtls_platform.c
+		list(FILTER TFPSA_PLAT EXCLUDE REGEX "/platform\\.c$")
+		list(FILTER TFPSA_PLAT EXCLUDE REGEX "/memory_buffer_alloc\\.c$")
+		set(MBEDTLS_SRC ${TFPSA_BUILTIN} ${TFPSA_CORE} ${TFPSA_UTILS} ${TFPSA_EXTRAS} ${TFPSA_PLAT})
+
+		if (WITH_SSL) # SSL/TLS/X.509 layer on top of crypto
+			message(STATUS "MbedTLS (full) will be built-in")
+			set(SECURITY_TYPE "ssl+crypto")
+			# library/ = SSL/TLS + X.509, including ssl_tls13_*.c
+			# (TLS 1.3 is enabled in mbedtls-config.h).
+			file(GLOB MBEDTLS_ALL "${MBEDTLS_DIR}/library/*.c")
+			list(APPEND MBEDTLS_SRC ${MBEDTLS_ALL})
+		else() # crypto-only, no TLS
+			message(STATUS "MbedTLS (light) will be built-in")
+			set(SECURITY_TYPE "crypto")
+		endif()
+		add_library(mbedtls STATIC ${MBEDTLS_SRC_BASE} ${MBEDTLS_SRC})
+		# mbedtls_platform.c uses clock_gettime() which requires -lrt on older systems
+		if (NOT OSCamOperatingSystem MATCHES "Mac OS X")
+			target_link_libraries(mbedtls rt)
+		endif ()
+	else()
+		message(FATAL_ERROR "MbedTLS headers not found at ${MBEDTLS_DIR}/include — required for MbedTLS build!")
+	endif ()
+endif ()
+
+# OpenSSL
+if (SECURITY_BACKEND STREQUAL "OPENSSL")
 	find_package(OpenSSL)
 	if (OPENSSL_FOUND AND HAVE_LIBCRYPTO)
 		include_directories(${OPENSSL_INCLUDE_DIR})
 		message(STATUS "  OpenSSL found. Using header files located at ${OPENSSL_INCLUDE_DIR}.")
-		if (LIBCRYPTO_LIB)
-			set (OPENSSL_CRYPTO_LIBRARIES ${LIBCRYPTO_LIB})
-			message(STATUS "  libcrypto override (${LIBCRYPTO_LIB})")
-		elseif (STATIC_LIBCRYPTO EQUAL 1)
-			find_library (LIBCRYPTO_STATIC NAMES libcrypto.a HINTS ${OPENSSL_INCLUDE_DIR}/../lib ${OPENSSL_INCLUDE_DIR}/../../lib)
-			if (LIBCRYPTO_STATIC)
-				set (OPENSSL_CRYPTO_LIBRARIES ${LIBCRYPTO_STATIC})
-				message(STATUS "  static libcrypto found (${LIBCRYPTO_STATIC})")
-			endif (LIBCRYPTO_STATIC)
-		endif (LIBCRYPTO_LIB)
 		if (WITH_SSL EQUAL 1)
 			set(USE_SSL "USE_SSL")
-			if (SSL_LIB)
-				set (OPENSSL_SSL_LIBRARIES ${SSL_LIB})
-				message(STATUS "  libssl override (${SSL_LIB})")
-			elseif (STATIC_SSL EQUAL 1)
-				find_library (LIBSSL_STATIC NAMES libssl.a HINTS ${OPENSSL_INCLUDE_DIR}/../lib ${OPENSSL_INCLUDE_DIR}/../../lib)
-				if (LIBSSL_STATIC)
-					set (OPENSSL_SSL_LIBRARIES ${LIBSSL_STATIC})
-					message(STATUS "  static libssl found (${LIBSSL_STATIC})")
-				endif (LIBSSL_STATIC)
-			endif (SSL_LIB)
+			set(SECURITY_TYPE "ssl+crypto")
 		endif (WITH_SSL EQUAL 1)
+		if (NOT OPENSSL_VERSION)
+			file(READ "${OPENSSL_INCLUDE_DIR}/openssl/opensslv.h" _ver_header)
+			string(REGEX MATCH "#[ \t]*define[ \t]+OPENSSL_VERSION_TEXT[ \t]+\"OpenSSL[ \t]+([0-9]+\\.[0-9]+\\.[0-9]+)" _match "${_ver_header}")
+			if (_match)
+				set(OPENSSL_VERSION "${CMAKE_MATCH_1}")
+			else()
+				set(OPENSSL_VERSION "n.a.")
+			endif()
+		endif()
+		set(OPENSSL_VERSION_STRING "OpenSSL ${OPENSSL_VERSION}")
 	else (OPENSSL_FOUND AND HAVE_LIBCRYPTO)
 		message(STATUS "SSL REQUESTED BUT OPENSSL or LYBCRYPTO NOT FOUND !!")
 		if (WITH_SSL)
@@ -382,7 +478,7 @@ if (HAVE_LIBCRYPTO)
 			set (WITH_SSL "0")
 		endif (WITH_SSL)
 	endif (OPENSSL_FOUND AND HAVE_LIBCRYPTO)
-endif (HAVE_LIBCRYPTO)
+endif ()
 
 if (NOT OSCamOperatingSystem MATCHES "Mac OS X")
 	if (LIBRTDIR)
@@ -438,11 +534,6 @@ else (NOT OSCamOperatingSystem MATCHES "Mac OS X")
 	set (HAVE_LIBRT True)
 endif (NOT OSCamOperatingSystem MATCHES "Mac OS X")
 
-
-if (NOT DEFINED HAVE_LIBUSB)
-	set (HAVE_LIBUSB 0)
-	message (STATUS "  libusb not requested (-DHAVE_LIBUSB=1 to enable)")
-endif (NOT DEFINED HAVE_LIBUSB)
 
 if( HAVE_LIBRT OR HAVE_LIBRT_STATIC)
 	if (LIBUSBDIR)
@@ -520,84 +611,39 @@ if( HAVE_LIBRT OR HAVE_LIBRT_STATIC)
 	endif (LIBUSBDIR)
 endif( HAVE_LIBRT OR HAVE_LIBRT_STATIC)
 
+check_include_file ("PCSC/wintypes.h" HAVE_PCSC)
 if (HAVE_PCSC)
-	if (PCSCDIR)
-		check_include_file ("${PCSCDIR}/include/PCSC/wintypes.h" HAVE_PCSC)
-		if (HAVE_PCSC)
-			if (STATIC_PCSC EQUAL 1 AND EXISTS ${PCSCDIR}/lib/libpcsclite.a)
-				message(STATUS "  static PCSC found (${PCSCDIR}/lib/libpcsclite.a). Adding PCSC support ")
-				add_definitions ("-DWITH_PCSC=1")
-				add_definitions ("-I${PCSCDIR}/include/PCSC")
-				set (USE_PCSC "USE_PCSC")
-				add_library(imp_pcsclite STATIC IMPORTED)
-				set_property(TARGET imp_pcsclite PROPERTY IMPORTED_LOCATION ${PCSCDIR}/lib/libpcsclite.a)
-				set (STATICPCSC True)
-			elseif (NOT STATIC_PCSC OR STATIC_PCSC EQUAL 0)
-				set (CMAKE_FIND_ROOT_PATH ${PCSCDIR})
-				find_library (PCSCLITE_LIBRARY NAMES pcsclite)
-				message(STATUS "  PCSC found (${PCSCLITE_LIBRARY}). Adding PCSC support ")
-				add_definitions ("-DWITH_PCSC=1")
-				add_definitions ("-I${PCSCDIR}/include/PCSC")
-				set (USE_PCSC "USE_PCSC")
-				add_library(imp_pcsclite SHARED IMPORTED)
-				set_property(TARGET imp_pcsclite PROPERTY IMPORTED_LOCATION ${PCSCLITE_LIBRARY})
-				set (STATICPCSC False)
-			endif (STATIC_PCSC EQUAL 1 AND EXISTS ${PCSCDIR}/lib/libpcsclite.a)
-		else (HAVE_PCSC)
-			message(STATUS "  PCSC headers not found in ${PCSCDIR}. No PCSC support ")
-		endif (HAVE_PCSC)
-	else (PCSCDIR)
-		check_include_file ("PCSC/wintypes.h" HAVE_PCSC)
-		if (HAVE_PCSC)
-			FIND_PATH (PCSC_PATH PCSC/wintypes.h)
-			if(OPTIONAL_INCLUDE_DIR AND EXISTS ${OPTIONAL_INCLUDE_DIR}/PCSC/wintypes.h)
-				message(STATUS "  PCSC headers found (${OPTIONAL_INCLUDE_DIR}/PCSC). Adding PCSC support ")
-				add_definitions ("-DWITH_PCSC=1")
-				add_definitions ("-I${OPTIONAL_INCLUDE_DIR}/PCSC")
-				set (USE_PCSC "USE_PCSC")
-			elseif (EXISTS ${PCSC_PATH}/PCSC/wintypes.h AND NOT OPTIONAL_INCLUDE_DIR)
-				message(STATUS "  PCSC headers found (${PCSC_PATH}/PCSC). Adding PCSC support ")
-				add_definitions ("-DWITH_PCSC=1")
-				add_definitions ("-I${PCSC_PATH}/PCSC")
-				set (USE_PCSC "USE_PCSC")
-			else (OPTIONAL_INCLUDE_DIR AND EXISTS ${OPTIONAL_INCLUDE_DIR}/PCSC/wintypes.h)
-				if (NOT OSCamOperatingSystem MATCHES "Mac OS X")
-					set (HAVE_PCSC False)
-					if(OPTIONAL_INCLUDE_DIR)
-						message(STATUS "  PCSC headers not found (not in /usr/include/PCSC or /usr/local/include/PCSC or ${OPTIONAL_INCLUDE_DIR}/PCSC). No PCSC support ")
-					else(OPTIONAL_INCLUDE_DIR)
-						message(STATUS "  PCSC headers not found (not in /usr/include/PCSC or /usr/local/include/PCSC). No PCSC support ")
-					endif(OPTIONAL_INCLUDE_DIR)
-				endif (NOT OSCamOperatingSystem MATCHES "Mac OS X")
-			endif(OPTIONAL_INCLUDE_DIR AND EXISTS ${OPTIONAL_INCLUDE_DIR}/PCSC/wintypes.h)
-			if (OSCamOperatingSystem MATCHES "Mac OS X" AND NOT HAVE_PCSC EQUAL 0)
-				set (USE_PCSC "USE_PCSC")
-				set (HAVE_PCSC "1")
-			endif (OSCamOperatingSystem MATCHES "Mac OS X" AND NOT HAVE_PCSC EQUAL 0)
-			if (HAVE_PCSC AND STATIC_PCSC EQUAL 1)
-				find_library (PCSCLITE_STATIC_LIBRARY NAMES libpcsclite.a)
-				if (PCSCLITE_STATIC_LIBRARY)
-					message(STATUS "  static PCSC found (${PCSCLITE_STATIC_LIBRARY}). Using static PCSC ")
-					add_library(imp_pcsclite STATIC IMPORTED)
-					set_property(TARGET imp_pcsclite PROPERTY IMPORTED_LOCATION ${PCSCLITE_STATIC_LIBRARY})
-					set (STATICPCSC True)
-				else (PCSCLITE_STATIC_LIBRARY)
-					message(STATUS "  static PCSC requested but libpcsclite.a not found. Using dynamic ")
-					set (STATICPCSC False)
-				endif (PCSCLITE_STATIC_LIBRARY)
-			endif (HAVE_PCSC AND STATIC_PCSC EQUAL 1)
-		else (HAVE_PCSC)
-			if (OSCamOperatingSystem MATCHES "Windows/Cygwin")
-				add_definitions ("-Icygwin")
-				set (HAVE_PCSC "1")
-				set (USE_PCSC "USE_PCSC")
-			endif (OSCamOperatingSystem MATCHES "Windows/Cygwin")
-		endif (HAVE_PCSC)
-	endif (PCSCDIR)
+	FIND_PATH (PCSC_PATH PCSC/wintypes.h)
+	if(OPTIONAL_INCLUDE_DIR AND EXISTS ${OPTIONAL_INCLUDE_DIR}/PCSC/wintypes.h)
+		message(STATUS "  PCSC headers found (${OPTIONAL_INCLUDE_DIR}/PCSC). Adding PCSC support ")
+		add_definitions ("-DWITH_PCSC=1")
+		add_definitions ("-I${OPTIONAL_INCLUDE_DIR}/PCSC")
+		set (USE_PCSC "USE_PCSC")
+	elseif (EXISTS ${PCSC_PATH}/PCSC/wintypes.h AND NOT OPTIONAL_INCLUDE_DIR)
+		message(STATUS "  PCSC headers found (${PCSC_PATH}/PCSC). Adding PCSC support ")
+		add_definitions ("-DWITH_PCSC=1")
+		add_definitions ("-I${PCSC_PATH}/PCSC")
+		set (USE_PCSC "USE_PCSC")
+	else (OPTIONAL_INCLUDE_DIR AND EXISTS ${OPTIONAL_INCLUDE_DIR}/PCSC/wintypes.h)
+		if (NOT OSCamOperatingSystem MATCHES "Mac OS X")
+			set (HAVE_PCSC False)
+			if(OPTIONAL_INCLUDE_DIR)
+				message(STATUS "  PCSC headers not found (not in /usr/include/PCSC or /usr/local/include/PCSC or ${OPTIONAL_INCLUDE_DIR}/PCSC). No PCSC support ")
+			else(OPTIONAL_INCLUDE_DIR)
+				message(STATUS "  PCSC headers not found (not in /usr/include/PCSC or /usr/local/include/PCSC). No PCSC support ")
+			endif(OPTIONAL_INCLUDE_DIR)
+		endif (NOT OSCamOperatingSystem MATCHES "Mac OS X")
+	endif(OPTIONAL_INCLUDE_DIR AND EXISTS ${OPTIONAL_INCLUDE_DIR}/PCSC/wintypes.h)
+	if (OSCamOperatingSystem MATCHES "Mac OS X" AND NOT HAVE_PCSC EQUAL 0)
+		set (USE_PCSC "USE_PCSC")
+		set (HAVE_PCSC "1")
+	endif (OSCamOperatingSystem MATCHES "Mac OS X" AND NOT HAVE_PCSC EQUAL 0)
 else (HAVE_PCSC)
-	if (NOT DEFINED HAVE_PCSC)
-		message (STATUS "  PCSC not requested (-DHAVE_PCSC=1 to enable)")
-	endif (NOT DEFINED HAVE_PCSC)
+	if (OSCamOperatingSystem MATCHES "Windows/Cygwin")
+		add_definitions ("-Icygwin")
+		set (HAVE_PCSC "1")
+		set (USE_PCSC "USE_PCSC")
+	endif (OSCamOperatingSystem MATCHES "Windows/Cygwin")
 endif (HAVE_PCSC)
 
 execute_process (COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled MODULE_STREAMRELAY OUTPUT_VARIABLE CONFIG_STREAMRELAY OUTPUT_STRIP_TRAILING_WHITESPACE)
@@ -665,9 +711,9 @@ execute_process (COMMAND make --no-print-directory --quiet -C ${CMAKE_CURRENT_SO
 
 add_subdirectory (csctapi)
 add_subdirectory (minilzo)
-add_subdirectory (cscrypt)
 
 #----------------------- file groups ------------------------------
+
 execute_process (COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled MODULE_CAMD33 OUTPUT_VARIABLE CAMD33 OUTPUT_STRIP_TRAILING_WHITESPACE)
 if (CAMD33 MATCHES "N")
 set (CAMD_33 "module-camd33*")
@@ -697,7 +743,7 @@ file (GLOB exe_hdrs "globals.h")
 file (GLOB all_srcs ${csmodules_srcs} ${csreaders_srcs} ${csoscam_srcs} ${exe_srcs})
 endif (OSCamOperatingSystem MATCHES "Mac OS X")
 
-# Add wiki pages if WEBIF_WIKI is enabled (applies to both platforms)
+# Add wiki pages if WEBIF_WIKI is enabled
 execute_process (COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled WEBIF_WIKI OUTPUT_VARIABLE CONFIG_WEBIF_WIKI OUTPUT_STRIP_TRAILING_WHITESPACE)
 if (CONFIG_WEBIF_WIKI MATCHES "Y" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/webif/pages_wiki.c")
 	list (APPEND csmodules_srcs "${CMAKE_CURRENT_SOURCE_DIR}/webif/pages_wiki.c")
@@ -732,6 +778,15 @@ if (BUILD_TESTS)
 	list (APPEND csoscam_srcs "${CMAKE_CURRENT_SOURCE_DIR}/tests.c")
 	add_definitions ("-DBUILD_TESTS=1")
 endif (BUILD_TESTS)
+if (NOT WITH_SSL)
+	list(REMOVE_ITEM csoscam_srcs "${CMAKE_SOURCE_DIR}/oscam-ssl-mbedtls.c" "${CMAKE_SOURCE_DIR}/oscam-ssl-openssl.c")
+	list(REMOVE_ITEM csoscam_hdrs "${CMAKE_SOURCE_DIR}/oscam-ssl.h")
+endif ()
+if (SECURITY_BACKEND STREQUAL "MBEDTLS")
+	list(REMOVE_ITEM csoscam_srcs "${CMAKE_SOURCE_DIR}/oscam-crypto-openssl.c" "${CMAKE_SOURCE_DIR}/oscam-ssl-openssl.c")
+elseif (SECURITY_BACKEND STREQUAL "OPENSSL")
+	list(REMOVE_ITEM csoscam_srcs "${CMAKE_SOURCE_DIR}/oscam-crypto-mbedtls.c" "${CMAKE_SOURCE_DIR}/oscam-ssl-mbedtls.c")
+endif ()
 
 add_library (${csoscam} STATIC ${csoscam_srcs} ${csoscam_hdrs})
 
@@ -746,9 +801,9 @@ else ()
 endif ()
 add_executable (${exe_name} ${exe_srcs} ${exe_hdrs})
 if (OSCamOperatingSystem MATCHES "Mac OS X")
-	target_link_libraries (${exe_name} ${csoscam} ${csmodules} ${csreaders} csctapi cscrypt minilzo)
+	target_link_libraries (${exe_name} ${csoscam} ${csmodules} ${csreaders} csctapi $<$<STREQUAL:${SECURITY_BACKEND},MBEDTLS>:mbedtls> minilzo)
 else (OSCamOperatingSystem MATCHES "Mac OS X")
-	target_link_libraries (${exe_name} -Wl,--start-group ${csoscam} ${csmodules} ${csreaders} csctapi cscrypt -Wl,--end-group minilzo)
+	target_link_libraries (${exe_name} -Wl,--start-group ${csoscam} ${csmodules} ${csreaders} csctapi $<$<STREQUAL:${SECURITY_BACKEND},MBEDTLS>:mbedtls> -Wl,--end-group minilzo)
 endif (OSCamOperatingSystem MATCHES "Mac OS X")
 if (BUILD_TESTS)
 	# Test binary stays plain: no sign/upx — see Makefile rationale.
@@ -811,22 +866,26 @@ if (HAVE_PTHREAD)
 	set (pthread_link "pthread")
 endif (HAVE_PTHREAD)
 
-if (WITH_SSL)
-	target_link_libraries (${exe_name} "${OPENSSL_SSL_LIBRARIES}")
-endif (WITH_SSL)
+if (SECURITY_BACKEND STREQUAL "OPENSSL")
+	if (WITH_SSL)
+		target_link_libraries (${exe_name} "${OPENSSL_SSL_LIBRARIES}")
+	endif (WITH_SSL)
 
-if (HAVE_LIBCRYPTO)
-	target_link_libraries (${exe_name} "${OPENSSL_CRYPTO_LIBRARIES}")
-endif (HAVE_LIBCRYPTO)
+	if (HAVE_LIBCRYPTO)
+		target_link_libraries (${exe_name} "${OPENSSL_CRYPTO_LIBRARIES}")
+	endif (HAVE_LIBCRYPTO)
+endif ()
+
+# some systems need libm for the nagra cak7 functions to work
+check_include_file("math.h" HAVE_LIBM)
+if(HAVE_LIBM)
+	target_link_libraries (${exe_name} m)
+endif(HAVE_LIBM)
 
 if (HAVE_PCSC)
 if (NOT OSCamOperatingSystem MATCHES "Mac OS X")
 if (NOT OSCamOperatingSystem MATCHES "Windows/Cygwin")
-	if (PCSCDIR OR STATICPCSC)
-		target_link_libraries (${exe_name} imp_pcsclite)
-	else (PCSCDIR OR STATICPCSC)
-		target_link_libraries (${exe_name} pcsclite)
-	endif (PCSCDIR OR STATICPCSC)
+	target_link_libraries (${exe_name} pcsclite)
 endif (NOT OSCamOperatingSystem MATCHES "Windows/Cygwin")
 endif (NOT OSCamOperatingSystem MATCHES "Mac OS X")
 endif (HAVE_PCSC)
@@ -908,7 +967,9 @@ if (CONFIG_WITH_ARM_NEON MATCHES "Y" AND NOT WITH_ARM_NEON EQUAL 0)
 elseif (CONFIG_WITH_ARM_NEON MATCHES "Y" AND NOT WITH_ARM_NEON EQUAL 0)
 	message (STATUS  " The config file has WITH_ARM_NEON enabled, but You disabled it by you cmake command COMPILING WHITOUT arm neon optimization")
 endif (CONFIG_WITH_ARM_NEON MATCHES "Y" AND NOT WITH_ARM_NEON EQUAL 0)
+
 #----------------------- global compile and link options ------------------------------
+
 #enable sse2 on x86, neon on arm
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -msse -msse2 -msse3")
@@ -930,6 +991,11 @@ if (CMAKE_COMPILER_IS_GNUCC)
 	list(GET GCC_VERSION_COMPONENTS 0 GCC_MINOR)
 	add_definitions ("-W -Wall ")
 	set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -O2 -pipe -ffunction-sections -fdata-sections -fomit-frame-pointer -fno-schedule-insns")
+	if (GCC_MAJOR LESS 5)
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu99")
+	elseif (GCC_MAJOR LESS 11)
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu11")
+	endif()
 	set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -O2")
 	set (CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O0 -ggdb")
 	set (CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0 -ggdb")
@@ -996,6 +1062,17 @@ if (OSCamOperatingSystem MATCHES "Windows/Cygwin")
 	set (CMAKE_EXE_LINKER_FLAGS "--enable-stdcall-fixup")
 endif (OSCamOperatingSystem MATCHES "Windows/Cygwin")
 
+# Drop unreferenced functions/data. Pairs with -ffunction-sections /
+# -fdata-sections set above. Matches the plain Makefile's default
+# LDFLAGS so both build systems produce comparably-sized binaries.
+# The Apple ld does not support --gc-sections; its equivalent is
+# -dead_strip.
+if (OSCamOperatingSystem MATCHES "Mac OS X")
+	set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-dead_strip")
+else ()
+	set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
+endif ()
+
 #----------------------- subdirectory list smargo ------------------------------
 
 if( HAVE_LIBRT OR HAVE_LIBRT_STATIC)
@@ -1003,8 +1080,6 @@ if( HAVE_LIBRT OR HAVE_LIBRT_STATIC)
 		add_subdirectory (utils)
 	endif (HAVE_LIBUSB)
 endif( HAVE_LIBRT OR HAVE_LIBRT_STATIC)
-
-#--------------------------------------------------------------------------------
 
 #----------------------- installation -----------------------------
 
@@ -1064,67 +1139,65 @@ message (STATUS "  target system: ${CS_TARGET}")
 message (STATUS "  revision: ${CS_VERSION}")
 message (STATUS "  commit: ${CS_GIT_COMMIT}")
 message (STATUS "  build date: ${CS_BUILD_DATE}")
+if (SECURITY_BACKEND STREQUAL "MBEDTLS" AND (WITH_SSL OR NOT "${MBEDTLS_SRC_CRYPTO}" STREQUAL ""))
+	message (STATUS "  ${SECURITY_TYPE}: ${MBEDTLS_VERSION_STRING} (built-in)")
+elseif (SECURITY_BACKEND STREQUAL "OPENSSL" AND (WITH_SSL OR HAVE_LIBCRYPTO))
+	message (STATUS "  ${SECURITY_TYPE}: ${OPENSSL_VERSION_STRING}")
+endif()
 if (USE_COMPRESS EQUAL 1)
 	message (STATUS "  packer: ${UPX_VER} (compression level ${COMP_LEVEL})")
 endif (USE_COMPRESS EQUAL 1)
 if (WITH_SIGNING EQUAL 1)
 	message (STATUS "  signing: ${SIGN_PUBALGO}, ${SIGN_PUBBIT}, ${SIGN_SIGALGO},\n\t      Valid ${SIGN_VALID}, ${SIGN_SUBJECT}")
 endif (WITH_SIGNING EQUAL 1)
-if (HAVE_LIBCRYPTO)
-	if (STATIC_LIBCRYPTO EQUAL 1)
-		message (STATUS "  use static libcrypto functions")
-	else (STATIC_LIBCRYPTO EQUAL 1)
+if (SECURITY_BACKEND STREQUAL "OPENSSL")
+	if (HAVE_LIBCRYPTO)
 		message (STATUS "  use system libcrypto functions")
-	endif (STATIC_LIBCRYPTO EQUAL 1)
-	if (WITH_SSL AND STATIC_SSL EQUAL 1)
-		message (STATUS "  use static libssl functions")
-	elseif (WITH_SSL)
-		message (STATUS "  use system libssl functions")
-	endif (WITH_SSL AND STATIC_SSL EQUAL 1)
-else (HAVE_LIBCRYPTO)
-	message (STATUS "  use built-in crypt functions")
-endif (HAVE_LIBCRYPTO)
+	else (HAVE_LIBCRYPTO)
+		message (STATUS "  use built-in crypt functions")
+	endif (HAVE_LIBCRYPTO)
+endif ()
 if (HAVE_PCSC)
-	if (PCSCDIR)
-		if (STATICPCSC)
-			message (STATUS "  use static pcsc from selected PCSCDIR functions")
-		else (STATICPCSC)
-			message (STATUS "  use system pcsc from selected PCSCDIR functions")
-		endif (STATICPCSC)
-	elseif (STATICPCSC)
-		message (STATUS "  use static pcsc functions")
-	else (PCSCDIR)
-		message (STATUS "  use system pcsc functions")
-	endif (PCSCDIR)
+	message (STATUS "  use system pcsc functions")
 endif (HAVE_PCSC)
 if (HAVE_PTHREAD)
 	message (STATUS "  use system pthread functions")
 endif (HAVE_PTHREAD)
 if (HAVE_LIBUSB)
-	if (LIBUSBDIR)
-		if (STATICLIBUSB)
-			message (STATUS "  use static libusb from selected LIBUSBDIR functions")
-		else (STATICLIBUSB)
-			message (STATUS "  use system libusb from selected LIBUSBDIR functions")
-		endif (STATICLIBUSB)
-	elseif (STATICLIBUSB)
+	if(STATIC_LIBUSB EQUAL 1)
+		message (STATUS "  You selected to enable static libusb")
+	endif(STATIC_LIBUSB EQUAL 1)
+	if(STATICLIBUSB AND NOT LIBUSBDIR)
 		message (STATUS "  use static libusb functions")
-	else (LIBUSBDIR)
-		message (STATUS "  use system libusb functions")
-	endif (LIBUSBDIR)
+	else(STATICLIBUSB AND NOT LIBUSBDIR)
+		if (LIBUSBDIR AND STATIC_LIBUSB EQUAL 0)
+			message(STATUS "  use system libusb from selected LIBUSBDIR functions")
+		elseif (LIBUSBDIR AND STATIC_LIBUSB EQUAL 1)
+			message(STATUS "  use static libusb from selected LIBUSBDIR functions")
+		elseif(LIBUSBDIR)
+			message(STATUS " use system libusb from selected LIBUSBDIR functions")
+		elseif(NOT LIBUSBDIR AND NOT STATIC_LIBUSB)
+			message (STATUS "  use system libusb functions")
+		endif(LIBUSBDIR AND STATIC_LIBUSB EQUAL 0)
+	endif(STATICLIBUSB AND NOT LIBUSBDIR)
 endif (HAVE_LIBUSB)
 if (HAVE_LIBDVBCSA)
-	if (LIBDVBCSADIR)
-		if (STATICLIBDVBCSA)
-			message (STATUS "  use static libdvbcsa from selected LIBDVBCSADIR functions")
-		else (STATICLIBDVBCSA)
-			message (STATUS "  use system libdvbcsa from selected LIBDVBCSADIR functions")
-		endif (STATICLIBDVBCSA)
-	elseif (STATICLIBDVBCSA)
+	if(STATIC_LIBDVBCSA EQUAL 1)
+		message (STATUS "  You selected to enable static libdvbcsa")
+	endif(STATIC_LIBDVBCSA EQUAL 1)
+	if(STATICLIBDVBCSA AND NOT LIBDVBCSADIR)
 		message (STATUS "  use static libdvbcsa functions")
-	else (LIBDVBCSADIR)
-		message (STATUS "  use system libdvbcsa functions")
-	endif (LIBDVBCSADIR)
+	else(STATICLIBDVBCSA AND NOT LIBDVBCSADIR)
+		if (LIBDVBCSADIR AND STATIC_LIBDVBCSA EQUAL 0)
+			message(STATUS "  use system libdvbcsa from selected LIBDVBCSADIR functions")
+		elseif (LIBDVBCSADIR AND STATIC_LIBDVBCSA EQUAL 1)
+			message(STATUS "  use static libdvbcsa from selected LIBDVBCSADIR functions")
+		elseif(LIBDVBCSADIR)
+			message(STATUS " use system libdvbcsa from selected LIBDVBCSADIR functions")
+		elseif(NOT LIBDVBCSADIR AND NOT STATIC_LIBDVBCSA)
+			message (STATUS "  use system libdvbcsa functions")
+		endif(LIBDVBCSADIR AND STATIC_LIBDVBCSA EQUAL 0)
+	endif(STATICLIBDVBCSA AND NOT LIBDVBCSADIR)
 endif (HAVE_LIBDVBCSA)
 
 message (STATUS "")
