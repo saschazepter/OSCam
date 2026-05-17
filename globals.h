@@ -386,6 +386,12 @@
 #ifndef CS_TARGET
 # define CS_TARGET				"unknown"
 #endif
+#ifndef CS_BUILD_DATE
+# define CS_BUILD_DATE			"unknown"
+#endif
+#ifndef CS_BUILD_EPOCH
+# define CS_BUILD_EPOCH			0
+#endif
 #ifndef CS_CONFDIR
 #define CS_CONFDIR				"/usr/local/etc"
 #endif
@@ -2227,6 +2233,7 @@ struct s_config
 	CAIDVALUETAB	ftimeouttab;
 	uint32_t		cmaxidle;
 	int32_t			ulparent;
+	char			dateformat[33];
 	uint32_t		delay;
 	int32_t			bindwait;
 	int32_t			tosleep;
