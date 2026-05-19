@@ -1,9 +1,11 @@
 /*
- * Custom mbedTLS platform overrides for portable OSCam builds
+ * Custom mbedTLS platform overrides for portable OSCam builds (mbedTLS 4.x).
  *
- * mbedTLS 4.x: platform_util.c provides zeroize, gmtime_r, ms_time etc.
- * We only provide: custom calloc/free/printf, hardware_poll, platform setup.
- * For mbedTLS 3.x: we still provide all platform functions.
+ * tf-psa-crypto/platform/platform_util.c already provides
+ * mbedtls_zeroize_and_free, mbedtls_ms_time and mbedtls_platform_gmtime_r;
+ * we only have to bring zeroize (overridden via MBEDTLS_PLATFORM_ZEROIZE_ALT
+ * to avoid the glibc-2.25 dependency), our custom calloc/free/printf, the
+ * entropy hardware_poll, and the platform setup/teardown stubs.
  */
 
 #include <stdio.h>
@@ -21,42 +23,20 @@
 #include "mbedtls/build_info.h"
 
 /* ======================================================================
- * Functions provided by platform_util.c in mbedTLS 4.x.
- * Only define these for mbedTLS 3.x builds (where we exclude platform_util.c).
+ * Platform zeroize (override via MBEDTLS_PLATFORM_ZEROIZE_ALT)
+ *
+ * Stock tf-psa-crypto enables explicit_bzero() based on the build host's
+ * __GLIBC_MINOR__ — that introduces a GLIBC_2.25 runtime dependency on
+ * the resulting binary even when cross-compiling for an older target.
+ * Our volatile-pointer loop has the same security property (compiler
+ * cannot dead-store-eliminate it) without any glibc symbol dependency.
  * ====================================================================== */
-#if MBEDTLS_VERSION_NUMBER < 0x04000000
-
 void mbedtls_platform_zeroize(void *buf, size_t len)
 {
+	if (buf == NULL || len == 0) return;
 	volatile unsigned char *p = (volatile unsigned char *) buf;
 	while (len--) { *p++ = 0; }
 }
-
-void mbedtls_zeroize_and_free(void *ptr, size_t len)
-{
-	if (ptr == NULL) return;
-	mbedtls_platform_zeroize(ptr, len);
-	free(ptr);
-}
-
-mbedtls_ms_time_t mbedtls_ms_time(void)
-{
-#if defined(CLOCK_REALTIME)
-	struct timespec ts;
-	if (clock_gettime(CLOCK_REALTIME, &ts) == 0)
-		return (mbedtls_ms_time_t)((ts.tv_sec * 1000ULL) + (ts.tv_nsec / 1000000ULL));
-#endif
-	struct timeval tv;
-	gettimeofday(&tv, NULL);
-	return (mbedtls_ms_time_t)((tv.tv_sec * 1000ULL) + (tv.tv_usec / 1000ULL));
-}
-
-struct tm *mbedtls_platform_gmtime_r(const mbedtls_time_t *tt, struct tm *tm_buf)
-{
-	return gmtime_r(tt, tm_buf);
-}
-
-#endif /* MBEDTLS_VERSION_NUMBER < 0x04000000 */
 
 /* ======================================================================
  * Entropy source — always needed (custom hardware_poll for cross-builds)
