@@ -62,6 +62,13 @@ static void ssl_init(void) { }
 static void ssl_done(void) { }
 #endif
 
+#if defined(WITH_MBEDTLS)
+#include <psa/crypto.h>
+static void crypto_init(void) { psa_crypto_init(); }
+#else
+static void crypto_init(void) { }
+#endif
+
 #ifdef WITH_SIGNING
 #include "oscam-signing.h"
 #endif
@@ -1803,9 +1810,8 @@ int32_t main(int32_t argc, char *argv[])
 
 	find_conf_dir();
 
-	/* Must run before parse_cmdline_params() (-V path) and before any
-	 * config/user/reader init — mbedTLS 4.x PSA-backed shim needs
-	 * psa_crypto_init() first. No-op without WITH_SSL. */
+	/* PSA Crypto: needed for the mbedTLS shim regardless of WITH_SSL. */
+	crypto_init();
 	ssl_init();
 
 	parse_cmdline_params(argc, argv);
