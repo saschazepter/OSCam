@@ -982,6 +982,111 @@ static int run_void_aes_tests(void)
 	fflush(stdout);
 	return failures;
 }
+
+/* Reproduce the exact camd35 (cs378x) workload pattern:
+ *   - AES key = MD5(password)
+ *   - aes_encrypt_idx + aes_decrypt round-trip on multi-block buffers
+ *   - repeated calls on the same aes_keys instance (camd35 sends many
+ *     packets back-to-back without re-keying)
+ *   - varied buffer sizes typical of camd35 traffic
+ * If this test stays clean while live camd35 fails, the bug is outside
+ * of the crypto primitives. */
+#ifdef WITH_LIB_MD5
+static int run_camd35_pattern_tests(void)
+{
+	int failures = 0;
+	printf("camd35-style AES round-trip on MD5(password)\n");
+
+	static const char *password = "verysecret";
+	uint8_t md5key[16];
+	if (oscam_hash(OSCAM_HASH_SHA1, NULL, 0, NULL, 0, md5key) == -1) {} /* keep linker happy */
+	if (MD5((const unsigned char *)password, strlen(password), md5key) == NULL) {
+		printf(" === ERROR === MD5(password) returned NULL\n");
+		return 1;
+	}
+
+	struct aes_keys *ak = NULL;
+	if (!aes_set_key_alloc(&ak, (char *)md5key)) {
+		printf(" === ERROR === aes_set_key_alloc(MD5) failed\n");
+		return 1;
+	}
+
+	/* Test buffer sizes: 32 (typical camd35 header), 48, 96, 256 */
+	const int sizes[] = { 32, 48, 96, 256, 0 };
+	for (int si = 0; sizes[si]; si++) {
+		int n = sizes[si];
+		uint8_t orig[256], work[256];
+		/* pseudo-random payload, deterministic per size */
+		for (int i = 0; i < n; i++) orig[i] = (uint8_t)(i * 17 + si * 31 + 3);
+
+		/* Single round-trip */
+		memcpy(work, orig, n);
+		aes_encrypt_idx(ak, work, n);
+		int after_enc_equal = (memcmp(work, orig, n) == 0);
+		aes_decrypt(ak, work, n);
+		printf(" Testing %3d byte round-trip", n);
+		if (after_enc_equal) {
+			printf(" [FAIL: encrypt didn't change data]\n"); failures++;
+		} else if (memcmp(work, orig, n) == 0) {
+			printf(" [OK]\n");
+		} else {
+			printf(" [FAIL: decrypt did not recover plaintext]\n"); failures++;
+		}
+		fflush(stdout);
+	}
+
+	/* Repeated round-trips on same aes_keys (catches state-leak across calls) */
+	{
+		uint8_t orig[64], work[64];
+		for (int i = 0; i < 64; i++) orig[i] = (uint8_t)(0xA0 + i);
+		int rtfails = 0;
+		for (int round = 0; round < 50; round++) {
+			memcpy(work, orig, 64);
+			aes_encrypt_idx(ak, work, 64);
+			aes_decrypt(ak, work, 64);
+			if (memcmp(work, orig, 64) != 0) { rtfails++; break; }
+		}
+		printf(" Testing 50 back-to-back round-trips");
+		if (rtfails == 0) { printf(" [OK]\n"); }
+		else { printf(" [FAIL after round-trip %d]\n", rtfails); failures++; }
+		fflush(stdout);
+	}
+
+	/* Two independent aes_keys instances side-by-side (catches static-buffer
+	 * sharing between contexts) */
+	{
+		struct aes_keys *ak2 = NULL;
+		uint8_t md5key2[16];
+		if (MD5((const unsigned char *)"otherpass", 9, md5key2) == NULL ||
+		    !aes_set_key_alloc(&ak2, (char *)md5key2)) {
+			printf(" Testing two-key isolation [SKIP: second key setup failed]\n");
+		} else {
+			uint8_t a[32], b[32], a_ct[32], b_ct[32];
+			for (int i = 0; i < 32; i++) { a[i] = i; b[i] = i; }
+			memcpy(a_ct, a, 32); aes_encrypt_idx(ak,  a_ct, 32);
+			memcpy(b_ct, b, 32); aes_encrypt_idx(ak2, b_ct, 32);
+			printf(" Testing two-key isolation");
+			if (memcmp(a_ct, b_ct, 32) == 0) {
+				printf(" [FAIL: different keys produced identical ciphertext]\n"); failures++;
+			} else {
+				/* Decrypt with right key must recover plaintext */
+				aes_decrypt(ak,  a_ct, 32);
+				aes_decrypt(ak2, b_ct, 32);
+				if (memcmp(a_ct, a, 32) == 0 && memcmp(b_ct, b, 32) == 0) {
+					printf(" [OK]\n");
+				} else {
+					printf(" [FAIL: round-trip with isolated keys broken]\n"); failures++;
+				}
+			}
+			NULLFREE(ak2);
+		}
+		fflush(stdout);
+	}
+
+	NULLFREE(ak);
+	return failures;
+}
+#endif /* WITH_LIB_MD5 */
 #endif /* WITH_LIB_AES */
 
 /* --------------------------------------------------------------------- */
@@ -1274,6 +1379,9 @@ static int run_crypto_tests(void)
 	failures += run_aes_cbc_tests();
 	failures += run_aesctx_tests();
 	failures += run_void_aes_tests();
+#ifdef WITH_LIB_MD5
+	failures += run_camd35_pattern_tests();
+#endif
 #endif
 #ifdef WITH_LIB_IDEA
 	failures += run_idea_tests();
