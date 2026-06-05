@@ -42,15 +42,18 @@ struct s_inet_ntoa_buffer
 };
 
 static pthread_key_t inet_ntoa_key;
-static pthread_once_t inet_ntoa_key_once = PTHREAD_ONCE_INIT;
+static int8_t inet_ntoa_key_initialized = 0;
 
 static void cs_inet_ntoa_destroy_buffer(void *ptr)
 {
 	NULLFREE(ptr);
 }
 
-static void cs_inet_ntoa_init_buffer_key(void)
+void cs_inet_ntoa_init(void)
 {
+	if(inet_ntoa_key_initialized)
+		{ return; }
+
 	int32_t pter = pthread_key_create(&inet_ntoa_key, cs_inet_ntoa_destroy_buffer);
 
 	if(pter)
@@ -59,33 +62,37 @@ static void cs_inet_ntoa_init_buffer_key(void)
 				__func__, pter, strerror(pter));
 		exit(1);
 	}
+
+	inet_ntoa_key_initialized = 1;
 }
 
 static char *cs_inet_ntoa_get_buffer(void)
 {
 	struct s_inet_ntoa_buffer *buffer = NULL;
-	int32_t pter = pthread_once(&inet_ntoa_key_once, cs_inet_ntoa_init_buffer_key);
+	int32_t pter;
 
-	if(pter)
+	if(!inet_ntoa_key_initialized)
 	{
-		fprintf_stderr("ERROR: pthread_once() failed in %s with error %d %s\n",
-				__func__, pter, strerror(pter));
-		return NULL;
+		fprintf_stderr("FATAL ERROR: cs_inet_ntoa_init() was not called before %s\n", __func__);
+		exit(1);
 	}
 
 	buffer = pthread_getspecific(inet_ntoa_key);
 	if(!buffer)
 	{
 		if(!cs_malloc(&buffer, sizeof(*buffer)))
-			{ return NULL; }
+		{
+			fprintf_stderr("FATAL ERROR: cs_malloc() failed in %s\n", __func__);
+			exit(1);
+		}
 
 		pter = pthread_setspecific(inet_ntoa_key, buffer);
 		if(pter)
 		{
-			fprintf_stderr("ERROR: pthread_setspecific() failed in %s with error %d %s\n",
+			fprintf_stderr("FATAL ERROR: pthread_setspecific() failed in %s with error %d %s\n",
 					__func__, pter, strerror(pter));
 			NULLFREE(buffer);
-			return NULL;
+			exit(1);
 		}
 	}
 
@@ -97,8 +104,6 @@ static char *cs_inet_ntoa_get_buffer(void)
 char *cs_inet_ntoa(IN_ADDR_T addr)
 {
 	char *buff = cs_inet_ntoa_get_buffer();
-	if(!buff)
-		{ return ""; }
 	buff[0] = '\0';
 
 #ifdef IPV6SUPPORT
@@ -110,14 +115,14 @@ char *cs_inet_ntoa(IN_ADDR_T addr)
 	else
 	{
 		if(!inet_ntop(AF_INET6, &(addr.s6_addr), buff, INET6_ADDRSTRLEN))
-			{ return ""; }
+			{ return buff; }
 	}
 	return buff;
 #else
 	struct in_addr in;
 	in.s_addr = addr;
 	if(!inet_ntop(AF_INET, &in, buff, INET6_ADDRSTRLEN))
-		{ return ""; }
+		{ return buff; }
 	return buff;
 #endif
 }
