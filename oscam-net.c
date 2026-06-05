@@ -42,6 +42,10 @@ struct s_inet_ntoa_buffer
 };
 
 static pthread_key_t inet_ntoa_key;
+/* Initialized once during single-threaded startup before worker threads exist.
+ * This flag is only a misuse guard for cs_inet_ntoa() callers, not concurrency
+ * control for lazy initialization.
+ */
 static int8_t inet_ntoa_key_initialized = 0;
 
 static void cs_inet_ntoa_destroy_buffer(void *ptr)
