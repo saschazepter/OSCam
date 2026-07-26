@@ -263,20 +263,15 @@ static uint8_t get_log_header(char *txt, int32_t txt_size, uint8_t* hdr_logcount
 								uint8_t* hdr_date_offset, uint8_t* hdr_time_offset, uint8_t* hdr_info_offset)
 {
 	struct s_client *cl = cur_client();
-	struct tm lt;
 	int32_t tmp;
 
 	cs_ftime(&log_ts);
 	time_t walltime = log_ts.time;
-	localtime_r(&walltime, &lt);
 
-	tmp = snprintf(txt, txt_size, "[LOG000]%04d/%02d/%02d %02d:%02d:%02d %08X %c ",
-		lt.tm_year + 1900,
-		lt.tm_mon + 1,
-		lt.tm_mday,
-		lt.tm_hour,
-		lt.tm_min,
-		lt.tm_sec,
+	char tbuf[32];
+	cs_format_time(walltime, tbuf, sizeof(tbuf));
+	tmp = snprintf(txt, txt_size, "[LOG000]%s %08X %c ",
+		tbuf,
 		cl ? cl->tid : 0,
 		cl ? cl->typ : ' '
 	);
@@ -653,13 +648,11 @@ void cs_statistics(struct s_client *client)
 {
 	if(!cfg.disableuserfile)
 	{
-		struct tm lt;
 		char buf[LOG_BUF_SIZE];
 
 		float cwps;
 
 		time_t walltime = cs_time();
-		localtime_r(&walltime, &lt);
 		if(client->cwfound + client->cwnot > 0)
 		{
 			cwps = client->last - client->login;
@@ -696,9 +689,10 @@ void cs_statistics(struct s_client *client)
 		/* statistics entry start with 's' to filter it out on other end of pipe
 		 * so we can use the same Pipe as Log
 		 */
-		snprintf(buf, sizeof(buf), "s%02d.%02d.%02d %02d:%02d:%02d %3.1f %s %s %d %d %d %d %d %d %d %" PRId64 " %" PRId64 " %02d:%02d:%02d %s %04X@%06X:%04X %s\n",
-				lt.tm_mday, lt.tm_mon + 1, lt.tm_year % 100,
-				lt.tm_hour, lt.tm_min, lt.tm_sec, cwps,
+		char stbuf[32];
+		cs_format_time(walltime, stbuf, sizeof(stbuf));
+		snprintf(buf, sizeof(buf), "s%s %3.1f %s %s %d %d %d %d %d %d %d %" PRId64 " %" PRId64 " %02d:%02d:%02d %s %04X@%06X:%04X %s\n",
+				stbuf, cwps,
 				client->account->usr,
 				cs_inet_ntoa(client->ip),
 				client->port,

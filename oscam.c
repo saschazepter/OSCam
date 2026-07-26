@@ -362,16 +362,23 @@ static void write_versionfile(bool use_stdout)
 			cs_log("Cannot open %s (errno=%d %s)", targetfile, errno, strerror(errno));
 			return;
 		}
-		struct tm st;
+		char tbuf[32];
 		time_t walltime = cs_time();
-		localtime_r(&walltime, &st);
 		fprintf(fp, "Unix Starttime: %" PRId64 "\n", (int64_t)walltime);
-		fprintf(fp, "Starttime:      %02d.%02d.%04d %02d:%02d:%02d\n",
-				st.tm_mday, st.tm_mon + 1, st.tm_year + 1900,
-				st.tm_hour, st.tm_min, st.tm_sec);
+		fprintf(fp, "Starttime:      %s\n", cs_format_time(walltime, tbuf, sizeof(tbuf)));
 	}
 
-	fprintf(fp, "Build Date:     %s\n", CS_BUILD_DATE);
+	struct stat sb;
+	if(stat("/proc/self/exe", &sb) == 0 || stat(prog_name, &sb) == 0)
+	{
+		char tbuf2[32];
+		fprintf(fp, "Build Date:     %s\n", cs_format_time(sb.st_mtime, tbuf2, sizeof(tbuf2)));
+	}
+	if(CS_BUILD_EPOCH > 0)
+	{
+		char sbuf[32];
+		fprintf(fp, "Source Date:    %s\n", cs_format_time((time_t)CS_BUILD_EPOCH, sbuf, sizeof(sbuf)));
+	}
 	fprintf(fp, "Version:        %s@%s\n", CS_VERSION, CS_GIT_COMMIT);
 	fprintf(fp, "Compiler:       %s\n", CS_TARGET);
 #ifdef USE_COMPRESS
@@ -988,37 +995,21 @@ bool boxname_is(const char *boxname)
 /* Checks if the date of the system is correct and waits if necessary. */
 static void init_check(void)
 {
-	char *ptr = __DATE__;
-	int32_t month, year = atoi(ptr + cs_strlen(ptr) - 4), day = atoi(ptr + 4);
-	if(day > 0 && day < 32 && year > 2010 && year < 9999)
+	if(CS_BUILD_EPOCH == 0) { return; }
+	time_t builddate = (time_t)CS_BUILD_EPOCH - 86400;
+	int32_t i = 0;
+	while(time((time_t *)0) < builddate)
 	{
-		struct tm timeinfo;
-		char months[12][4] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-		for(month = 0; month < 12; ++month)
+		if(i == 0) { cs_log("The current system time is smaller than the build date (%s). Waiting up to %d seconds for time to correct", CS_BUILD_DATE, cs_waittime); }
+		cs_sleepms(1000);
+		++i;
+		if(i > cs_waittime)
 		{
-			if(!strncmp(ptr, months[month], 3)) { break; }
+			cs_log("Waiting was not successful. OSCam will be started but is UNSUPPORTED this way. Do not report any errors with this version.");
+			break;
 		}
-		if(month > 11) { month = 0; }
-		memset(&timeinfo, 0, sizeof(timeinfo));
-		timeinfo.tm_mday = day;
-		timeinfo.tm_mon = month;
-		timeinfo.tm_year = year - 1900;
-		time_t builddate = mktime(&timeinfo) - 86400;
-		int32_t i = 0;
-		while(time((time_t *)0) < builddate)
-		{
-			if(i == 0) { cs_log("The current system time is smaller than the build date (%s). Waiting up to %d seconds for time to correct", ptr, cs_waittime); }
-			cs_sleepms(1000);
-			++i;
-			if(i > cs_waittime)
-			{
-				cs_log("Waiting was not successful. OSCam will be started but is UNSUPPORTED this way. Do not report any errors with this version.");
-				break;
-			}
-		}
-		// adjust login time of first client
-		if(i > 0) { first_client->login = time((time_t *)0); }
 	}
+	if(i > 0) { first_client->login = time((time_t *)0); }
 }
 
 #ifdef __linux__
