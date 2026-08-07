@@ -10,7 +10,6 @@
 #include "oscam-lock.h"
 #include "oscam-time.h"
 #include "oscam-chk.h"
-#include "cscrypt/des.h"
 
 struct scam_data
 {
@@ -62,7 +61,7 @@ static void scam_generate_deskey(char *keyString, uint8_t *desKey)
 {
 	uint8_t iv[8], *tmpKey;
 	uint32_t i, passLen, alignedPassLen;
-	uint32_t key_schedule[32];
+	des_key_schedule key_schedule;
 
 	memset(iv, 0, 8);
 	memset(desKey, 0, 8);
@@ -99,8 +98,8 @@ static void scam_generate_deskey(char *keyString, uint8_t *desKey)
 
 	for(i = 0; i < alignedPassLen; i += 8)
 	{
-		des_set_key(&tmpKey[i], key_schedule);
-		des(&tmpKey[i], key_schedule, 1);
+		des_set_key(&tmpKey[i], &key_schedule);
+		des(&tmpKey[i], &key_schedule, 1);
 		xxor(desKey, 8, desKey, &tmpKey[i]);
 	}
 

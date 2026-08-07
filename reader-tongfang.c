@@ -1,7 +1,6 @@
 #include "globals.h"
 #ifdef READER_TONGFANG
 #include "reader-common.h"
-#include "cscrypt/des.h"
 #include <time.h>
 
 // returns 1 if cw_is_valid, returns 0 if cw is all zeros

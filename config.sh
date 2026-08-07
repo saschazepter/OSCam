@@ -4,6 +4,7 @@ addons="WEBIF WEBIF_LIVELOG WEBIF_JQUERY WEBIF_WIKI WITH_COMPRESS_WEBIF HAVE_DVB
 protocols="MODULE_CAMD33 MODULE_CAMD35 MODULE_CAMD35_TCP MODULE_NEWCAMD MODULE_CCCAM MODULE_CCCSHARE MODULE_GBOX MODULE_RADEGAST MODULE_SCAM MODULE_SERIAL MODULE_CONSTCW MODULE_PANDORA MODULE_GHTTP MODULE_STREAMRELAY"
 readers="READER_NAGRA READER_NAGRA_MERLIN READER_IRDETO READER_CONAX READER_CRYPTOWORKS READER_SECA READER_VIACCESS READER_VIDEOGUARD READER_DRE READER_TONGFANG READER_BULCRYPT READER_GRIFFIN READER_DGCRYPT"
 card_readers="CARDREADER_PHOENIX CARDREADER_INTERNAL CARDREADER_SC8IN1 CARDREADER_MP35 CARDREADER_SMARGO CARDREADER_DB2COM CARDREADER_STAPI CARDREADER_STAPI5 CARDREADER_STINGER CARDREADER_DRECAS"
+libraries="WITH_LIB_MINILZO WITH_LIB_AES WITH_LIB_MD5 WITH_LIB_MDC2 WITH_LIB_DES WITH_LIB_SHA1 WITH_LIB_SHA256 WITH_LIB_BIGNUM WITH_LIB_IDEA WITH_LIB_RC6"
 
 defconfig="
 CONFIG_WEBIF=y
@@ -80,7 +81,8 @@ Usage: `basename $0` [parameters]
  -Z, --show-disabled [param]  Show disabled configuration options.
  -S, --show-valid [param]     Show valid configuration options.
                               Possible params: all, addons, protocols,
-                                               readers, card_readers
+                                               readers, card_readers,
+                                               libraries
 
  -l, --list-config            List active configuration variables.
  -e, --enabled [option]       Check if certain option is enabled.
@@ -95,6 +97,7 @@ Usage: `basename $0` [parameters]
       protocols    - All protocols.
       readers      - All readers.
       card_readers - All card readers.
+      libraries    - All embedded libraries.
 
  -R, --restore                Restore default config.
 
@@ -156,6 +159,7 @@ Available options:
     protocols: $protocols
       readers: $readers
  card_readers: $card_readers
+    libraries: $libraries
 "
 }
 
@@ -283,7 +287,7 @@ write_enabled() {
 
 valid_opt() {
 	[ "$1" = "WITH_CARDREADER" ] && return 0 # Special case
-	echo $addons $protocols $readers $card_readers | grep -w "$1" >/dev/null
+	echo $addons $protocols $readers $card_readers $libraries | grep -w "$1" >/dev/null
 	return $?
 }
 
@@ -324,22 +328,43 @@ get_opts() {
 	'protocols')    OPTS="$protocols" ; ;;
 	'readers')      OPTS="$readers" ; ;;
 	'card_readers') OPTS="$card_readers" ; ;;
-	*)              OPTS="$addons $protocols $readers $card_readers" ; ;;
+	'libraries')    OPTS="$libraries" ; ;;
+	*)              OPTS="$addons $protocols $readers $card_readers $libraries" ; ;;
 	esac
 	echo $OPTS
 }
 
 update_deps() {
 	# Calculate dependencies
-	enabled_any $(get_opts readers) $(get_opts card_readers) && enable_opt WITH_CARDREADER >/dev/null
+	enable_opt   WITH_LIB_MD5 >/dev/null
+	enabled_any  $(get_opts readers) $(get_opts card_readers) && enable_opt WITH_CARDREADER >/dev/null
 	disabled_all $(get_opts readers) $(get_opts card_readers) && disable_opt WITH_CARDREADER >/dev/null
-	disabled WEBIF && disable_opt WEBIF_LIVELOG >/dev/null
-	disabled WEBIF && disable_opt WEBIF_JQUERY >/dev/null
-	disabled WEBIF && disable_opt WEBIF_WIKI >/dev/null
-	have_flag USE_COMPRESS && disable_opt WITH_COMPRESS_WEBIF >/dev/null
-	enabled MODULE_CCCSHARE && enable_opt MODULE_CCCAM >/dev/null
-	enabled_any CARDREADER_DB2COM CARDREADER_MP35 CARDREADER_SC8IN1 CARDREADER_STINGER && enable_opt CARDREADER_PHOENIX >/dev/null
-	enabled CS_CACHEEX_AIO && enable_opt CS_CACHEEX >/dev/null
+	enabled      WITH_LIB_MDC2       && enable_opt WITH_LIB_DES >/dev/null
+	disabled     WEBIF               && disable_opt WEBIF_LIVELOG >/dev/null
+	disabled     WEBIF               && disable_opt WEBIF_JQUERY >/dev/null
+	disabled     WEBIF               && disable_opt WEBIF_WIKI >/dev/null
+	have_flag    USE_COMPRESS        && disable_opt WITH_COMPRESS_WEBIF >/dev/null
+	enabled      MODULE_CCCSHARE     && enable_opt MODULE_CCCAM >/dev/null
+	enabled      CS_CACHEEX_AIO      && enable_opt CS_CACHEEX >/dev/null
+	enabled      MODULE_CCCAM        && enable_opts  WITH_LIB_RC6 >/dev/null
+	disabled     MODULE_CCCAM        && disable_opts WITH_LIB_RC6 >/dev/null
+	enabled      READER_NAGRA_MERLIN && enable_opt WITH_LIB_MDC2 >/dev/null
+	disabled     READER_NAGRA_MERLIN && disable_opt WITH_LIB_MDC2 >/dev/null
+	{ have_flag USE_SSL     || enabled_any MODULE_CCCAM; }                    && enable_opt   WITH_LIB_SHA1 >/dev/null
+	{ not_have_flag USE_SSL && disabled_all MODULE_CCCAM; }                   && disable_opt  WITH_LIB_SHA1 >/dev/null
+	enabled_any  MODULE_GBOX WITH_COMPRESS_WEBIF                     && enable_opt   WITH_LIB_MINILZO >/dev/null
+	disabled_all MODULE_GBOX WITH_COMPRESS_WEBIF                     && disable_opt  WITH_LIB_MINILZO >/dev/null
+	{ have_flag USE_SSL     || enabled_any READER_NAGRA_MERLIN WITH_SIGNING; }  && enable_opt  WITH_LIB_SHA256 >/dev/null
+	{ not_have_flag USE_SSL && disabled_all READER_NAGRA_MERLIN WITH_SIGNING; } && disable_opt WITH_LIB_SHA256 >/dev/null
+	enabled_any  MODULE_CCCAM READER_NAGRA READER_NAGRA_MERLIN READER_SECA              && enable_opt  WITH_LIB_IDEA >/dev/null
+	disabled_all MODULE_CCCAM READER_NAGRA READER_NAGRA_MERLIN READER_SECA              && disable_opt WITH_LIB_IDEA >/dev/null
+	{ have_flag USE_SSL     || enabled_any READER_CONAX READER_CRYPTOWORKS READER_NAGRA READER_NAGRA_MERLIN; }  && enable_opt  WITH_LIB_BIGNUM >/dev/null
+	{ not_have_flag USE_SSL && disabled_all READER_CONAX READER_CRYPTOWORKS READER_NAGRA READER_NAGRA_MERLIN; } && disable_opt WITH_LIB_BIGNUM >/dev/null
+	enabled_any  CARDREADER_DB2COM CARDREADER_MP35 CARDREADER_SC8IN1 CARDREADER_STINGER && enable_opt CARDREADER_PHOENIX >/dev/null
+	{ have_flag USE_SSL     || enabled_any MODULE_CAMD35 MODULE_CAMD35_TCP MODULE_CCCAM MODULE_MONITOR READER_NAGRA_MERLIN READER_VIACCESS READER_VIDEOGUARD; }  && enable_opts  WITH_LIB_AES >/dev/null
+	{ not_have_flag USE_SSL && disabled_all MODULE_CAMD35 MODULE_CAMD35_TCP MODULE_CCCAM MODULE_MONITOR READER_NAGRA_MERLIN READER_VIACCESS READER_VIDEOGUARD; } && disable_opts WITH_LIB_AES >/dev/null
+	enabled_any  MODULE_NEWCAMD READER_DRE MODULE_SCAM READER_VIACCESS READER_NAGRA READER_NAGRA_MERLIN READER_VIDEOGUARD READER_CONAX READER_TONGFANG && enable_opt  WITH_LIB_DES >/dev/null
+	disabled_all MODULE_NEWCAMD READER_DRE MODULE_SCAM READER_VIACCESS READER_NAGRA READER_NAGRA_MERLIN READER_VIDEOGUARD READER_CONAX READER_TONGFANG && disable_opt WITH_LIB_DES >/dev/null
 }
 
 list_config() {
@@ -353,7 +378,6 @@ list_config() {
 	have_flag USE_AZBOX && echo "CONFIG_WITH_AZBOX=y" || echo "# CONFIG_WITH_AZBOX=n"
 	have_flag USE_AMSMC && echo "CONFIG_WITH_AMSMC=y" || echo "# CONFIG_WITH_AMSMC=n"
 	have_flag USE_MCA && echo "CONFIG_WITH_MCA=y" || echo "# CONFIG_WITH_MCA=n"
-	have_flag USE_LIBCRYPTO && echo "CONFIG_WITH_LIBCRYPTO=y" || echo "# CONFIG_WITH_LIBCRYPTO=n"
 	for OPT in $addons $protocols WITH_CARDREADER $readers
 	do
 		enabled $OPT && echo "CONFIG_$OPT=y" || echo "# CONFIG_$OPT=n"
@@ -387,16 +411,16 @@ list_config() {
 	have_flag USE_LIBUSB && echo "CONFIG_CARDREADER_SMART=y" || echo "# CONFIG_CARDREADER_SMART=n"
 	have_flag USE_PCSC && echo "CONFIG_CARDREADER_PCSC=y" || echo "# CONFIG_CARDREADER_PCSC=n"
 	# Extra modules/libraries
-	enabled_any MODULE_GBOX WITH_COMPRESS_WEBIF && echo "CONFIG_LIB_MINILZO=y" || echo "# CONFIG_LIB_MINILZO=n"
-	not_have_flag USE_LIBCRYPTO && echo "CONFIG_LIB_AES=y" || echo "# CONFIG_LIB_AES=n"
-	enabled MODULE_CCCAM && echo "CONFIG_LIB_RC6=y" || echo "# CONFIG_LIB_RC6=n"
-	not_have_flag USE_LIBCRYPTO && enabled MODULE_CCCAM && echo "CONFIG_LIB_SHA1=y" || echo "# CONFIG_LIB_SHA1=n"
-	enabled_any READER_DRE MODULE_SCAM READER_VIACCESS READER_NAGRA READER_NAGRA_MERLIN READER_VIDEOGUARD READER_CONAX READER_TONGFANG && echo "CONFIG_LIB_DES=y" || echo "# CONFIG_LIB_DES=n"
-	enabled_any MODULE_CCCAM READER_NAGRA READER_NAGRA_MERLIN READER_SECA && echo "CONFIG_LIB_IDEA=y" || echo "# CONFIG_LIB_IDEA=n"
-	not_have_flag USE_LIBCRYPTO && enabled_any READER_CONAX READER_CRYPTOWORKS READER_NAGRA READER_NAGRA_MERLIN && echo "CONFIG_LIB_BIGNUM=y" || echo "# CONFIG_LIB_BIGNUM=n"
-	enabled READER_NAGRA_MERLIN && echo "CONFIG_LIB_MDC2=y" || echo "# CONFIG_LIB_MDC2=n"
-	enabled READER_NAGRA_MERLIN && echo "CONFIG_LIB_FAST_AES=y" || echo "# CONFIG_LIB_FAST_AES=n"
-	enabled_any READER_NAGRA_MERLIN WITH_SIGNING && echo "CONFIG_LIB_SHA256=y" || echo "# CONFIG_LIB_SHA256=n"
+	echo "CONFIG_WITH_LIB_MD5=y"
+	enabled_any MODULE_GBOX WITH_COMPRESS_WEBIF && echo "CONFIG_WITH_LIB_MINILZO=y" || echo "# CONFIG_WITH_LIB_MINILZO=n"
+	{ have_flag USE_SSL || enabled_any MODULE_CAMD35 MODULE_CAMD35_TCP MODULE_CCCAM MODULE_MONITOR READER_NAGRA_MERLIN READER_VIACCESS READER_VIDEOGUARD; } && echo "CONFIG_WITH_LIB_AES=y" || echo "# CONFIG_WITH_LIB_AES=n"
+	enabled_any MODULE_NEWCAMD READER_DRE MODULE_SCAM READER_VIACCESS READER_NAGRA READER_NAGRA_MERLIN READER_VIDEOGUARD READER_CONAX READER_TONGFANG WITH_LIB_MDC2 && echo "CONFIG_WITH_LIB_DES=y" || echo "# CONFIG_WITH_LIB_DES=n"
+	enabled MODULE_CCCAM && echo "CONFIG_WITH_LIB_RC6=y"  || echo "# CONFIG_WITH_LIB_RC6=n"
+	{ have_flag USE_SSL || enabled_any MODULE_CCCAM; } && echo "CONFIG_WITH_LIB_SHA1=y" || echo "# CONFIG_WITH_LIB_SHA1=n"
+	enabled_any MODULE_CCCAM READER_NAGRA READER_NAGRA_MERLIN READER_SECA && echo "CONFIG_WITH_LIB_IDEA=y" || echo "# CONFIG_WITH_LIB_IDEA=n"
+	{ have_flag USE_SSL || enabled_any READER_CONAX READER_CRYPTOWORKS READER_NAGRA READER_NAGRA_MERLIN; } && echo "CONFIG_WITH_LIB_BIGNUM=y" || echo "# CONFIG_WITH_LIB_BIGNUM=n"
+	enabled READER_NAGRA_MERLIN && echo "CONFIG_WITH_LIB_MDC2=y" || echo "# CONFIG_WITH_LIB_MDC2=n"
+	{ have_flag USE_SSL || enabled_any READER_NAGRA_MERLIN WITH_SIGNING; } && echo "CONFIG_WITH_LIB_SHA256=y" || echo "# CONFIG_WITH_LIB_SHA256=n"
 	enabled_any READER_NAGRA READER_NAGRA_MERLIN && echo "CONFIG_READER_NAGRA_COMMON=y" || echo "# CONFIG_READER_NAGRA_COMMON=n"
 }
 
@@ -494,6 +518,12 @@ print_components() {
 	echo
 	echo "Card readers:"
 	for i in $card_readers; do
+		printf "\t%-20s: %s\n" $i $(check_test "$i")
+	done
+
+	echo
+	echo "Embedded libraries:"
+	for i in $libraries; do
 		printf "\t%-20s: %s\n" $i $(check_test "$i")
 	done
 }
@@ -818,7 +848,7 @@ do
 				update_deps
 				continue 2
 				;;
-			all|addons|protocols|readers|card_readers)
+			all|addons|protocols|readers|card_readers|libraries)
 				enable_opts $(get_opts $1)
 				;;
 			*)
@@ -839,7 +869,7 @@ do
 				update_deps
 				continue 2
 				;;
-			all|addons|protocols|readers|card_readers)
+			all|addons|protocols|readers|card_readers|libraries)
 				disable_opts $(get_opts $1)
 				;;
 			*)
@@ -916,16 +946,17 @@ do
 		# If no name given, process all submodules
 		if [ -z "$name" ]; then
 			for sm in `grep '^\[submodule "' .gitmodules | sed 's/.*"\(.*\)".*/\1/'`; do
-				$0 --submodule "$sm"
+				$0 --use-flags "$USE_FLAGS" --submodule "$sm"
 			done
 			exit 0
 		fi
 		# Extract submodule section from .gitmodules
 		section=`sed -n "/\[submodule \"$name\"\]/,/^\[/p" .gitmodules | grep ' = '`
-		# Check if submodule is needed based on depends config option
+		# Check if submodule is needed based on depends config option or use flag
 		depends=`echo "$section" | grep 'depends = ' | sed 's/.*depends = //'`
 		if [ -n "$depends" ]; then
-			enabled $depends || exit 0
+			# Check config.h option first, then USE_FLAGS
+			enabled $depends || have_flag "$depends" || exit 0
 		fi
 		if [ "`git rev-parse --show-toplevel 2>/dev/null`" = "`pwd`" ]; then
 			if echo "$section" | grep -q 'branch = '; then
@@ -973,6 +1004,92 @@ do
 		done
 		echo Cant_find_OSX_SDK
 		break
+	;;
+	'--mbedtls-fetch')
+		# Download + verify + extract the official mbedTLS release tarball
+		# named in mbedtls/version.conf (VERSION, URL, SHA256).
+		PIN="mbedtls/version.conf"
+		if [ ! -f "$PIN" ]; then
+			echo "Error: $PIN not found" >&2
+			exit 1
+		fi
+		# Source in a subshell so VERSION/URL/SHA256 don't leak into the
+		# outer environment if this script is dot-sourced.
+		VERSION=''; URL=''; SHA256=''
+		. "$PIN"
+		if [ -z "$VERSION" ] || [ -z "$URL" ] || [ -z "$SHA256" ]; then
+			echo "Error: $PIN must define VERSION, URL and SHA256" >&2
+			exit 1
+		fi
+
+		STAMP="mbedtls/.oscam-extracted-$VERSION"
+		CACHE=".mbedtls-cache"
+		TARBALL=`basename "$URL"`
+		CACHED="$CACHE/$TARBALL"
+
+		# Idempotency: skip if this exact version is already extracted.
+		if [ -f "$STAMP" ]; then
+			sz=`du -hL "$CACHED" 2>/dev/null | awk '{print $1}'`
+			if [ -L "$CACHED" ]; then
+				src="cached symlink"
+			else
+				src="cached"
+			fi
+			echo "mbedTLS $VERSION ready (tarball ${sz:-?}, $src)"
+			exit 0
+		fi
+
+		# Pick a downloader that is usually available everywhere.
+		if command -v curl >/dev/null 2>&1; then
+			DL="curl -fsSL"
+		elif command -v wget >/dev/null 2>&1; then
+			DL="wget -q -O-"
+		else
+			echo "Error: need 'curl' or 'wget' to fetch mbedTLS tarball" >&2
+			exit 1
+		fi
+
+		# Cache the tarball outside mbedtls/ so 'find mbedtls -delete' below
+		# doesn't wipe it.
+		mkdir -p "$CACHE"
+
+		# Determine tarball source: download, regular cached file, or symlink
+		# (s4 can pre-seed the cache by symlinking its central download pool).
+		if [ -f "$CACHED" ]; then
+			if [ -L "$CACHED" ]; then
+				src="cached symlink"
+			else
+				src="cached"
+			fi
+		else
+			$DL "$URL" > "$CACHED.tmp" && mv "$CACHED.tmp" "$CACHED" || {
+				rm -f "$CACHED.tmp"
+				echo "Error: failed to download $URL" >&2
+				exit 1
+			}
+			src="fetched"
+		fi
+
+		actual=`sha256sum "$CACHED" | awk '{print $1}'`
+		if [ "$actual" != "$SHA256" ]; then
+			rm -f "$CACHED"
+			echo "Error: SHA256 mismatch for $TARBALL" >&2
+			echo "  expected: $SHA256" >&2
+			echo "  got:      $actual"  >&2
+			exit 1
+		fi
+
+		# Clean everything under mbedtls/ EXCEPT the pin config, then
+		# extract the tarball into mbedtls/ stripping its top-level dir.
+		find mbedtls -mindepth 1 ! -name 'version.conf' -delete 2>/dev/null
+		tar -xjf "$CACHED" -C mbedtls --strip-components=1
+		# Remove stamps from older versions (if any), then record the new one.
+		rm -f mbedtls/.oscam-extracted-*
+		touch "$STAMP"
+
+		sz=`du -hL "$CACHED" | awk '{print $1}'`
+		echo "mbedTLS $VERSION ready (tarball $sz, $src)"
+		exit 0
 	;;
 	'-l'|'--list-config')
 		list_config

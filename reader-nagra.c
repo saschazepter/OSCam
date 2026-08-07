@@ -1,8 +1,5 @@
 #include "globals.h"
 #ifdef READER_NAGRA
-#include "cscrypt/bn.h"
-#include "cscrypt/idea.h"
-#include "cscrypt/des.h"
 #include "oscam-time.h"
 #include "reader-common.h"
 #include "reader-nagra-common.h"
@@ -247,9 +244,7 @@ static int32_t NegotiateSessionKey_Tiger(struct s_reader *reader)
 	}
 
 	BN_CTX *ctx = BN_CTX_new();
-#ifdef WITH_LIBCRYPTO
 	BN_CTX_start(ctx);
-#endif
 	BIGNUM *bnN = BN_CTX_get(ctx);
 	BIGNUM *bnE = BN_CTX_get(ctx);
 	BIGNUM *bnCT = BN_CTX_get(ctx);
@@ -288,9 +283,7 @@ static int32_t NegotiateSessionKey_Tiger(struct s_reader *reader)
 
 	ReverseMem(cta_res + 2, 88);
 	BN_CTX *ctx1 = BN_CTX_new();
-#ifdef WITH_LIBCRYPTO
 	BN_CTX_start(ctx1);
-#endif
 	BIGNUM *bnN1 = BN_CTX_get(ctx1);
 	BIGNUM *bnE1 = BN_CTX_get(ctx1);
 	BIGNUM *bnCT1 = BN_CTX_get(ctx1);
@@ -326,9 +319,7 @@ static int32_t NegotiateSessionKey_Tiger(struct s_reader *reader)
 
 
 	BN_CTX *ctx3 = BN_CTX_new();
-#ifdef WITH_LIBCRYPTO
 	BN_CTX_start(ctx3);
-#endif
 	BIGNUM *bnN3 = BN_CTX_get(ctx3);
 	BIGNUM *bnE3 = BN_CTX_get(ctx3);
 	BIGNUM *bnCT3 = BN_CTX_get(ctx3);
@@ -459,9 +450,7 @@ static int32_t NegotiateSessionKey(struct s_reader *reader)
 	ReverseMem(cta_res + 2, 64);
 	uint8_t vFixed[] = {0, 1, 2, 3};
 	BN_CTX *ctx = BN_CTX_new();
-#ifdef WITH_LIBCRYPTO
 	BN_CTX_start(ctx);
-#endif
 	BIGNUM *bnN = BN_CTX_get(ctx);
 	BIGNUM *bnE = BN_CTX_get(ctx);
 	BIGNUM *bnCT = BN_CTX_get(ctx);
