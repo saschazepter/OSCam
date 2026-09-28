@@ -7,6 +7,9 @@ SHELL = /bin/sh
 VER               := $(shell ./config.sh --oscam-version)
 GIT_SHA           := $(shell ./config.sh --oscam-commit)
 SOURCE_DATE_EPOCH := $(shell ./config.sh --oscam-epoch)
+ifeq ($(SOURCE_DATE_EPOCH),)
+$(error Could not determine SOURCE_DATE_EPOCH)
+endif
 COMPILE_DATE      := $(shell date +"%d.%m.%Y %T")
 BUILD_DATE        := $(shell date -u -d @$(SOURCE_DATE_EPOCH) +"%d.%m.%Y %T" 2>/dev/null \
                      || date -u -r $(SOURCE_DATE_EPOCH) +"%d.%m.%Y %T")

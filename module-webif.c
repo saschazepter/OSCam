@@ -741,7 +741,7 @@ static char *send_oscam_config_global(struct templatevars *vars, struct uriparam
 	tpl_printf(vars, TPLADD, "SLEEP", "%d", cfg.tosleep);
 	tpl_addVar(vars, TPLADD, "UNLOCKPARENTALCHECKED", (cfg.ulparent == 1) ? "checked" : "");
 
-	tpl_addVar(vars, TPLADD, "DATEFORMAT", cfg.dateformat);
+	tpl_addVar(vars, TPLADD, "DATEFORMAT", xml_encode(vars, cfg.dateformat));
 
 	if(cfg.reload_useraccounts) { tpl_addVar(vars, TPLADD, "RELOADUSERACCOUNTSCHECKED", "checked"); }
 	if(cfg.reload_readers)      { tpl_addVar(vars, TPLADD, "RELOADREADERSCHECKED", "checked"); }
@@ -3646,7 +3646,7 @@ static char *send_oscam_reader_stats(struct templatevars *vars, struct uriparams
 					if(s->last_received.time)
 					{
 						char ltbuf[32];
-						tpl_addVar(vars, TPLADD, "LAST", cs_format_time(s->last_received.time, ltbuf, sizeof(ltbuf)));
+						tpl_addVar(vars, TPLADD, "LAST", xml_encode(vars, cs_format_time(s->last_received.time, ltbuf, sizeof(ltbuf))));
 
 					}
 					else
@@ -3722,7 +3722,17 @@ static char *send_oscam_reader_stats(struct templatevars *vars, struct uriparams
 	if(lastaccess > 0)
 	{
 		char tbuffer[32];
-		tpl_addVar(vars, TPLADD, "LASTACCESS", cs_format_time(lastaccess, tbuffer, sizeof(tbuffer)));
+		if(apicall)
+		{
+			struct tm lt;
+			localtime_r(&lastaccess, &lt);
+			strftime(tbuffer, sizeof(tbuffer), "%Y-%m-%dT%H:%M:%S%z", &lt);
+		}
+		else
+		{
+			cs_format_time(lastaccess, tbuffer, sizeof(tbuffer));
+		}
+		tpl_addVar(vars, TPLADD, "LASTACCESS", apicall ? tbuffer : xml_encode(vars, tbuffer));
 	}
 	else
 	{
@@ -5414,13 +5424,13 @@ static char *send_oscam_entitlement(struct templatevars *vars, struct uriparams 
 							{ cs_format_date(item->start, tbuffer, sizeof(tbuffer)); }
 						else
 							{ strftime(tbuffer, 30, "%Y-%m-%dT%H:%M:%S%z", &start_t); }
-						tpl_addVar(vars, TPLADD, "ENTSTARTDATE", tbuffer);
+						tpl_addVar(vars, TPLADD, "ENTSTARTDATE", apicall ? tbuffer : xml_encode(vars, tbuffer));
 
 						if(!apicall)
 							{ cs_format_date(item->end, tbuffer, sizeof(tbuffer)); }
 						else
 							{ strftime(tbuffer, 30, "%Y-%m-%dT%H:%M:%S%z", &end_t); }
-						tpl_addVar(vars, TPLADD, "ENTENDDATE", tbuffer);
+						tpl_addVar(vars, TPLADD, "ENTENDDATE", apicall ? tbuffer : xml_encode(vars, tbuffer));
 
 						tpl_addVar(vars, TPLADD, "ENTEXPIERED", item->end > now ? "e_valid" : "e_expired");
 						tpl_printf(vars, TPLADD, "ENTCAID", "%04X", item->caid);
@@ -5530,7 +5540,7 @@ static char *send_oscam_entitlement(struct templatevars *vars, struct uriparams 
 				{
 					char vtobuffer[32];
 					cs_format_date(rdr->card_valid_to, vtobuffer, sizeof(vtobuffer));
-					tpl_addVar(vars, TPLADD, "READERCARDVALIDTO", vtobuffer);
+					tpl_addVar(vars, TPLADD, "READERCARDVALIDTO", xml_encode(vars, vtobuffer));
 				}
 				else
 				{
@@ -6151,7 +6161,7 @@ static char *send_oscam_status(struct templatevars * vars, struct uriparams * pa
 						if((cl->typ != 'p' && cl->typ != 'r') || cl->reader->card_status == CARD_INSERTED)
 						{
 							char ldbuf[32];
-							tpl_addVar(vars, TPLADD, "CLIENTLOGINDATE", cs_format_time(cl->login, ldbuf, sizeof(ldbuf)));
+							tpl_addVar(vars, TPLADD, "CLIENTLOGINDATE", xml_encode(vars, cs_format_time(cl->login, ldbuf, sizeof(ldbuf))));
 							tpl_addVar(vars, TPLADD, "CLIENTLOGINSECS", sec2timeformat(vars, lsec));
 						}
 						else
@@ -6427,7 +6437,7 @@ static char *send_oscam_status(struct templatevars * vars, struct uriparams * pa
 										char entbuf[32];
 										cs_format_date(ent->end, entbuf, sizeof(entbuf));
 										tpl_printf(vars, TPLAPPEND, "TMPSPAN", "%04X@%06X<BR>exp:%s",
-												ent->caid, ent->provid, entbuf);
+												ent->caid, ent->provid, xml_encode(vars, entbuf));
 										tpl_printf(vars, TPLAPPEND, "ENTITLEMENTS", "%s{\"caid\":\"%04X\",\"provid\":\"%06X\",\"exp\":\"%04d/%02d/%02d\"}",
 												active_ent > 1 ? ",": "",
 												ent->caid, ent->provid,
@@ -9655,16 +9665,22 @@ static int32_t process_request(FILE * f, IN_ADDR_T in)
 				tpl_addVar(vars, TPLADD, "LOGO_INS", tpl_getTpl(vars, "LOGOBITSVG"));
 			}
 			tpl_addVar(vars, TPLADD, "LOGO", tpl_getTpl(vars, "LOGOBIT"));
-			char dtbuf[32], tmbuf[32];
-			cs_format_date(t, dtbuf, sizeof(dtbuf));
-			tpl_addVar(vars, TPLADD, "CURDATE", dtbuf);
-			cs_format_time(t, tmbuf, sizeof(tmbuf));
-			{ char *sp = strrchr(tmbuf, ' '); tpl_addVar(vars, TPLADD, "CURTIME", sp ? sp + 1 : ""); }
 			localtime_r(&first_client->login, &st);
-			cs_format_date(first_client->login, dtbuf, sizeof(dtbuf));
-			tpl_addVar(vars, TPLADD, "STARTDATE", dtbuf);
-			cs_format_time(first_client->login, tmbuf, sizeof(tmbuf));
-			{ char *sp = strrchr(tmbuf, ' '); tpl_addVar(vars, TPLADD, "STARTTIME", sp ? sp + 1 : ""); }
+			if(pgidx == 18 || pgidx == 22 || pgidx == 24)
+			{
+				tpl_printf(vars, TPLADD, "CURDATE", "%02d.%02d.%02d", lt.tm_mday, lt.tm_mon + 1, lt.tm_year % 100);
+				tpl_printf(vars, TPLADD, "CURTIME", "%02d:%02d:%02d", lt.tm_hour, lt.tm_min, lt.tm_sec);
+				tpl_printf(vars, TPLADD, "STARTDATE", "%02d.%02d.%02d", st.tm_mday, st.tm_mon + 1, st.tm_year % 100);
+				tpl_printf(vars, TPLADD, "STARTTIME", "%02d:%02d:%02d", st.tm_hour, st.tm_min, st.tm_sec);
+			}
+			else
+			{
+				char dtbuf[32], tmbuf[32];
+				tpl_addVar(vars, TPLADD, "CURDATE", xml_encode(vars, cs_format_date(t, dtbuf, sizeof(dtbuf))));
+				tpl_addVar(vars, TPLADD, "CURTIME", xml_encode(vars, cs_format_clock(t, tmbuf, sizeof(tmbuf))));
+				tpl_addVar(vars, TPLADD, "STARTDATE", xml_encode(vars, cs_format_date(first_client->login, dtbuf, sizeof(dtbuf))));
+				tpl_addVar(vars, TPLADD, "STARTTIME", xml_encode(vars, cs_format_clock(first_client->login, tmbuf, sizeof(tmbuf))));
+			}
 			tpl_printf(vars, TPLADD, "PROCESSID", "%d", getppid());
 			tpl_addVar(vars, TPLADD, "RUNAS", urlencode(vars, username(first_client)));
 
