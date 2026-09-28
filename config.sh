@@ -118,7 +118,7 @@ Usage: `basename $0` [parameters]
  -um, --upx-marker            Get Oscam binary upx marker.
  -v, --oscam-version          Display OSCam version.
  -c, --oscam-commit           Display OSCam GIT short commit sha 8-digits.
- -t, --oscam-epoch            Unix timestamp of last git commit (SOURCE_DATE_EPOCH).
+ -t, --oscam-epoch            SOURCE_DATE_EPOCH, or Unix timestamp of last git commit.
 
  -O, --detect-osx-sdk-version Find where OS X SDK is located
 
@@ -961,7 +961,14 @@ do
 		break
 	;;
 	'-t'|'--oscam-epoch')
-		epoch=`git log -1 --format=%ct 2>/dev/null`
+		if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+			case "$SOURCE_DATE_EPOCH" in
+				*[!0-9]*) echo "Invalid SOURCE_DATE_EPOCH: expected a non-negative integer" >&2; exit 1 ;;
+			esac
+			epoch=`printf '%s' "$SOURCE_DATE_EPOCH" | sed 's/^0*//'`
+		else
+			epoch=`git log -1 --format=%ct 2>/dev/null`
+		fi
 		echo ${epoch:-0}
 		break
 	;;
