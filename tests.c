@@ -7,6 +7,7 @@
 
 #include "oscam-array.h"
 #include "oscam-string.h"
+#include "oscam-time.h"
 #include "oscam-conf-chk.h"
 #include "oscam-conf-mk.h"
 #include "cscrypt/md5.h"
@@ -1268,6 +1269,44 @@ static int run_crypto_tests(void)
 	failures += run_bn_extra_tests();
 	return failures;
 }
+
+static int run_date_format_tests(void)
+{
+	static const struct
+	{
+		const char *format;
+		const char *date;
+		const char *clock;
+	} cases[] =
+	{
+		{ "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%H:%M:%S" },
+		{ "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%H:%M:%S" },
+		{ "%d/%m/%Y %I:%M %p", "%d/%m/%Y", "%I:%M %p" },
+		{ "%H:%M:%S", "%Y-%m-%d", "%H:%M:%S" },
+		{ "%d/%m/%Y", "%d/%m/%Y", "%H:%M:%S" },
+	};
+	char saved_format[sizeof(cfg.dateformat)];
+	memcpy(saved_format, cfg.dateformat, sizeof(saved_format));
+	time_t when = 1700000000;
+	struct tm st;
+	localtime_r(&when, &st);
+	int failures = 0;
+	for(size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+	{
+		char actual[64], expected[64];
+		snprintf(cfg.dateformat, sizeof(cfg.dateformat), "%s", cases[i].format);
+		strftime(expected, sizeof(expected), cases[i].format, &st);
+		if(strcmp(cs_format_time(when, actual, sizeof(actual)), expected)) { ++failures; }
+		strftime(expected, sizeof(expected), cases[i].date, &st);
+		if(strcmp(cs_format_date(when, actual, sizeof(actual)), expected)) { ++failures; }
+		strftime(expected, sizeof(expected), cases[i].clock, &st);
+		if(strcmp(cs_format_clock(when, actual, sizeof(actual)), expected)) { ++failures; }
+	}
+	memcpy(cfg.dateformat, saved_format, sizeof(saved_format));
+	printf("Date format tests: %d failure(s)\n", failures);
+	return failures;
+}
+
 int run_all_tests(void)
 {
 	int failures = 0;
@@ -1523,6 +1562,7 @@ int run_all_tests(void)
 	failures += run_parser_test(&caidtab_test);
 
 	failures += run_crypto_tests();
+	failures += run_date_format_tests();
 
 	printf("Summary: %d failure(s)\n", failures);
 	return failures;

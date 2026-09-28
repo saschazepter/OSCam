@@ -165,31 +165,69 @@ void cs_ftimeus(struct timeb *tp)
 	tp->millitm = tv.tv_usec;
 }
 
+static const char *cs_time_format_start(const char *fmt)
+{
+	for(const char *p = fmt; *p; ++p)
+	{
+		if(*p != '%') { continue; }
+		const char *start = p;
+		++p;
+		if(!*p) { break; }
+		if(*p == '%') { continue; }
+		while(*p == '-' || *p == '_' || *p == '0' || *p == '^' || *p == '#') { ++p; }
+		while(*p >= '0' && *p <= '9') { ++p; }
+		if(*p == 'E' || *p == 'O') { ++p; }
+		if(!*p) { break; }
+		switch(*p)
+		{
+			case 'H': case 'I': case 'k': case 'l': case 'M':
+			case 'p': case 'P': case 'r': case 'R': case 'S':
+			case 's': case 'T': case 'X': case 'z': case 'Z':
+				return start;
+		}
+	}
+	return NULL;
+}
+
+static char *cs_strftime_or_default(char *buf, size_t len, const char *fmt,
+									const char *fallback, const struct tm *st)
+{
+	if(len && strftime(buf, len, fmt, st) == 0 && strftime(buf, len, fallback, st) == 0)
+	{
+		buf[0] = '\0';
+	}
+	return buf;
+}
+
 char *cs_format_time(time_t t, char *buf, size_t len)
 {
 	struct tm st;
 	localtime_r(&t, &st);
 	const char *fmt = cfg.dateformat[0] ? cfg.dateformat : "%Y-%m-%d %H:%M:%S";
-	if(strftime(buf, len, fmt, &st) == 0)
-	{
-		strftime(buf, len, "%Y-%m-%d %H:%M:%S", &st);
-	}
-	return buf;
+	return cs_strftime_or_default(buf, len, fmt, "%Y-%m-%d %H:%M:%S", &st);
 }
 
 char *cs_format_date(time_t t, char *buf, size_t len)
 {
 	struct tm st;
 	localtime_r(&t, &st);
+	const char *fmt = cfg.dateformat[0] ? cfg.dateformat : "%Y-%m-%d %H:%M:%S";
+	const char *timefmt = cs_time_format_start(fmt);
+	size_t date_len = timefmt ? (size_t)(timefmt - fmt) : strlen(fmt);
+	while(date_len && (fmt[date_len - 1] == ' ' || (timefmt && fmt[date_len - 1] == 'T'))) { --date_len; }
 	char datefmt[33];
-	snprintf(datefmt, sizeof(datefmt), "%s", cfg.dateformat[0] ? cfg.dateformat : "%Y-%m-%d %H:%M:%S");
-	char *sp = strchr(datefmt, ' ');
-	if(sp) { *sp = '\0'; }
-	if(strftime(buf, len, datefmt, &st) == 0)
-	{
-		strftime(buf, len, "%Y-%m-%d", &st);
-	}
-	return buf;
+	memcpy(datefmt, fmt, date_len);
+	datefmt[date_len] = '\0';
+	return cs_strftime_or_default(buf, len, date_len ? datefmt : "%Y-%m-%d", "%Y-%m-%d", &st);
+}
+
+char *cs_format_clock(time_t t, char *buf, size_t len)
+{
+	struct tm st;
+	localtime_r(&t, &st);
+	const char *fmt = cfg.dateformat[0] ? cfg.dateformat : "%Y-%m-%d %H:%M:%S";
+	const char *timefmt = cs_time_format_start(fmt);
+	return cs_strftime_or_default(buf, len, timefmt ? timefmt : "%H:%M:%S", "%H:%M:%S", &st);
 }
 
 
