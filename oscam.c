@@ -368,17 +368,7 @@ static void write_versionfile(bool use_stdout)
 		fprintf(fp, "Starttime:      %s\n", cs_format_time(walltime, tbuf, sizeof(tbuf)));
 	}
 
-	struct stat sb;
-	if(stat("/proc/self/exe", &sb) == 0 || stat(prog_name, &sb) == 0)
-	{
-		char tbuf2[32];
-		fprintf(fp, "Build Date:     %s\n", cs_format_time(sb.st_mtime, tbuf2, sizeof(tbuf2)));
-	}
-	if(CS_BUILD_EPOCH > 0)
-	{
-		char sbuf[32];
-		fprintf(fp, "Source Date:    %s\n", cs_format_time((time_t)CS_BUILD_EPOCH, sbuf, sizeof(sbuf)));
-	}
+	fprintf(fp, "Build Date:     %s\n", CS_BUILD_DATE);
 	fprintf(fp, "Version:        %s@%s\n", CS_VERSION, CS_GIT_COMMIT);
 	fprintf(fp, "Compiler:       %s\n", CS_TARGET);
 #ifdef USE_COMPRESS
