@@ -167,7 +167,8 @@ void cs_ftimeus(struct timeb *tp)
 
 static const char *cs_time_format_start(const char *fmt)
 {
-	for(const char *p = fmt; *p; ++p)
+	const char *p;
+	for(p = fmt; *p; ++p)
 	{
 		if(*p != '%') { continue; }
 		const char *start = p;
