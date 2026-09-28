@@ -8,6 +8,7 @@
 #include "oscam-array.h"
 #include "oscam-string.h"
 #include "oscam-time.h"
+#include "oscam-config.h"
 #include "oscam-conf-chk.h"
 #include "oscam-conf-mk.h"
 #include "cscrypt/md5.h"
@@ -1302,6 +1303,46 @@ static int run_date_format_tests(void)
 		strftime(expected, sizeof(expected), cases[i].clock, &st);
 		if(strcmp(cs_format_clock(when, actual, sizeof(actual)), expected)) { ++failures; }
 	}
+	static const char *valid[] =
+	{
+		CS_DEFAULT_DATEFORMAT, "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y %I:%M %p",
+		"%% %Y", "%Y%Y%Y%Y%Y%Y%Y%j", NULL
+	};
+	static const char *invalid[] =
+	{
+		"%", "%Q", "%_d", "%E", "%Z", "%j%j%j%j%j%j%j%j%j%j%j",
+		"123456789012345678901234567890123", NULL
+	};
+	for(size_t i = 0; valid[i]; ++i)
+	{
+		if(cs_dateformat_error(valid[i])) { ++failures; }
+	}
+	for(size_t i = 0; invalid[i]; ++i)
+	{
+		if(!cs_dateformat_error(invalid[i])) { ++failures; }
+	}
+	{
+		char actual[32], expected[32];
+		const char *boundary = "%Y%Y%Y%Y%Y%Y%Y%j";
+		strftime(expected, sizeof(expected), boundary, &st);
+		config_set("global", "dateformat", (char *)boundary);
+		if(strcmp(cs_format_time(when, actual, sizeof(actual)), expected)) { ++failures; }
+	}
+	config_set("global", "dateformat", "%Y-%m-%d %% %H:%M");
+	if(strcmp(cfg.dateformat, "%Y-%m-%d %% %H:%M")) { ++failures; }
+	{
+		char actual[32], expected[32];
+		strftime(expected, sizeof(expected), "%Y-%m-%d %% %H:%M", &st);
+		if(strcmp(cs_format_time(when, actual, sizeof(actual)), expected)) { ++failures; }
+	}
+	config_set("global", "dateformat", "%Q");
+	if(strcmp(cfg.dateformat, "%Y-%m-%d %% %H:%M")) { ++failures; }
+	config_set("global", "dateformat", "%j%j%j%j%j%j%j%j%j%j%j");
+	if(strcmp(cfg.dateformat, "%Y-%m-%d %% %H:%M")) { ++failures; }
+	config_set("global", "dateformat", "123456789012345678901234567890123");
+	if(strcmp(cfg.dateformat, "%Y-%m-%d %% %H:%M")) { ++failures; }
+	config_set("global", "dateformat", "");
+	if(strcmp(cfg.dateformat, CS_DEFAULT_DATEFORMAT)) { ++failures; }
 	memcpy(cfg.dateformat, saved_format, sizeof(saved_format));
 	printf("Date format tests: %d failure(s)\n", failures);
 	return failures;

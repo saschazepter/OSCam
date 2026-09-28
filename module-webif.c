@@ -668,6 +668,21 @@ static void webif_save_config(char *section, struct templatevars *vars, struct u
 	}
 	int i;
 	int cnt = (*params).paramcount;
+	if(streq(section, "global"))
+	{
+		for(i = 0; i < cnt; i++)
+		{
+			if(!streq((*params).params[i], "dateformat")) { continue; }
+			const char *submitted = (*params).values[i];
+			const char *error = cs_dateformat_error(*submitted ? submitted : CS_DEFAULT_DATEFORMAT);
+			if(error)
+			{
+				tpl_printf(vars, TPLADD, "TMP", "ERROR: Date format was not saved: %s.", error);
+				tpl_addMsg(vars, tpl_getVar(vars, "TMP"));
+				return;
+			}
+		}
+	}
 	for(i = 0; i < cnt; i++)
 	{
 		char *token = (*params).params[i];

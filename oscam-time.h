@@ -1,6 +1,10 @@
 #ifndef OSCAM_TIME_H_
 #define OSCAM_TIME_H_
 
+#define CS_DEFAULT_DATEFORMAT "%Y-%m-%d %H:%M:%S"
+
+const char *cs_dateformat_error(const char *fmt);
+
 int64_t comp_timeb(struct timeb *tpa, struct timeb *tpb);
 int64_t comp_timebus(struct timeb *tpa, struct timeb *tpb);
 time_t cs_timegm(struct tm *tm);
