@@ -165,6 +165,53 @@ void cs_ftimeus(struct timeb *tp)
 	tp->millitm = tv.tv_usec;
 }
 
+/* Accepted directives have bounded output in the 32-byte log and WebIf
+ * buffers. Locale-dependent names and strftime width modifiers are excluded. */
+const char *cs_dateformat_error(const char *fmt)
+{
+	size_t output_len = 0;
+	if(!fmt || !*fmt) { return "dateformat is empty"; }
+	if(strlen(fmt) >= sizeof(cfg.dateformat))
+		{ return "dateformat exceeds 32 characters"; }
+
+	for(const char *p = fmt; *p; ++p)
+	{
+		size_t width = 1;
+		if((unsigned char)*p < 0x20 || *p == 0x7f)
+			{ return "dateformat contains a control character"; }
+		if(*p == '%')
+		{
+			if(!*++p) { return "dateformat ends with %"; }
+			switch(*p)
+			{
+				case '%': case 'u': case 'w': break;
+				case 'y': case 'm': case 'd': case 'e':
+				case 'H': case 'I': case 'M': case 'S': width = 2; break;
+				case 'j': width = 3; break;
+				case 'Y': width = 4; break;
+				case 'p':
+				{
+					/* Check both meridiems in the active LC_TIME locale. */
+					struct tm sample = { 0 };
+					char meridiem[32];
+					for(int hour = 0; hour <= 12; hour += 12)
+					{
+						sample.tm_hour = hour;
+						size_t n = strftime(meridiem, sizeof(meridiem), "%p", &sample);
+						if(!n) { return "dateformat meridiem is too long or unavailable"; }
+						if(n > width) { width = n; }
+					}
+					break;
+				}
+				default: return "dateformat has an unsupported strftime directive";
+			}
+		}
+		output_len += width;
+		if(output_len >= 32) { return "dateformat output exceeds 31 characters"; }
+	}
+	return NULL;
+}
+
 static const char *cs_time_format_start(const char *fmt)
 {
 	const char *p;
@@ -204,15 +251,15 @@ char *cs_format_time(time_t t, char *buf, size_t len)
 {
 	struct tm st;
 	localtime_r(&t, &st);
-	const char *fmt = cfg.dateformat[0] ? cfg.dateformat : "%Y-%m-%d %H:%M:%S";
-	return cs_strftime_or_default(buf, len, fmt, "%Y-%m-%d %H:%M:%S", &st);
+	const char *fmt = cfg.dateformat[0] ? cfg.dateformat : CS_DEFAULT_DATEFORMAT;
+	return cs_strftime_or_default(buf, len, fmt, CS_DEFAULT_DATEFORMAT, &st);
 }
 
 char *cs_format_date(time_t t, char *buf, size_t len)
 {
 	struct tm st;
 	localtime_r(&t, &st);
-	const char *fmt = cfg.dateformat[0] ? cfg.dateformat : "%Y-%m-%d %H:%M:%S";
+	const char *fmt = cfg.dateformat[0] ? cfg.dateformat : CS_DEFAULT_DATEFORMAT;
 	const char *timefmt = cs_time_format_start(fmt);
 	size_t date_len = timefmt ? (size_t)(timefmt - fmt) : strlen(fmt);
 	while(date_len && (fmt[date_len - 1] == ' ' || (timefmt && fmt[date_len - 1] == 'T'))) { --date_len; }
@@ -226,7 +273,7 @@ char *cs_format_clock(time_t t, char *buf, size_t len)
 {
 	struct tm st;
 	localtime_r(&t, &st);
-	const char *fmt = cfg.dateformat[0] ? cfg.dateformat : "%Y-%m-%d %H:%M:%S";
+	const char *fmt = cfg.dateformat[0] ? cfg.dateformat : CS_DEFAULT_DATEFORMAT;
 	const char *timefmt = cs_time_format_start(fmt);
 	return cs_strftime_or_default(buf, len, timefmt ? timefmt : "%H:%M:%S", "%H:%M:%S", &st);
 }
