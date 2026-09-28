@@ -276,7 +276,7 @@ static uint8_t get_log_header(char *txt, int32_t txt_size, uint8_t* hdr_logcount
 		cl ? cl->typ : ' '
 	);
 
-	if(tmp == 39)
+	if(tmp > 0 && tmp < txt_size && tmp <= 255)
 	{
 		if(hdr_logcount_offset != NULL)
 		{
@@ -286,20 +286,21 @@ static uint8_t get_log_header(char *txt, int32_t txt_size, uint8_t* hdr_logcount
 
 		if(hdr_date_offset != NULL)
 		{
-			// depends on snprintf(...) format
-			(*hdr_date_offset) = *hdr_logcount_offset + 4;
+			(*hdr_date_offset) = 8;
 		}
 
 		if(hdr_time_offset != NULL)
 		{
-			// depends on snprintf(...) format
-			(*hdr_time_offset) = *hdr_date_offset + 11;
+			char clockbuf[32];
+			cs_format_clock(walltime, clockbuf, sizeof(clockbuf));
+			size_t stamp_len = cs_strlen(tbuf), clock_len = cs_strlen(clockbuf);
+			(*hdr_time_offset) = 8 + (clock_len && clock_len <= stamp_len &&
+					!strcmp(tbuf + stamp_len - clock_len, clockbuf) ? stamp_len - clock_len : 0);
 		}
 
 		if(hdr_info_offset != NULL)
 		{
-			// depends on snprintf(...) format
-			(*hdr_info_offset) = *hdr_time_offset + 9;
+			(*hdr_info_offset) = 8 + cs_strlen(tbuf) + 1;
 		}
 
 		return (uint8_t)tmp;
@@ -545,7 +546,8 @@ static void __cs_log_check_duplicates(uint8_t hdr_len, uint8_t hdr_logcount_offs
 		{
 			uint8_t dupl_hdr_logcount_offset = 0, dupl_hdr_date_offset = 0, dupl_hdr_time_offset = 0, dupl_hdr_info_offset = 0;
 			uint8_t dupl_header_len = get_log_header(dupl, sizeof(dupl), &dupl_hdr_logcount_offset, &dupl_hdr_date_offset, &dupl_hdr_time_offset, &dupl_hdr_info_offset);
-			snprintf(dupl + dupl_header_len - 1, sizeof(dupl) - dupl_header_len, "        (-) -- Skipped %u duplicated log lines --", last_log_duplicates);
+			size_t summary_offset = dupl_header_len ? dupl_header_len - 1 : 0;
+			snprintf(dupl + summary_offset, sizeof(dupl) - summary_offset, "        (-) -- Skipped %u duplicated log lines --", last_log_duplicates);
 			write_to_log_int(dupl, dupl_header_len, dupl_hdr_logcount_offset, dupl_hdr_date_offset, dupl_hdr_time_offset, dupl_hdr_info_offset);
 			last_log_duplicates = 0;
 			last_log_ts = log_ts;
@@ -648,11 +650,13 @@ void cs_statistics(struct s_client *client)
 {
 	if(!cfg.disableuserfile)
 	{
+		struct tm lt;
 		char buf[LOG_BUF_SIZE];
 
 		float cwps;
 
 		time_t walltime = cs_time();
+		localtime_r(&walltime, &lt);
 		if(client->cwfound + client->cwnot > 0)
 		{
 			cwps = client->last - client->login;
@@ -689,10 +693,9 @@ void cs_statistics(struct s_client *client)
 		/* statistics entry start with 's' to filter it out on other end of pipe
 		 * so we can use the same Pipe as Log
 		 */
-		char stbuf[32];
-		cs_format_time(walltime, stbuf, sizeof(stbuf));
-		snprintf(buf, sizeof(buf), "s%s %3.1f %s %s %d %d %d %d %d %d %d %" PRId64 " %" PRId64 " %02d:%02d:%02d %s %04X@%06X:%04X %s\n",
-				stbuf, cwps,
+		snprintf(buf, sizeof(buf), "s%02d.%02d.%02d %02d:%02d:%02d %3.1f %s %s %d %d %d %d %d %d %d %" PRId64 " %" PRId64 " %02d:%02d:%02d %s %04X@%06X:%04X %s\n",
+				lt.tm_mday, lt.tm_mon + 1, lt.tm_year % 100,
+				lt.tm_hour, lt.tm_min, lt.tm_sec, cwps,
 				client->account->usr,
 				cs_inet_ntoa(client->ip),
 				client->port,
