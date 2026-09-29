@@ -4,7 +4,6 @@
 
 #ifdef CS_CACHEEX
 
-#include "cscrypt/md5.h"
 #include "module-cacheex.h"
 #include "module-cw-cycle-check.h"
 #include "oscam-cache.h"

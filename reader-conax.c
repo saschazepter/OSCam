@@ -1,8 +1,6 @@
 #include "globals.h"
 #ifdef READER_CONAX
-#include "cscrypt/bn.h"
 #include "reader-common.h"
-#include "cscrypt/des.h"
 
 static int32_t CWPK_CNX(struct s_reader *reader,uint8_t *msg)
 {

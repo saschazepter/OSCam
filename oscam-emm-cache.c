@@ -7,7 +7,6 @@
 #include "oscam-files.h"
 #include "oscam-time.h"
 #include "oscam-lock.h"
-#include "cscrypt/md5.h"
 #define LINESIZE 1024
 #define DEFAULT_LOCK_TIMEOUT 1000000
 

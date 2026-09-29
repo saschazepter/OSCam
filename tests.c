@@ -9,17 +9,10 @@
 #include "oscam-string.h"
 #include "oscam-conf-chk.h"
 #include "oscam-conf-mk.h"
-#include "cscrypt/md5.h"
-#include "cscrypt/sha1.h"
-#include "cscrypt/sha256.h"
-#include "cscrypt/mdc2.h"
-#include "cscrypt/aes.h"
-#include "cscrypt/fast_aes.h"
-#include "cscrypt/des.h"
-#include "cscrypt/idea.h"
-#include "cscrypt/rc6.h"
-#include "cscrypt/bn.h"
-#include "oscam-aes.h"
+#include "oscam-crypto.h"
+#if defined(WITH_MBEDTLS)
+#include <psa/crypto.h>
+#endif
 
 struct test_vec
 {
@@ -224,6 +217,7 @@ struct hash_vec
 
 /* MD5: uses the one-shot MD5() helper.
  *      RFC 1321 Appendix A.5 test suite. */
+#ifdef WITH_LIB_MD5
 static int run_md5_tests(void)
 {
 	static const struct hash_vec vec[] = {
@@ -258,10 +252,12 @@ static int run_md5_tests(void)
 	}
 	return failures;
 }
+#endif /* WITH_LIB_MD5 */
 
 /* SHA1: exercises both one-shot SHA1() and the Init/Update/Final
  *       variant, split on byte 1 to catch partial-update bugs.
  *       Vectors: FIPS 180-1. */
+#ifdef WITH_LIB_SHA1
 static int run_sha1_tests(void)
 {
 	static const struct hash_vec vec[] = {
@@ -310,9 +306,11 @@ static int run_sha1_tests(void)
 	}
 	return failures;
 }
+#endif /* WITH_LIB_SHA1 */
 
 /* SHA256: streaming API only.
  *         Vectors: NIST FIPS 180-2. */
+#ifdef WITH_LIB_SHA256
 static int run_sha256_tests(void)
 {
 	static const struct hash_vec vec[] = {
@@ -334,21 +332,20 @@ static int run_sha256_tests(void)
 		for (size_t i = 0; i < rep; i++) memcpy(in + i * il, v->input, il);
 
 		uint8_t md[32];
-		mbedtls_sha256_context c;
-		mbedtls_sha256_init(&c);
-		mbedtls_sha256_starts(&c, 0);
+		SHA256_CTX c;
+		SHA256_Init(&c);
 		/* feed in 2 chunks to also exercise streaming */
 		if (total > 1)
 		{
-			mbedtls_sha256_update(&c, in, total / 2);
-			mbedtls_sha256_update(&c, in + total / 2, total - total / 2);
+			SHA256_Update(&c, in, total / 2);
+			SHA256_Update(&c, in + total / 2, total - total / 2);
 		}
 		else if (total == 1)
 		{
-			mbedtls_sha256_update(&c, in, 1);
+			SHA256_Update(&c, in, 1);
 		}
-		mbedtls_sha256_finish(&c, md);
-		mbedtls_sha256_free(&c);
+		SHA256_Final(md, &c);
+		SHA256_Free(&c);
 		free(in);
 
 		printf(" Testing \"%s\"", v->name);
@@ -358,10 +355,12 @@ static int run_sha256_tests(void)
 	}
 	return failures;
 }
+#endif /* WITH_LIB_SHA256 */
 
 /* --------------------------------------------------------------------- */
 /*  AES                                                                  */
 /* --------------------------------------------------------------------- */
+#ifdef WITH_LIB_AES
 
 /* Vectors: NIST SP 800-38A F.1.1/F.1.5 (ECB) and F.2.1/F.2.5 (CBC). */
 
@@ -542,13 +541,13 @@ static int run_aesctx_tests(void)
 		hex_decode(ecb_vec.pt_hex, pt, sizeof(pt));
 		hex_decode(ecb_vec.ct_hex, expct, sizeof(expct));
 		AesCtx c;
-		AesCtxIni(&c, NULL, key, KEY128, EBC);
+		AesCtxIni(&c, NULL, key, KEY128, ECB);
 		AesEncrypt(&c, pt, got, 16);
 		printf(" Testing \"%s\" encrypt", ecb_vec.name);
 		if (memcmp(got, expct, 16) == 0) { printf(" [OK]"); }
 		else { report_mismatch("AesCtx-ECB enc", ecb_vec.name, got, 16, ecb_vec.ct_hex); failures++; }
 
-		AesCtxIni(&c, NULL, key, KEY128, EBC);
+		AesCtxIni(&c, NULL, key, KEY128, ECB);
 		AesDecrypt(&c, expct, got, 16);
 		printf(" / decrypt");
 		if (memcmp(got, pt, 16) == 0) { printf(" [OK]\n"); }
@@ -577,6 +576,7 @@ static int run_aesctx_tests(void)
 	fflush(stdout);
 	return failures;
 }
+#endif /* WITH_LIB_AES */
 
 /* --------------------------------------------------------------------- */
 /*  DES / 3DES                                                           */
@@ -585,6 +585,7 @@ static int run_aesctx_tests(void)
 /* Single-block DES: FIPS 81 variable-plaintext vector.
  * 3DES EDE2 CBC: reversal-symmetry (encrypt then decrypt recovers
  *                plaintext). */
+#ifdef WITH_LIB_DES
 static int run_des_tests(void)
 {
 	int failures = 0;
@@ -679,6 +680,7 @@ static int run_des_tests(void)
 	fflush(stdout);
 	return failures;
 }
+#endif /* WITH_LIB_DES */
 
 /* --------------------------------------------------------------------- */
 /*  Bignum / RSA modular exponentiation                                  */
@@ -686,6 +688,7 @@ static int run_des_tests(void)
 
 /* Tiny modexp vectors — validates that BN_mod_exp does X = A^E mod N
  * correctly. Use small numbers first, then a realistic RSA size. */
+#ifdef WITH_LIB_BIGNUM
 static int run_bn_tests(void)
 {
 	int failures = 0;
@@ -735,6 +738,7 @@ static int run_bn_tests(void)
 	fflush(stdout);
 	return failures;
 }
+#endif /* WITH_LIB_BIGNUM */
 
 /* --------------------------------------------------------------------- */
 /*  MDC2 (used by Nagra / Nagra-AK7 / Seca smartcard readers)            */
@@ -910,6 +914,7 @@ static int run_rc6_tests(void)
 /* --------------------------------------------------------------------- */
 /*  Void* AES wrappers used by camd33/camd35/monitor/viaccess            */
 /* --------------------------------------------------------------------- */
+#ifdef WITH_LIB_AES
 static int run_void_aes_tests(void)
 {
 	int failures = 0;
@@ -978,9 +983,116 @@ static int run_void_aes_tests(void)
 	return failures;
 }
 
+/* Reproduce the exact camd35 (cs378x) workload pattern:
+ *   - AES key = MD5(password)
+ *   - aes_encrypt_idx + aes_decrypt round-trip on multi-block buffers
+ *   - repeated calls on the same aes_keys instance (camd35 sends many
+ *     packets back-to-back without re-keying)
+ *   - varied buffer sizes typical of camd35 traffic
+ * If this test stays clean while live camd35 fails, the bug is outside
+ * of the crypto primitives. */
+#ifdef WITH_LIB_MD5
+static int run_camd35_pattern_tests(void)
+{
+	int failures = 0;
+	printf("camd35-style AES round-trip on MD5(password)\n");
+
+	static const char *password = "verysecret";
+	uint8_t md5key[16];
+	if (oscam_hash(OSCAM_HASH_SHA1, NULL, 0, NULL, 0, md5key) == -1) {} /* keep linker happy */
+	if (MD5((const unsigned char *)password, strlen(password), md5key) == NULL) {
+		printf(" === ERROR === MD5(password) returned NULL\n");
+		return 1;
+	}
+
+	struct aes_keys *ak = NULL;
+	if (!aes_set_key_alloc(&ak, (char *)md5key)) {
+		printf(" === ERROR === aes_set_key_alloc(MD5) failed\n");
+		return 1;
+	}
+
+	/* Test buffer sizes: 32 (typical camd35 header), 48, 96, 256 */
+	const int sizes[] = { 32, 48, 96, 256, 0 };
+	for (int si = 0; sizes[si]; si++) {
+		int n = sizes[si];
+		uint8_t orig[256], work[256];
+		/* pseudo-random payload, deterministic per size */
+		for (int i = 0; i < n; i++) orig[i] = (uint8_t)(i * 17 + si * 31 + 3);
+
+		/* Single round-trip */
+		memcpy(work, orig, n);
+		aes_encrypt_idx(ak, work, n);
+		int after_enc_equal = (memcmp(work, orig, n) == 0);
+		aes_decrypt(ak, work, n);
+		printf(" Testing %3d byte round-trip", n);
+		if (after_enc_equal) {
+			printf(" [FAIL: encrypt didn't change data]\n"); failures++;
+		} else if (memcmp(work, orig, n) == 0) {
+			printf(" [OK]\n");
+		} else {
+			printf(" [FAIL: decrypt did not recover plaintext]\n"); failures++;
+		}
+		fflush(stdout);
+	}
+
+	/* Repeated round-trips on same aes_keys (catches state-leak across calls) */
+	{
+		uint8_t orig[64], work[64];
+		for (int i = 0; i < 64; i++) orig[i] = (uint8_t)(0xA0 + i);
+		int rtfails = 0;
+		for (int round = 0; round < 50; round++) {
+			memcpy(work, orig, 64);
+			aes_encrypt_idx(ak, work, 64);
+			aes_decrypt(ak, work, 64);
+			if (memcmp(work, orig, 64) != 0) { rtfails++; break; }
+		}
+		printf(" Testing 50 back-to-back round-trips");
+		if (rtfails == 0) { printf(" [OK]\n"); }
+		else { printf(" [FAIL after round-trip %d]\n", rtfails); failures++; }
+		fflush(stdout);
+	}
+
+	/* Two independent aes_keys instances side-by-side (catches static-buffer
+	 * sharing between contexts) */
+	{
+		struct aes_keys *ak2 = NULL;
+		uint8_t md5key2[16];
+		if (MD5((const unsigned char *)"otherpass", 9, md5key2) == NULL ||
+		    !aes_set_key_alloc(&ak2, (char *)md5key2)) {
+			printf(" Testing two-key isolation [SKIP: second key setup failed]\n");
+		} else {
+			uint8_t a[32], b[32], a_ct[32], b_ct[32];
+			for (int i = 0; i < 32; i++) { a[i] = i; b[i] = i; }
+			memcpy(a_ct, a, 32); aes_encrypt_idx(ak,  a_ct, 32);
+			memcpy(b_ct, b, 32); aes_encrypt_idx(ak2, b_ct, 32);
+			printf(" Testing two-key isolation");
+			if (memcmp(a_ct, b_ct, 32) == 0) {
+				printf(" [FAIL: different keys produced identical ciphertext]\n"); failures++;
+			} else {
+				/* Decrypt with right key must recover plaintext */
+				aes_decrypt(ak,  a_ct, 32);
+				aes_decrypt(ak2, b_ct, 32);
+				if (memcmp(a_ct, a, 32) == 0 && memcmp(b_ct, b, 32) == 0) {
+					printf(" [OK]\n");
+				} else {
+					printf(" [FAIL: round-trip with isolated keys broken]\n"); failures++;
+				}
+			}
+			NULLFREE(ak2);
+		}
+		fflush(stdout);
+	}
+
+	NULLFREE(ak);
+	return failures;
+}
+#endif /* WITH_LIB_MD5 */
+#endif /* WITH_LIB_AES */
+
 /* --------------------------------------------------------------------- */
 /*  Bignum: BN_bn2bin / BN_num_bytes / BN_mod_inverse                    */
 /* --------------------------------------------------------------------- */
+#ifdef WITH_LIB_BIGNUM
 static int run_bn_extra_tests(void)
 {
 	int failures = 0;
@@ -1059,6 +1171,7 @@ static int run_bn_extra_tests(void)
 	fflush(stdout);
 	return failures;
 }
+#endif /* WITH_LIB_BIGNUM */
 
 /* --------------------------------------------------------------------- */
 /*  Raw single-block DES via des() + schedule                      */
@@ -1076,17 +1189,17 @@ static int run_des_raw_tests(void)
 	hex_decode("0123456789abcdef", pt, sizeof(pt));
 	hex_decode("85e813540f0ab405", expct, sizeof(expct));
 
-	uint32_t ks[32];
-	des_set_key(key, ks);
+	des_key_schedule ks;
+	des_set_key(key, &ks);
 
 	memcpy(buf, pt, 8);
-	des(buf, ks, 1);
+	des(buf, &ks, 1);
 	printf(" Testing \"Stallings via des()\" encrypt");
 	if (memcmp(buf, expct, 8) == 0) { printf(" [OK]"); }
 	else { report_mismatch("des enc", "Stallings", buf, 8, "85e813540f0ab405"); failures++; }
 
 	memcpy(buf, expct, 8);
-	des(buf, ks, 0);
+	des(buf, &ks, 0);
 	printf(" / decrypt");
 	if (memcmp(buf, pt, 8) == 0) { printf(" [OK]\n"); }
 	else { report_mismatch("des dec", "Stallings", buf, 8, "0123456789abcdef"); failures++; }
@@ -1123,7 +1236,7 @@ static int run_des_raw_tests(void)
 /* --------------------------------------------------------------------- */
 /*  aes_decrypt_from_list (per-reader AES key DB used by Viaccess/Conax) */
 /* --------------------------------------------------------------------- */
-#ifdef READER_VIACCESS
+#ifdef WITH_LIB_AES
 static int run_aes_key_list_tests(void)
 {
 	int failures = 0;
@@ -1165,7 +1278,6 @@ static int run_aes_key_list_tests(void)
 	fflush(stdout);
 	return failures;
 }
-#endif /* READER_VIACCESS */
 
 /* --------------------------------------------------------------------- */
 /*  AES-128-CBC decrypt chunked: verify IV chaining across multiple      */
@@ -1205,6 +1317,7 @@ static int run_aes_cbc_dec_chunked(void)
 	fflush(stdout);
 	return failures;
 }
+#endif /* WITH_LIB_AES */
 
 /* --------------------------------------------------------------------- */
 /*  __md5_crypt (webif password hashing)                                 */
@@ -1237,35 +1350,57 @@ static int run_crypto_tests(void)
 	int failures = 0;
 	printf("\n=== Crypto tests ===\n");
 
-	failures += run_md5_tests();
+#if defined(WITH_MBEDTLS)
+	/* PSA needs to be initialized before the first key-manager op
+	 * (cipher, key import, etc). In a normal oscam run ssl_init() takes
+	 * care of this, but the test binary short-circuits into run_tests()
+	 * at the top of main(), well before ssl_init(). */
+	if (psa_crypto_init() != PSA_SUCCESS) {
+		printf(" === ERROR ===\n  psa_crypto_init() failed; AES/cipher tests will fail\n");
+		failures++;
+	}
+#endif
+
 #ifdef WITH_LIB_MD5
+	failures += run_md5_tests();
 	failures += run_md5_crypt_tests();
 #endif
+#ifdef WITH_LIB_SHA1
 	failures += run_sha1_tests();
+#endif
+#ifdef WITH_LIB_SHA256
 	failures += run_sha256_tests();
+#endif
 #ifdef WITH_LIB_MDC2
 	failures += run_mdc2_tests();
 #endif
+#ifdef WITH_LIB_AES
 	failures += run_aes_ecb_tests();
 	failures += run_aes_cbc_tests();
 	failures += run_aesctx_tests();
 	failures += run_void_aes_tests();
+#ifdef WITH_LIB_MD5
+	failures += run_camd35_pattern_tests();
+#endif
+#endif
 #ifdef WITH_LIB_IDEA
 	failures += run_idea_tests();
 #endif
 #ifdef WITH_LIB_RC6
 	failures += run_rc6_tests();
 #endif
-	failures += run_des_tests();
 #ifdef WITH_LIB_DES
+	failures += run_des_tests();
 	failures += run_des_raw_tests();
 #endif
+#ifdef WITH_LIB_AES
 	failures += run_aes_cbc_dec_chunked();
-#ifdef READER_VIACCESS
 	failures += run_aes_key_list_tests();
 #endif
+#ifdef WITH_LIB_BIGNUM
 	failures += run_bn_tests();
 	failures += run_bn_extra_tests();
+#endif
 	return failures;
 }
 int run_all_tests(void)
