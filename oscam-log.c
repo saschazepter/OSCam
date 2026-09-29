@@ -263,25 +263,20 @@ static uint8_t get_log_header(char *txt, int32_t txt_size, uint8_t* hdr_logcount
 								uint8_t* hdr_date_offset, uint8_t* hdr_time_offset, uint8_t* hdr_info_offset)
 {
 	struct s_client *cl = cur_client();
-	struct tm lt;
 	int32_t tmp;
 
 	cs_ftime(&log_ts);
 	time_t walltime = log_ts.time;
-	localtime_r(&walltime, &lt);
 
-	tmp = snprintf(txt, txt_size, "[LOG000]%04d/%02d/%02d %02d:%02d:%02d %08X %c ",
-		lt.tm_year + 1900,
-		lt.tm_mon + 1,
-		lt.tm_mday,
-		lt.tm_hour,
-		lt.tm_min,
-		lt.tm_sec,
+	char tbuf[32];
+	cs_format_time(walltime, tbuf, sizeof(tbuf));
+	tmp = snprintf(txt, txt_size, "[LOG000]%s %08X %c ",
+		tbuf,
 		cl ? cl->tid : 0,
 		cl ? cl->typ : ' '
 	);
 
-	if(tmp == 39)
+	if(tmp > 0 && tmp < txt_size && tmp <= 255)
 	{
 		if(hdr_logcount_offset != NULL)
 		{
@@ -291,20 +286,21 @@ static uint8_t get_log_header(char *txt, int32_t txt_size, uint8_t* hdr_logcount
 
 		if(hdr_date_offset != NULL)
 		{
-			// depends on snprintf(...) format
-			(*hdr_date_offset) = *hdr_logcount_offset + 4;
+			(*hdr_date_offset) = 8;
 		}
 
 		if(hdr_time_offset != NULL)
 		{
-			// depends on snprintf(...) format
-			(*hdr_time_offset) = *hdr_date_offset + 11;
+			char clockbuf[32];
+			cs_format_clock(walltime, clockbuf, sizeof(clockbuf));
+			size_t stamp_len = cs_strlen(tbuf), clock_len = cs_strlen(clockbuf);
+			(*hdr_time_offset) = 8 + (clock_len && clock_len <= stamp_len &&
+					!strcmp(tbuf + stamp_len - clock_len, clockbuf) ? stamp_len - clock_len : 0);
 		}
 
 		if(hdr_info_offset != NULL)
 		{
-			// depends on snprintf(...) format
-			(*hdr_info_offset) = *hdr_time_offset + 9;
+			(*hdr_info_offset) = 8 + cs_strlen(tbuf) + 1;
 		}
 
 		return (uint8_t)tmp;
@@ -550,7 +546,8 @@ static void __cs_log_check_duplicates(uint8_t hdr_len, uint8_t hdr_logcount_offs
 		{
 			uint8_t dupl_hdr_logcount_offset = 0, dupl_hdr_date_offset = 0, dupl_hdr_time_offset = 0, dupl_hdr_info_offset = 0;
 			uint8_t dupl_header_len = get_log_header(dupl, sizeof(dupl), &dupl_hdr_logcount_offset, &dupl_hdr_date_offset, &dupl_hdr_time_offset, &dupl_hdr_info_offset);
-			snprintf(dupl + dupl_header_len - 1, sizeof(dupl) - dupl_header_len, "        (-) -- Skipped %u duplicated log lines --", last_log_duplicates);
+			size_t summary_offset = dupl_header_len ? dupl_header_len - 1 : 0;
+			snprintf(dupl + summary_offset, sizeof(dupl) - summary_offset, "        (-) -- Skipped %u duplicated log lines --", last_log_duplicates);
 			write_to_log_int(dupl, dupl_header_len, dupl_hdr_logcount_offset, dupl_hdr_date_offset, dupl_hdr_time_offset, dupl_hdr_info_offset);
 			last_log_duplicates = 0;
 			last_log_ts = log_ts;
