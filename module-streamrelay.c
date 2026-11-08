@@ -166,13 +166,19 @@ static void write_cw(ECM_REQUEST *er, int32_t connid)
 	if (memcmp(er->cw, "\x00\x00\x00\x00\x00\x00\x00\x00", 8) != 0)
 	{
 		if (has_dvbcsa_ecm)
-			{ dvbcsa_bs_key_set(er->cw, key_data[connid].key[EVEN]); }
+		{
+			dvbcsa_bs_key_set(er->cw, key_data[connid].key[EVEN]);
+			key_data[connid].have_key[EVEN] = true;
+		}
 	}
 
 	if (memcmp(er->cw + 8, "\x00\x00\x00\x00\x00\x00\x00\x00", 8) != 0)
 	{
 		if (has_dvbcsa_ecm)
-			{ dvbcsa_bs_key_set(er->cw + 8, key_data[connid].key[ODD]); }
+		{
+			dvbcsa_bs_key_set(er->cw + 8, key_data[connid].key[ODD]);
+			key_data[connid].have_key[ODD] = true;
+		}
 	}
 #if DVBCSA_KEY_ECM
 	if (er->srvid != last_srvid[connid] && ecm != 0 && has_dvbcsa_ecm)
@@ -678,9 +684,16 @@ static void DescrambleTsPackets(stream_client_data *data, uint8_t *stream_buf, u
 		if ((tsHeader & 0xC0) == 0)
 			{ continue; }
 
-		stream_buf[i + 3] &= 0x3f; // consider it decrypted now
 		oddeven = (tsHeader & 0xC0) == 0xC0 ? ODD: EVEN;
 		decrypt(oddeven == ODD ? EVEN : ODD);
+
+		// nothing opens it, so it is handed over as it came in, still marked
+		// scrambled: clearing the bits would label ciphertext as data
+		if (!key_data[data->connid].have_key[oddeven])
+			{ continue; }
+
+		stream_buf[i + 3] &= 0x3f; // consider it decrypted now
+
 		tsbbatch[fill[oddeven]].data = &stream_buf[i + offset];
 		tsbbatch[fill[oddeven]].len = packetSize - offset;
 		fill[oddeven]++;
@@ -949,6 +962,8 @@ static void *stream_client_handler(void *arg)
 
 		key_data[conndata->connid].key[ODD]  = dvbcsa_bs_key_alloc();
 		key_data[conndata->connid].key[EVEN] = dvbcsa_bs_key_alloc();
+		key_data[conndata->connid].have_key[ODD]  = false;
+		key_data[conndata->connid].have_key[EVEN] = false;
 
 		if (!cs_malloc(&tsbbatch, (cluster_size + 1) * sizeof(struct dvbcsa_bs_batch_s)))
 			{ break; }

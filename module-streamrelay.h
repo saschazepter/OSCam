@@ -28,6 +28,7 @@
 typedef struct
 {
 	struct dvbcsa_bs_key_s *key[2];
+	bool have_key[2];
 } stream_client_key_data;
 
 typedef struct
