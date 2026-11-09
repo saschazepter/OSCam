@@ -95,6 +95,10 @@ void stop_stream_server(void);
 
 bool stream_write_cw(ECM_REQUEST *er);
 
+#ifdef BUILD_TESTS
+int run_streamrelay_tests(void);
+#endif
+
 #endif // MODULE_STREAMRELAY
 
 #endif // MODULE_STREAMRELAY_H_

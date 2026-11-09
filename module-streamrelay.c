@@ -1880,4 +1880,8 @@ void module_streamrelay(struct s_module *ph)
 	ph->s_handler = streamrelay_handler;
 }
 
+#ifdef BUILD_TESTS
+#include "tests-streamrelay.c"
+#endif
+
 #endif // MODULE_STREAMRELAY
