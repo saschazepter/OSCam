@@ -1631,7 +1631,7 @@ void free_reader(struct s_reader *rdr)
 
 	ll_destroy_data(&rdr->emmstat);
 
-#ifdef WITH_LIB_AES
+#if defined(WITH_LIB_AES) && defined(READER_VIACCESS)
 	aes_clear_entries(&rdr->aes_list);
 #endif
 

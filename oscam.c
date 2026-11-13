@@ -1789,6 +1789,11 @@ int32_t main(int32_t argc, char *argv[])
 
 	find_conf_dir();
 
+	/* Must run before parse_cmdline_params() (-V path) and before any
+	 * config/user/reader init — mbedTLS 4.x PSA-backed shim needs
+	 * psa_crypto_init() first. No-op without WITH_SSL. */
+	ssl_init();
+
 	parse_cmdline_params(argc, argv);
 
 	init_signal_pre();
@@ -1840,7 +1845,6 @@ int32_t main(int32_t argc, char *argv[])
 	cs_init_statistics();
 	coolapi_open_all();
 	init_stat();
-	ssl_init();
 
 	// These initializations *MUST* be called after init_config()
 	// because modules depend on config values.

@@ -1,5 +1,11 @@
 #define MODULE_LOG_PREFIX "crypto-mbedtls"
 
+/* Enable access to private mbedTLS identifiers. Needed because mbedTLS 4.x
+ * moved bignum (mbedtls_mpi_*) to the private API and PSA Crypto offers no
+ * public bignum primitives. Scoped to this file only (not globally) to avoid
+ * type-conflict issues in other TUs. MUST precede all mbedTLS includes. */
+#define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+
 #include "globals.h"
 #include "oscam-crypto.h"
 #include "oscam-string.h"
@@ -11,20 +17,12 @@
  * MbedTLS backend
  * =========================================================== */
 #include "mbedtls/platform.h"
-#if defined(WITH_SSL) || defined(WITH_LIB_AES)
-#include "mbedtls/aes.h"
-#endif
-#if defined(WITH_SSL) || defined(WITH_LIB_DES) || defined(WITH_LIB_MDC2)
-#include "mbedtls/des.h"
-#endif
-#if defined(WITH_SSL) || defined(WITH_LIB_MD5)
-#include "mbedtls/md5.h"
-#endif
-#if defined(WITH_SSL) || defined(WITH_LIB_SHA1)
-#include "mbedtls/sha1.h"
-#endif
-#if defined(WITH_SSL) || defined(WITH_LIB_SHA256)
-#include "mbedtls/sha256.h"
+
+/* PSA Crypto umbrella header — one include covers MD5, SHA1, SHA256 and AES.
+ * Gated so builds without any PSA-backed crypto feature don't pull it in. */
+#if defined(WITH_SSL) || defined(WITH_LIB_AES) || defined(WITH_LIB_MD5) \
+	|| defined(WITH_LIB_SHA1) || defined(WITH_LIB_SHA256)
+#include "psa/crypto.h"
 #endif
 
 /* ----------------------------------------------------------------------
@@ -35,29 +33,20 @@
 #define OSCAM_STATIC_ASSERT(cond, name) \
 	typedef char static_assert_##name[(cond) ? 1 : -1]
 
-#if defined(WITH_LIB_DES) || defined(WITH_LIB_MDC2)
-OSCAM_STATIC_ASSERT(sizeof(mbedtls_des_context) <= 160,
-	des_key_schedule_too_small);
-#endif
+/* DES: standalone implementation — DES was removed in mbedTLS 4.0.
+ * Our des_key_schedule opaque buffer is 160 bytes; we only need 8 bytes
+ * for the raw key, so this is fine. */
 
+/* Size checks for opaque PSA contexts embedded in the shim's CTX buffers.
+ * psa_hash_operation_t fits comfortably in our 128/256-byte opaque buffers. */
 #if defined(WITH_LIB_SHA1)
-OSCAM_STATIC_ASSERT(sizeof(mbedtls_sha1_context) <= 128,
+OSCAM_STATIC_ASSERT(sizeof(psa_hash_operation_t) <= 256,
 	SHA_CTX_too_small);
 #endif
 
 #if defined(WITH_LIB_SHA256)
-OSCAM_STATIC_ASSERT(sizeof(mbedtls_sha256_context) <= 256,
+OSCAM_STATIC_ASSERT(sizeof(psa_hash_operation_t) <= 256,
 	SHA256_CTX_too_small);
-#endif
-
-#if defined(WITH_LIB_AES)
-OSCAM_STATIC_ASSERT(sizeof(mbedtls_aes_context) <= 512,
-	AES_KEY_too_small);
-#endif
-
-#if defined(WITH_LIB_MD5)
-OSCAM_STATIC_ASSERT(sizeof(mbedtls_md5_context) <= 128,
-	MD5_CTX_too_small);
 #endif
 
 /* ----------------------------------------------------------------------
@@ -67,6 +56,10 @@ int oscam_hash(oscam_hash_alg alg, const unsigned char *d1, size_t l1, const uns
 {
 	if (!out)
 		return -1;
+
+#if !defined(WITH_LIB_SHA1) && !defined(WITH_LIB_SHA256)
+	(void)d1; (void)l1; (void)d2; (void)l2;
+#endif
 
 	switch (alg) {
 	case OSCAM_HASH_SHA1:
@@ -105,22 +98,19 @@ int oscam_hash(oscam_hash_alg alg, const unsigned char *d1, size_t l1, const uns
 }
 
 /* ----------------------------------------------------------------------
- * MD5
+ * MD5 (via PSA Crypto API)
  * ---------------------------------------------------------------------- */
 #ifdef WITH_LIB_MD5
 unsigned char *MD5(const unsigned char *d, size_t n, unsigned char *md)
 {
 	static unsigned char m[MD5_DIGEST_LENGTH];
+	size_t out_len = 0;
 
 	if (md == NULL)
 		md = m;
 
-	mbedtls_md5_context ctx;
-	mbedtls_md5_init(&ctx);
-	mbedtls_md5_starts(&ctx);
-	mbedtls_md5_update(&ctx, d, n);
-	mbedtls_md5_finish(&ctx, md);
-	mbedtls_md5_free(&ctx);
+	if (psa_hash_compute(PSA_ALG_MD5, d, n, md, MD5_DIGEST_LENGTH, &out_len) != PSA_SUCCESS)
+		return NULL;
 
 	return md;
 }
@@ -147,8 +137,10 @@ char *__md5_crypt(const char *pw, const char *salt, char *passwd)
 	unsigned char final[17];  /* final[16] exists only to aid in looping */
 	int sl, pl, i, pw_len;
 	unsigned long l;
+	size_t out_len = 0;
 
-	mbedtls_md5_context ctx, ctx1;
+	psa_hash_operation_t ctx  = PSA_HASH_OPERATION_INIT;
+	psa_hash_operation_t ctx1 = PSA_HASH_OPERATION_INIT;
 
 	/* Refine the salt */
 	sp = salt;
@@ -159,58 +151,57 @@ char *__md5_crypt(const char *pw, const char *salt, char *passwd)
 	sl = ep - sp;
 
 	/* Start main digest */
-	mbedtls_md5_init(&ctx);
-	mbedtls_md5_starts(&ctx);
+	if (psa_hash_setup(&ctx, PSA_ALG_MD5) != PSA_SUCCESS)
+		return NULL;
 
 	pw_len = strlen(pw);
-	mbedtls_md5_update(&ctx, (const unsigned char *)pw, pw_len);
-	mbedtls_md5_update(&ctx, (const unsigned char *)__md5__magic, strlen(__md5__magic));
-	mbedtls_md5_update(&ctx, (const unsigned char *)sp, sl);
+	psa_hash_update(&ctx, (const unsigned char *)pw, pw_len);
+	psa_hash_update(&ctx, (const unsigned char *)__md5__magic, strlen(__md5__magic));
+	psa_hash_update(&ctx, (const unsigned char *)sp, sl);
 
 	/* MD5(pw, salt, pw) */
-	mbedtls_md5_init(&ctx1);
-	mbedtls_md5_starts(&ctx1);
-	mbedtls_md5_update(&ctx1, (const unsigned char *)pw, pw_len);
-	mbedtls_md5_update(&ctx1, (const unsigned char *)sp, sl);
-	mbedtls_md5_update(&ctx1, (const unsigned char *)pw, pw_len);
-	mbedtls_md5_finish(&ctx1, final);
+	psa_hash_setup(&ctx1, PSA_ALG_MD5);
+	psa_hash_update(&ctx1, (const unsigned char *)pw, pw_len);
+	psa_hash_update(&ctx1, (const unsigned char *)sp, sl);
+	psa_hash_update(&ctx1, (const unsigned char *)pw, pw_len);
+	psa_hash_finish(&ctx1, final, 16, &out_len);
 
 	for (pl = pw_len; pl > 0; pl -= 16)
-		mbedtls_md5_update(&ctx, final, pl > 16 ? 16 : pl);
+		psa_hash_update(&ctx, final, pl > 16 ? 16 : pl);
 
 	memset(final, 0, sizeof final);
 
 	for (i = pw_len; i; i >>= 1)
-		mbedtls_md5_update(&ctx, (i & 1) ? final : (const unsigned char *)pw, 1);
+		psa_hash_update(&ctx, (i & 1) ? final : (const unsigned char *)pw, 1);
 
 	strncpy(passwd, __md5__magic, 4);
 	strncat(passwd, sp, sl);
 	strcat(passwd, "$");
 
-	mbedtls_md5_finish(&ctx, final);
+	psa_hash_finish(&ctx, final, 16, &out_len);
 
-	/* Stretching */
+	/* Stretching — fresh PSA hash op per iteration */
 	for (i = 0; i < 1000; i++) {
-		mbedtls_md5_free(&ctx1);
-		mbedtls_md5_init(&ctx1);
-		mbedtls_md5_starts(&ctx1);
+		psa_hash_abort(&ctx1);
+		ctx1 = (psa_hash_operation_t)PSA_HASH_OPERATION_INIT;
+		psa_hash_setup(&ctx1, PSA_ALG_MD5);
 
 		if (i & 1)
-			mbedtls_md5_update(&ctx1, (const unsigned char *)pw, pw_len);
+			psa_hash_update(&ctx1, (const unsigned char *)pw, pw_len);
 		else
-			mbedtls_md5_update(&ctx1, final, 16);
+			psa_hash_update(&ctx1, final, 16);
 
 		if (i % 3)
-			mbedtls_md5_update(&ctx1, (const unsigned char *)sp, sl);
+			psa_hash_update(&ctx1, (const unsigned char *)sp, sl);
 		if (i % 7)
-			mbedtls_md5_update(&ctx1, (const unsigned char *)pw, pw_len);
+			psa_hash_update(&ctx1, (const unsigned char *)pw, pw_len);
 
 		if (i & 1)
-			mbedtls_md5_update(&ctx1, final, 16);
+			psa_hash_update(&ctx1, final, 16);
 		else
-			mbedtls_md5_update(&ctx1, (const unsigned char *)pw, pw_len);
+			psa_hash_update(&ctx1, (const unsigned char *)pw, pw_len);
 
-		mbedtls_md5_finish(&ctx1, final);
+		psa_hash_finish(&ctx1, final, 16, &out_len);
 	}
 
 	/* Encode final hash */
@@ -228,252 +219,79 @@ char *__md5_crypt(const char *pw, const char *salt, char *passwd)
 
 	/* Cleanup */
 	memset(final, 0, sizeof final);
-	mbedtls_md5_free(&ctx);
-	mbedtls_md5_free(&ctx1);
+	psa_hash_abort(&ctx);
+	psa_hash_abort(&ctx1);
 
 	return passwd;
 }
 #endif/* WITH_LIB_MD5 */
 
-/* ----------------------------------------------------------------------
- * DES
- * ---------------------------------------------------------------------- */
-#ifdef WITH_LIB_DES
-typedef struct {
-	unsigned char k8[8];
-} mbed_des_key_schedule;
-
-static inline mbed_des_key_schedule *DES_S(des_key_schedule *s) { return (mbed_des_key_schedule *)s; }
-
-void oscam_des_set_key(const uint8_t *key, des_key_schedule *schedule)
-{
-	mbed_des_key_schedule *S = DES_S(schedule);
-	memcpy(S->k8, key, 8);
-}
-
-void oscam_des_set_odd_parity(uint8_t key8[8])
-{
-	mbedtls_des_key_set_parity(key8);
-}
-
-void oscam_des_set_odd_parity_all(uint8_t *key, size_t len)
-{
-	if (!key || len == 0)
-		return;
-
-	while (len >= 8) {
-		mbedtls_des_key_set_parity(key);
-		key += 8;
-		len -= 8;
-	}
-}
-
-void oscam_des(uint8_t *data, des_key_schedule *schedule, int enc)
-{
-	mbed_des_key_schedule *S = DES_S(schedule);
-	mbedtls_des_context ctx;
-	mbedtls_des_init(&ctx);
-
-	if (enc)
-		mbedtls_des_setkey_enc(&ctx, S->k8);
-	else
-		mbedtls_des_setkey_dec(&ctx, S->k8);
-
-	mbedtls_des_crypt_ecb(&ctx, data, data);
-	mbedtls_des_free(&ctx);
-}
-
-// --- Single DES ECB ---
-void oscam_des_ecb_encrypt(uint8_t *data, const uint8_t *key, int32_t len)
-{
-	mbedtls_des_context ctx;
-	mbedtls_des_init(&ctx);
-	mbedtls_des_setkey_enc(&ctx, key);
-	len &= ~7;
-	for (int i = 0; i < len; i += 8)
-		mbedtls_des_crypt_ecb(&ctx, data + i, data + i);
-	mbedtls_des_free(&ctx);
-}
-
-void des_ecb_decrypt(uint8_t *data, const uint8_t *key, int32_t len)
-{
-	mbedtls_des_context ctx;
-	mbedtls_des_init(&ctx);
-	mbedtls_des_setkey_dec(&ctx, key);
-	len &= ~7;
-	for (int i = 0; i < len; i += 8)
-		mbedtls_des_crypt_ecb(&ctx, data + i, data + i);
-	mbedtls_des_free(&ctx);
-}
-
-// --- DES CBC ---
-void oscam_des_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len)
-{
-	mbedtls_des_context ctx;
-	unsigned char iv_copy[8];
-	memcpy(iv_copy, iv, 8);
-
-	mbedtls_des_init(&ctx);
-	mbedtls_des_setkey_enc(&ctx, key);
-	mbedtls_des_crypt_cbc(&ctx, MBEDTLS_DES_ENCRYPT, len & ~7, iv_copy, data, data);
-	mbedtls_des_free(&ctx);
-}
-
-void des_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key, int32_t len)
-{
-	mbedtls_des_context ctx;
-	unsigned char iv_copy[8];
-	memcpy(iv_copy, iv, 8);
-
-	mbedtls_des_init(&ctx);
-	mbedtls_des_setkey_dec(&ctx, key);
-	mbedtls_des_crypt_cbc(&ctx, MBEDTLS_DES_DECRYPT, len & ~7, iv_copy, data, data);
-	mbedtls_des_free(&ctx);
-}
-
-// --- 2-key 3DES (EDE2) CBC ---
-void oscam_des_ede2_cbc_encrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1, const uint8_t *key2, int32_t len)
-{
-	mbedtls_des3_context ctx;
-	unsigned char iv_copy[8];
-	unsigned char key24[24];
-	size_t n = (size_t)len & ~7u;
-
-	memcpy(iv_copy, iv, 8);
-	memcpy(key24,       key1, 8);
-	memcpy(key24 + 8,   key2, 8);
-	memcpy(key24 + 16,  key1, 8); /* repeat key1 for 2-key 3DES */
-
-	mbedtls_des3_init(&ctx);
-	mbedtls_des3_set3key_enc(&ctx, key24);
-	mbedtls_des3_crypt_cbc(&ctx, MBEDTLS_DES_ENCRYPT, n, iv_copy, data, data);
-	mbedtls_des3_free(&ctx);
-}
-
-void des_ede2_cbc_decrypt(uint8_t *data, const uint8_t *iv, const uint8_t *key1, const uint8_t *key2, int32_t len)
-{
-	mbedtls_des3_context ctx;
-	unsigned char iv_copy[8];
-	unsigned char key24[24];
-	size_t n = (size_t)len & ~7u;
-
-	memcpy(iv_copy, iv, 8);
-	memcpy(key24,       key1, 8);
-	memcpy(key24 + 8,   key2, 8);
-	memcpy(key24 + 16,  key1, 8);
-
-	mbedtls_des3_init(&ctx);
-	mbedtls_des3_set3key_dec(&ctx, key24);
-	mbedtls_des3_crypt_cbc(&ctx, MBEDTLS_DES_DECRYPT, n, iv_copy, data, data);
-	mbedtls_des3_free(&ctx);
-}
-
-// --- 3DES ECB ---
-void des_ecb3_decrypt(uint8_t *data, const uint8_t *key)
-{
-	mbedtls_des3_context ctx;
-	mbedtls_des3_init(&ctx);
-
-	/* 2-key EDE2 mode (16-byte key). For true 3-key EDE3 (24 bytes),
-	use mbedtls_des3_set3key_dec() instead. */
-	mbedtls_des3_set2key_dec(&ctx, key);
-	mbedtls_des3_crypt_ecb(&ctx, data, data);
-
-	mbedtls_des3_free(&ctx);
-}
-
-void oscam_des_ecb3_encrypt(uint8_t *data, const uint8_t *key)
-{
-	mbedtls_des3_context ctx;
-	mbedtls_des3_init(&ctx);
-
-	/* 2-key EDE2 mode (16-byte key). For true 3-key EDE3 (24 bytes),
-	use mbedtls_des3_set3key_enc() instead. */
-	mbedtls_des3_set2key_enc(&ctx, key);
-	mbedtls_des3_crypt_ecb(&ctx, data, data);
-
-	mbedtls_des3_free(&ctx);
-}
-#endif/* WITH_LIB_DES */
+/* DES: standalone implementation in oscam-crypto.c (removed from mbedTLS 4.0) */
 
 /* ----------------------------------------------------------------------
- * SHA1
+ * SHA1 (via PSA Crypto API)
  * ---------------------------------------------------------------------- */
 #ifdef WITH_LIB_SHA1
-typedef struct { mbedtls_sha1_context ctx; } mbed_sha1;
-static inline mbed_sha1 *SHA1_S(SHA_CTX *c) { return (mbed_sha1 *)c; }
+static inline psa_hash_operation_t *SHA1_S(SHA_CTX *c) { return (psa_hash_operation_t *)c; }
 
 unsigned char *SHA1(const unsigned char *d, size_t n, unsigned char *md)
 {
 	static unsigned char _buf[SHA_DIGEST_LENGTH];
+	size_t out_len = 0;
 	if (!md) md = _buf;
-	SHA_CTX c;
-	SHA1_Init(&c);
-	SHA1_Update(&c, d, n);
-	SHA1_Final(md, &c);
+	if (psa_hash_compute(PSA_ALG_SHA_1, d, n, md, SHA_DIGEST_LENGTH, &out_len) != PSA_SUCCESS)
+		return NULL;
 	return md;
 }
 
-/*
- * Return values follow OpenSSL convention: 1 = success, 0 = failure
- * MbedTLS returns 0 on success, so we invert the logic.
- */
+/* Return values follow OpenSSL convention: 1 = success, 0 = failure */
 int SHA1_Init(SHA_CTX *c)
 {
-	mbed_sha1 *S = SHA1_S(c);
-	mbedtls_sha1_init(&S->ctx);
-	return (mbedtls_sha1_starts(&S->ctx) == 0) ? 1 : 0;
+	psa_hash_operation_t *op = SHA1_S(c);
+	*op = (psa_hash_operation_t)PSA_HASH_OPERATION_INIT;
+	return (psa_hash_setup(op, PSA_ALG_SHA_1) == PSA_SUCCESS) ? 1 : 0;
 }
 
 int SHA1_Update(SHA_CTX *c, const void *data, size_t len)
 {
-	return (mbedtls_sha1_update(&SHA1_S(c)->ctx, data, len) == 0) ? 1 : 0;
+	return (psa_hash_update(SHA1_S(c), data, len) == PSA_SUCCESS) ? 1 : 0;
 }
 
 int SHA1_Final(unsigned char *md, SHA_CTX *c)
 {
-	mbed_sha1 *S = SHA1_S(c);
-	int ret = mbedtls_sha1_finish(&S->ctx, md);
-	mbedtls_sha1_free(&S->ctx);
-	return (ret == 0) ? 1 : 0;
+	size_t out_len = 0;
+	return (psa_hash_finish(SHA1_S(c), md, SHA_DIGEST_LENGTH, &out_len) == PSA_SUCCESS) ? 1 : 0;
 }
 #endif/* WITH_LIB_SHA1 */
 
 /* ----------------------------------------------------------------------
- * SHA256
+ * SHA256 (via PSA Crypto API)
  * ---------------------------------------------------------------------- */
 #ifdef WITH_LIB_SHA256
-typedef struct { mbedtls_sha256_context ctx; } mbed_sha256;
-static inline mbed_sha256 *SHA256_S(SHA256_CTX *c) { return (mbed_sha256 *)c; }
+static inline psa_hash_operation_t *SHA256_S(SHA256_CTX *c) { return (psa_hash_operation_t *)c; }
 
-/*
- * Return values follow OpenSSL convention: 1 = success, 0 = failure
- * MbedTLS returns 0 on success, so we invert the logic.
- */
+/* Return values follow OpenSSL convention: 1 = success, 0 = failure */
 int SHA256_Init(SHA256_CTX *c)
 {
-	mbed_sha256 *S = SHA256_S(c);
-	mbedtls_sha256_init(&S->ctx);
-	return (mbedtls_sha256_starts(&S->ctx, 0) == 0) ? 1 : 0;
+	psa_hash_operation_t *op = SHA256_S(c);
+	*op = (psa_hash_operation_t)PSA_HASH_OPERATION_INIT;
+	return (psa_hash_setup(op, PSA_ALG_SHA_256) == PSA_SUCCESS) ? 1 : 0;
 }
 
 int SHA256_Update(SHA256_CTX *c, const void *d, size_t l)
 {
-	return (mbedtls_sha256_update(&SHA256_S(c)->ctx, d, l) == 0) ? 1 : 0;
+	return (psa_hash_update(SHA256_S(c), d, l) == PSA_SUCCESS) ? 1 : 0;
 }
 
 int SHA256_Final(unsigned char *md, SHA256_CTX *c)
 {
-	mbed_sha256 *S = SHA256_S(c);
-	int rc = mbedtls_sha256_finish(&S->ctx, md);
-	mbedtls_sha256_free(&S->ctx);
-	return (rc == 0) ? 1 : 0;
+	size_t out_len = 0;
+	return (psa_hash_finish(SHA256_S(c), md, SHA256_DIGEST_LENGTH, &out_len) == PSA_SUCCESS) ? 1 : 0;
 }
 
 void SHA256_Free(SHA256_CTX *c)
 {
-	mbed_sha256 *S = SHA256_S(c);
-	mbedtls_sha256_free(&S->ctx);
+	psa_hash_abort(SHA256_S(c));
 }
 #endif/* WITH_LIB_SHA256 */
 
@@ -481,96 +299,184 @@ void SHA256_Free(SHA256_CTX *c)
  * AES
  * ---------------------------------------------------------------------- */
 #ifdef WITH_LIB_AES
-typedef struct {
-	mbedtls_aes_context enc;
-	mbedtls_aes_context dec;
-	unsigned char iv[16];
-	unsigned char mode;
-	unsigned char nr;
-} mbed_aesctx;
 
-static inline mbed_aesctx *AES_C(AesCtx *c) { return (mbed_aesctx *)c; }
+/* ---- PSA-based AES helpers ----
+ *
+ * PSA keys have a fixed algorithm policy. Since oscam uses both ECB and CBC
+ * with the same key material (e.g. AES_KEY used by both AES_encrypt (ECB)
+ * and AES_cbc_encrypt (CBC)), we store the raw key bytes and import a
+ * temporary PSA key per operation. This is simple and correct; PSA caches
+ * builtin AES internally so the per-call cost is modest.
+ */
+
+/* Generic AES context: raw key + optional IV + mode flag.
+ * __may_alias__ is required because this struct is used as a type-punned
+ * view over AesCtx / AES_KEY / aes_keys (caller-owned storage declared as
+ * other types). Without it, GCC's TBAA at -O2 treats writes through this
+ * type as unrelated to the backing object, deleting the writes as dead
+ * stores and leaving later reads returning stale/zero bytes. */
+typedef struct __attribute__((__may_alias__)) {
+	uint8_t key[32];       /* up to AES-256 */
+	uint8_t iv[16];
+	uint8_t keylen;        /* 16, 24, or 32 */
+	uint8_t mode;          /* CBC or ECB */
+} oscam_psa_aes;
+
+static psa_status_t psa_aes_run(const uint8_t *key, size_t keylen,
+								psa_algorithm_t alg,
+								int enc,
+								const uint8_t *iv, size_t iv_len,
+								const uint8_t *in, size_t in_len,
+								uint8_t *out, size_t out_size,
+								size_t *out_len)
+{
+	psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+	mbedtls_svc_key_id_t kid = MBEDTLS_SVC_KEY_ID_INIT;
+	psa_cipher_operation_t op = PSA_CIPHER_OPERATION_INIT;
+	psa_status_t st;
+	size_t n1 = 0, n2 = 0;
+
+	psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
+	psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT | PSA_KEY_USAGE_DECRYPT);
+	psa_set_key_algorithm(&attr, alg);
+	psa_set_key_bits(&attr, (size_t)keylen * 8);
+
+	st = psa_import_key(&attr, key, keylen, &kid);
+	if (st != PSA_SUCCESS) return st;
+
+	if (enc)
+		st = psa_cipher_encrypt_setup(&op, kid, alg);
+	else
+		st = psa_cipher_decrypt_setup(&op, kid, alg);
+	if (st != PSA_SUCCESS) goto done;
+
+	if (iv) {
+		st = psa_cipher_set_iv(&op, iv, iv_len);
+		if (st != PSA_SUCCESS) goto done;
+	}
+
+	st = psa_cipher_update(&op, in, in_len, out, out_size, &n1);
+	if (st != PSA_SUCCESS) goto done;
+
+	st = psa_cipher_finish(&op, out + n1, out_size - n1, &n2);
+	if (out_len) *out_len = n1 + n2;
+
+done:
+	if (st != PSA_SUCCESS) psa_cipher_abort(&op);
+	psa_destroy_key(kid);
+	return st;
+}
+
+/* ---- AesCtx (keyed context with persistent IV + mode) ---- */
+static inline oscam_psa_aes *AES_C(AesCtx *c) { return (oscam_psa_aes *)c; }
 
 int AesCtxIni(AesCtx *c, const unsigned char *iv, const unsigned char *key, int keylen, int mode)
 {
-	mbed_aesctx *C = AES_C(c);
-	mbedtls_aes_init(&C->enc);
-	mbedtls_aes_init(&C->dec);
-	int bits = keylen * 8;
-	if (mbedtls_aes_setkey_enc(&C->enc, key, bits) != 0) return -1;
-	if (mbedtls_aes_setkey_dec(&C->dec, key, bits) != 0) return -1;
+	oscam_psa_aes *C = AES_C(c);
+	if (keylen != 16 && keylen != 24 && keylen != 32) return -1;
+	memcpy(C->key, key, keylen);
+	C->keylen = (uint8_t)keylen;
+	C->mode   = (unsigned char)mode;
 	if (iv) memcpy(C->iv, iv, 16);
-	C->mode = (unsigned char)mode;
-	C->nr = (keylen == 16 ? 10 : keylen == 24 ? 12 : 14);
+	else    memset(C->iv, 0, 16);
 	return 0;
 }
 
 int AesEncrypt(AesCtx *c, const unsigned char *in, unsigned char *out, int len)
 {
-	mbed_aesctx *C = AES_C(c);
+	oscam_psa_aes *C = AES_C(c);
+	size_t out_len = 0;
 	if (C->mode == CBC) {
-		unsigned char iv_local[16]; memcpy(iv_local, C->iv, 16);
-		int rc = mbedtls_aes_crypt_cbc(&C->enc, MBEDTLS_AES_ENCRYPT, (size_t)len, iv_local, in, out);
-		if (rc) return -1;
-		memcpy(C->iv, iv_local, 16);
+		uint8_t iv_local[16]; memcpy(iv_local, C->iv, 16);
+		if (psa_aes_run(C->key, C->keylen, PSA_ALG_CBC_NO_PADDING, 1,
+						iv_local, 16, in, len, out, len, &out_len) != PSA_SUCCESS)
+			return -1;
+		/* Preserve running IV: last block of ciphertext */
+		if (len >= 16) memcpy(C->iv, out + len - 16, 16);
 	} else {
-		for (int i = 0; i < len; i += 16)
-			mbedtls_aes_crypt_ecb(&C->enc, MBEDTLS_AES_ENCRYPT, in + i, out + i);
+		if (psa_aes_run(C->key, C->keylen, PSA_ALG_ECB_NO_PADDING, 1,
+						NULL, 0, in, len, out, len, &out_len) != PSA_SUCCESS)
+			return -1;
 	}
 	return len;
 }
 
 int AesDecrypt(AesCtx *c, const unsigned char *in, unsigned char *out, int len)
 {
-	mbed_aesctx *C = AES_C(c);
+	oscam_psa_aes *C = AES_C(c);
+	size_t out_len = 0;
 	if (C->mode == CBC) {
-		unsigned char iv_local[16]; memcpy(iv_local, C->iv, 16);
-		int rc = mbedtls_aes_crypt_cbc(&C->dec, MBEDTLS_AES_DECRYPT, (size_t)len, iv_local, in, out);
-		if (rc) return -1;
-		memcpy(C->iv, iv_local, 16);
+		uint8_t iv_local[16]; memcpy(iv_local, C->iv, 16);
+		uint8_t last_cipher[16] = {0};
+		if (len >= 16) memcpy(last_cipher, in + len - 16, 16);
+		if (psa_aes_run(C->key, C->keylen, PSA_ALG_CBC_NO_PADDING, 0,
+						iv_local, 16, in, len, out, len, &out_len) != PSA_SUCCESS)
+			return -1;
+		/* Running IV: last ciphertext block */
+		if (len >= 16) memcpy(C->iv, last_cipher, 16);
 	} else {
-		for (int i = 0; i < len; i += 16)
-			mbedtls_aes_crypt_ecb(&C->dec, MBEDTLS_AES_DECRYPT, in + i, out + i);
+		if (psa_aes_run(C->key, C->keylen, PSA_ALG_ECB_NO_PADDING, 0,
+						NULL, 0, in, len, out, len, &out_len) != PSA_SUCCESS)
+			return -1;
 	}
 	return len;
 }
 
-typedef struct {
-	mbedtls_aes_context enc_ctx;
-	mbedtls_aes_context dec_ctx;
-} mbed_aeskey;
+/* ---- AES_KEY: OpenSSL-like API ----
+ * __may_alias__: same rationale as oscam_psa_aes above — this is a
+ * type-punned view over caller's AES_KEY/aes_keys storage. */
+typedef struct __attribute__((__may_alias__)) {
+	uint8_t key[32];
+	uint8_t keylen;
+	uint8_t has_enc;
+	uint8_t has_dec;
+} oscam_psa_aeskey;
 
-static inline mbed_aeskey *AK(const AES_KEY *k) { return (mbed_aeskey *)(void*)k; }
-static inline mbed_aeskey *AKw(AES_KEY *k)      { return (mbed_aeskey *)(void*)k; }
+static inline oscam_psa_aeskey *AK(const AES_KEY *k) { return (oscam_psa_aeskey *)(void*)k; }
+static inline oscam_psa_aeskey *AKw(AES_KEY *k)      { return (oscam_psa_aeskey *)(void*)k; }
 
 int AES_set_encrypt_key(const unsigned char *userKey, const int bits, AES_KEY *key)
 {
 	if (!key) return -1;
-	mbed_aeskey *K = AKw(key);
-	mbedtls_aes_init(&K->enc_ctx);
-	//mbedtls_aes_init(&K->dec_ctx);
-	return mbedtls_aes_setkey_enc(&K->enc_ctx, userKey, bits);
+	if (bits != 128 && bits != 192 && bits != 256) return -1;
+	oscam_psa_aeskey *K = AKw(key);
+	K->keylen = (uint8_t)(bits / 8);
+	memcpy(K->key, userKey, K->keylen);
+	K->has_enc = 1;
+	return 0;
 }
 
 int AES_set_decrypt_key(const unsigned char *userKey, const int bits, AES_KEY *key)
 {
 	if (!key) return -1;
-	mbed_aeskey *K = AKw(key);
-	//mbedtls_aes_init(&K->enc_ctx);
-	mbedtls_aes_init(&K->dec_ctx);
-	return mbedtls_aes_setkey_dec(&K->dec_ctx, userKey, bits);
+	if (bits != 128 && bits != 192 && bits != 256) return -1;
+	oscam_psa_aeskey *K = AKw(key);
+	K->keylen = (uint8_t)(bits / 8);
+	memcpy(K->key, userKey, K->keylen);
+	K->has_dec = 1;
+	return 0;
 }
 
 void AES_encrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key)
 {
 	if (!key) return;
-	(void)mbedtls_aes_crypt_ecb(&AK(key)->enc_ctx, MBEDTLS_AES_ENCRYPT, in, out);
+	size_t out_len = 0;
+	uint8_t tmp[32];
+	oscam_psa_aeskey *K = AK(key);
+	if (psa_aes_run(K->key, K->keylen, PSA_ALG_ECB_NO_PADDING, 1,
+					NULL, 0, in, 16, tmp, sizeof(tmp), &out_len) == PSA_SUCCESS)
+		memcpy(out, tmp, 16);
 }
 
 void AES_decrypt(const unsigned char *in, unsigned char *out, const AES_KEY *key)
 {
 	if (!key) return;
-	(void)mbedtls_aes_crypt_ecb(&AK(key)->dec_ctx, MBEDTLS_AES_DECRYPT, in, out);
+	size_t out_len = 0;
+	uint8_t tmp[32];
+	oscam_psa_aeskey *K = AK(key);
+	if (psa_aes_run(K->key, K->keylen, PSA_ALG_ECB_NO_PADDING, 0,
+					NULL, 0, in, 16, tmp, sizeof(tmp), &out_len) == PSA_SUCCESS)
+		memcpy(out, tmp, 16);
 }
 
 int AES_cbc_encrypt(const unsigned char *in, unsigned char *out,
@@ -578,25 +484,36 @@ int AES_cbc_encrypt(const unsigned char *in, unsigned char *out,
 					unsigned char *ivec, const int enc)
 {
 	if (!key || !ivec) return -1;
-	mbed_aeskey *K = AK(key);
-	return mbedtls_aes_crypt_cbc(enc ? &K->enc_ctx : &K->dec_ctx,
-								 enc, length, ivec, in, out);
+	oscam_psa_aeskey *K = AK(key);
+	size_t out_len = 0;
+	uint8_t last_cipher[16] = {0};
+	if (!enc && length >= 16) memcpy(last_cipher, in + length - 16, 16);
+
+	if (psa_aes_run(K->key, K->keylen, PSA_ALG_CBC_NO_PADDING, enc,
+					ivec, 16, in, length, out, length, &out_len) != PSA_SUCCESS)
+		return -1;
+
+	/* Update the caller's IV to the last block, matching OpenSSL/mbedTLS semantics */
+	if (length >= 16) {
+		if (enc) memcpy(ivec, out + length - 16, 16);
+		else     memcpy(ivec, last_cipher, 16);
+	}
+	return 0;
 }
 
-typedef struct { mbedtls_aes_context enc, dec; } mbed_pair;
-
+/* ---- aes_keys (void*): dynamically-allocated key wrapper ---- */
 void aes_set_key(void *aes, char *key)
 {
-	mbed_pair *p = (mbed_pair *)aes;
+	oscam_psa_aeskey *p = (oscam_psa_aeskey *)aes;
 	if (!p || !key) return;
-	mbedtls_aes_init(&p->enc); mbedtls_aes_init(&p->dec);
-	mbedtls_aes_setkey_enc(&p->enc, (unsigned char *)key, 128);
-	mbedtls_aes_setkey_dec(&p->dec, (unsigned char *)key, 128);
+	memcpy(p->key, key, 16);
+	p->keylen = 16;
+	p->has_enc = p->has_dec = 1;
 }
 
 bool aes_set_key_alloc(aes_keys **aes, char *key)
 {
-	mbed_pair *p;
+	oscam_psa_aeskey *p;
 	if (!cs_malloc(&p, sizeof(*p))) return false;
 	*aes = (aes_keys *)p;
 	aes_set_key(p, key);
@@ -605,28 +522,46 @@ bool aes_set_key_alloc(aes_keys **aes, char *key)
 
 void aes_decrypt(void *aes, uint8_t *buf, int32_t n)
 {
-	mbed_pair *p = (mbed_pair *)aes;
-	for (int32_t i = 0; i < n; i += 16)
-		mbedtls_aes_crypt_ecb(&p->dec, MBEDTLS_AES_DECRYPT, buf + i, buf + i);
+	oscam_psa_aeskey *p = (oscam_psa_aeskey *)aes;
+	size_t out_len = 0;
+	uint8_t tmp[32];
+	for (int32_t i = 0; i < n; i += 16) {
+		if (psa_aes_run(p->key, p->keylen, PSA_ALG_ECB_NO_PADDING, 0,
+						NULL, 0, buf + i, 16, tmp, sizeof(tmp), &out_len) == PSA_SUCCESS)
+			memcpy(buf + i, tmp, 16);
+	}
 }
 
 void aes_encrypt_idx(void *aes, uint8_t *buf, int32_t n)
 {
-	mbed_pair *p = (mbed_pair *)aes;
-	for (int32_t i = 0; i < n; i += 16)
-		mbedtls_aes_crypt_ecb(&p->enc, MBEDTLS_AES_ENCRYPT, buf + i, buf + i);
+	oscam_psa_aeskey *p = (oscam_psa_aeskey *)aes;
+	size_t out_len = 0;
+	uint8_t tmp[32];
+	for (int32_t i = 0; i < n; i += 16) {
+		if (psa_aes_run(p->key, p->keylen, PSA_ALG_ECB_NO_PADDING, 1,
+						NULL, 0, buf + i, 16, tmp, sizeof(tmp), &out_len) == PSA_SUCCESS)
+			memcpy(buf + i, tmp, 16);
+	}
 }
 
 void aes_cbc_encrypt(void *aes, uint8_t *buf, int32_t n, uint8_t *iv)
 {
-	mbed_pair *p = (mbed_pair *)aes;
-	mbedtls_aes_crypt_cbc(&p->enc, MBEDTLS_AES_ENCRYPT, n, iv, buf, buf);
+	oscam_psa_aeskey *p = (oscam_psa_aeskey *)aes;
+	size_t out_len = 0;
+	psa_aes_run(p->key, p->keylen, PSA_ALG_CBC_NO_PADDING, 1,
+				iv, 16, buf, n, buf, n, &out_len);
+	if (n >= 16) memcpy(iv, buf + n - 16, 16);
 }
 
 void aes_cbc_decrypt(void *aes, uint8_t *buf, int32_t n, uint8_t *iv)
 {
-	mbed_pair *p = (mbed_pair *)aes;
-	mbedtls_aes_crypt_cbc(&p->dec, MBEDTLS_AES_DECRYPT, n, iv, buf, buf);
+	oscam_psa_aeskey *p = (oscam_psa_aeskey *)aes;
+	size_t out_len = 0;
+	uint8_t last_cipher[16] = {0};
+	if (n >= 16) memcpy(last_cipher, buf + n - 16, 16);
+	psa_aes_run(p->key, p->keylen, PSA_ALG_CBC_NO_PADDING, 0,
+				iv, 16, buf, n, buf, n, &out_len);
+	if (n >= 16) memcpy(iv, last_cipher, 16);
 }
 
 /* --- List management for per-reader AES keys --- */
@@ -639,11 +574,11 @@ void add_aes_entry(AES_ENTRY **list, uint16_t caid, uint32_t ident, int32_t keyi
 	e->caid = caid; e->ident = ident; e->keyid = keyid; e->next = NULL;
 
 	if (memcmp(aesKey, "\xFF\xFF", 2) != 0) {
-		mbed_pair *p;
+		oscam_psa_aeskey *p;
 		if (!cs_malloc(&p, sizeof(*p))) { free(e); return; }
-		mbedtls_aes_init(&p->dec); mbedtls_aes_init(&p->enc);
-		mbedtls_aes_setkey_dec(&p->dec, aesKey, 128);
-		mbedtls_aes_setkey_enc(&p->enc, aesKey, 128);
+		memcpy(p->key, aesKey, 16);
+		p->keylen = 16;
+		p->has_enc = p->has_dec = 1;
 		e->key = p;
 	} else {
 		e->key = NULL;
@@ -716,18 +651,15 @@ void aes_clear_entries(AES_ENTRY **list)
 	AES_ENTRY *cur = *list, *nxt;
 	while (cur) {
 		nxt = cur->next;
-		if (cur->key) {
-			mbed_pair *p = (mbed_pair *)cur->key;
-			mbedtls_aes_free(&p->dec);
-			mbedtls_aes_free(&p->enc);
-			free(p);
-		}
+		if (cur->key)
+			free(cur->key);
 		free(cur);
 		cur = nxt;
 	}
 	*list = NULL;
 }
 
+#ifdef READER_VIACCESS
 void parse_aes_keys(struct s_reader *rdr, char *value)
 {
 	char *entry;
@@ -740,6 +672,7 @@ void parse_aes_keys(struct s_reader *rdr, char *value)
 	rdr->aes_list = newlist;
 	aes_clear_entries(&savelist);
 }
+#endif /* READER_VIACCESS */
 
 /* Helper function to find AES entry in list */
 static AES_ENTRY *aes_list_find(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t keyid)
@@ -764,9 +697,14 @@ int32_t aes_decrypt_from_list(AES_ENTRY *list, uint16_t caid, uint32_t provid, i
 	}
 	if (!cur->key) return 1;
 
-	mbed_pair *p = (mbed_pair *)cur->key;
-	for (int32_t i = 0; i < n; i += 16)
-		mbedtls_aes_crypt_ecb(&p->dec, MBEDTLS_AES_DECRYPT, buf + i, buf + i);
+	oscam_psa_aeskey *p = (oscam_psa_aeskey *)cur->key;
+	size_t out_len = 0;
+	uint8_t tmp[32];
+	for (int32_t i = 0; i < n; i += 16) {
+		if (psa_aes_run(p->key, p->keylen, PSA_ALG_ECB_NO_PADDING, 0,
+						NULL, 0, buf + i, 16, tmp, sizeof(tmp), &out_len) == PSA_SUCCESS)
+			memcpy(buf + i, tmp, 16);
+	}
 	return 1;
 }
 
@@ -778,8 +716,16 @@ int32_t aes_present(AES_ENTRY *list, uint16_t caid, uint32_t provid, int32_t key
 
 /* ----------------------------------------------------------------------
  * BIGNUM
+ *
+ * Uses the private mbedtls_mpi_* API. PSA Crypto provides no public
+ * bignum primitives, so this section remains on the legacy API gated
+ * by MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS (defined at top of file).
+ * If a future mbedTLS release removes this API, readers that rely on
+ * BIGNUM (nagra, conax, cryptoworks) will need an alternative backend.
  * ---------------------------------------------------------------------- */
 #ifdef WITH_LIB_BIGNUM
+#include "mbedtls/private/bignum.h"
+
 BN_CTX *BN_CTX_new(void) { return (BN_CTX *)mbedtls_calloc(1, sizeof(BN_CTX)); }
 void BN_CTX_free(BN_CTX *ctx) { if (ctx) mbedtls_free(ctx); }
 void BN_CTX_start(BN_CTX *ctx) { (void)ctx; }

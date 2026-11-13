@@ -346,24 +346,23 @@ update_deps() {
 	have_flag    USE_COMPRESS        && disable_opt WITH_COMPRESS_WEBIF >/dev/null
 	enabled      MODULE_CCCSHARE     && enable_opt MODULE_CCCAM >/dev/null
 	enabled      CS_CACHEEX_AIO      && enable_opt CS_CACHEEX >/dev/null
-	enabled      WITH_SIGNING        && enable_opt WITH_SSL >/dev/null
 	enabled      MODULE_CCCAM        && enable_opts  WITH_LIB_RC6 >/dev/null
 	disabled     MODULE_CCCAM        && disable_opts WITH_LIB_RC6 >/dev/null
 	enabled      READER_NAGRA_MERLIN && enable_opt WITH_LIB_MDC2 >/dev/null
 	disabled     READER_NAGRA_MERLIN && disable_opt WITH_LIB_MDC2 >/dev/null
-	enabled_any  WITH_SSL MODULE_CCCAM            && enable_opt   WITH_LIB_SHA1 >/dev/null
-	disabled_all WITH_SSL MODULE_CCCAM            && disable_opt  WITH_LIB_SHA1 >/dev/null
-	enabled_any  MODULE_GBOX WITH_COMPRESS_WEBIF  && enable_opt   WITH_LIB_MINILZO >/dev/null
-	disabled_all MODULE_GBOX WITH_COMPRESS_WEBIF  && disable_opt  WITH_LIB_MINILZO >/dev/null
-	enabled_any  WITH_SSL READER_NAGRA_MERLIN WITH_SIGNING && enable_opt WITH_LIB_SHA256 >/dev/null
-	disabled_all WITH_SSL READER_NAGRA_MERLIN WITH_SIGNING && disable_opt WITH_LIB_SHA256 >/dev/null
+	{ have_flag USE_SSL     || enabled_any MODULE_CCCAM; }                    && enable_opt   WITH_LIB_SHA1 >/dev/null
+	{ not_have_flag USE_SSL && disabled_all MODULE_CCCAM; }                   && disable_opt  WITH_LIB_SHA1 >/dev/null
+	enabled_any  MODULE_GBOX WITH_COMPRESS_WEBIF                     && enable_opt   WITH_LIB_MINILZO >/dev/null
+	disabled_all MODULE_GBOX WITH_COMPRESS_WEBIF                     && disable_opt  WITH_LIB_MINILZO >/dev/null
+	{ have_flag USE_SSL     || enabled_any READER_NAGRA_MERLIN WITH_SIGNING; }  && enable_opt  WITH_LIB_SHA256 >/dev/null
+	{ not_have_flag USE_SSL && disabled_all READER_NAGRA_MERLIN WITH_SIGNING; } && disable_opt WITH_LIB_SHA256 >/dev/null
 	enabled_any  MODULE_CCCAM READER_NAGRA READER_NAGRA_MERLIN READER_SECA              && enable_opt  WITH_LIB_IDEA >/dev/null
 	disabled_all MODULE_CCCAM READER_NAGRA READER_NAGRA_MERLIN READER_SECA              && disable_opt WITH_LIB_IDEA >/dev/null
-	enabled_any  WITH_SSL READER_CONAX READER_CRYPTOWORKS READER_NAGRA READER_NAGRA_MERLIN       && enable_opt WITH_LIB_BIGNUM >/dev/null
-	disabled_all WITH_SSL READER_CONAX READER_CRYPTOWORKS READER_NAGRA READER_NAGRA_MERLIN       && disable_opt WITH_LIB_BIGNUM >/dev/null
+	{ have_flag USE_SSL     || enabled_any READER_CONAX READER_CRYPTOWORKS READER_NAGRA READER_NAGRA_MERLIN; }  && enable_opt  WITH_LIB_BIGNUM >/dev/null
+	{ not_have_flag USE_SSL && disabled_all READER_CONAX READER_CRYPTOWORKS READER_NAGRA READER_NAGRA_MERLIN; } && disable_opt WITH_LIB_BIGNUM >/dev/null
 	enabled_any  CARDREADER_DB2COM CARDREADER_MP35 CARDREADER_SC8IN1 CARDREADER_STINGER && enable_opt CARDREADER_PHOENIX >/dev/null
-	enabled_any  WITH_SSL MODULE_CAMD35 MODULE_CAMD35_TCP MODULE_CCCAM MODULE_MONITOR READER_NAGRA_MERLIN READER_VIACCESS READER_VIDEOGUARD                     && enable_opts  WITH_LIB_AES >/dev/null
-	disabled_all WITH_SSL MODULE_CAMD35 MODULE_CAMD35_TCP MODULE_CCCAM MODULE_MONITOR READER_NAGRA_MERLIN READER_VIACCESS READER_VIDEOGUARD                     && disable_opts WITH_LIB_AES >/dev/null
+	{ have_flag USE_SSL     || enabled_any MODULE_CAMD35 MODULE_CAMD35_TCP MODULE_CCCAM MODULE_MONITOR READER_NAGRA_MERLIN READER_VIACCESS READER_VIDEOGUARD; }  && enable_opts  WITH_LIB_AES >/dev/null
+	{ not_have_flag USE_SSL && disabled_all MODULE_CAMD35 MODULE_CAMD35_TCP MODULE_CCCAM MODULE_MONITOR READER_NAGRA_MERLIN READER_VIACCESS READER_VIDEOGUARD; } && disable_opts WITH_LIB_AES >/dev/null
 	enabled_any  MODULE_NEWCAMD READER_DRE MODULE_SCAM READER_VIACCESS READER_NAGRA READER_NAGRA_MERLIN READER_VIDEOGUARD READER_CONAX READER_TONGFANG && enable_opt  WITH_LIB_DES >/dev/null
 	disabled_all MODULE_NEWCAMD READER_DRE MODULE_SCAM READER_VIACCESS READER_NAGRA READER_NAGRA_MERLIN READER_VIDEOGUARD READER_CONAX READER_TONGFANG && disable_opt WITH_LIB_DES >/dev/null
 }
@@ -414,14 +413,14 @@ list_config() {
 	# Extra modules/libraries
 	echo "CONFIG_WITH_LIB_MD5=y"
 	enabled_any MODULE_GBOX WITH_COMPRESS_WEBIF && echo "CONFIG_WITH_LIB_MINILZO=y" || echo "# CONFIG_WITH_LIB_MINILZO=n"
-	enabled_any WITH_SSL MODULE_CAMD35 MODULE_CAMD35_TCP MODULE_CCCAM MODULE_MONITOR READER_NAGRA_MERLIN READER_VIACCESS READER_VIDEOGUARD && echo "CONFIG_WITH_LIB_AES=y" || echo "# CONFIG_WITH_LIB_AES=n"
+	{ have_flag USE_SSL || enabled_any MODULE_CAMD35 MODULE_CAMD35_TCP MODULE_CCCAM MODULE_MONITOR READER_NAGRA_MERLIN READER_VIACCESS READER_VIDEOGUARD; } && echo "CONFIG_WITH_LIB_AES=y" || echo "# CONFIG_WITH_LIB_AES=n"
 	enabled_any MODULE_NEWCAMD READER_DRE MODULE_SCAM READER_VIACCESS READER_NAGRA READER_NAGRA_MERLIN READER_VIDEOGUARD READER_CONAX READER_TONGFANG WITH_LIB_MDC2 && echo "CONFIG_WITH_LIB_DES=y" || echo "# CONFIG_WITH_LIB_DES=n"
 	enabled MODULE_CCCAM && echo "CONFIG_WITH_LIB_RC6=y"  || echo "# CONFIG_WITH_LIB_RC6=n"
-	enabled_any WITH_SSL MODULE_CCCAM && echo "CONFIG_WITH_LIB_SHA1=y" || echo "# CONFIG_WITH_LIB_SHA1=n"
+	{ have_flag USE_SSL || enabled_any MODULE_CCCAM; } && echo "CONFIG_WITH_LIB_SHA1=y" || echo "# CONFIG_WITH_LIB_SHA1=n"
 	enabled_any MODULE_CCCAM READER_NAGRA READER_NAGRA_MERLIN READER_SECA && echo "CONFIG_WITH_LIB_IDEA=y" || echo "# CONFIG_WITH_LIB_IDEA=n"
-	enabled_any WITH_SSL READER_CONAX READER_CRYPTOWORKS READER_NAGRA READER_NAGRA_MERLIN && echo "CONFIG_WITH_LIB_BIGNUM=y" || echo "# CONFIG_WITH_LIB_BIGNUM=n"
+	{ have_flag USE_SSL || enabled_any READER_CONAX READER_CRYPTOWORKS READER_NAGRA READER_NAGRA_MERLIN; } && echo "CONFIG_WITH_LIB_BIGNUM=y" || echo "# CONFIG_WITH_LIB_BIGNUM=n"
 	enabled READER_NAGRA_MERLIN && echo "CONFIG_WITH_LIB_MDC2=y" || echo "# CONFIG_WITH_LIB_MDC2=n"
-	enabled_any WITH_SSL READER_NAGRA_MERLIN WITH_SIGNING && echo "CONFIG_WITH_LIB_SHA256=y" || echo "# CONFIG_WITH_LIB_SHA256=n"
+	{ have_flag USE_SSL || enabled_any READER_NAGRA_MERLIN WITH_SIGNING; } && echo "CONFIG_WITH_LIB_SHA256=y" || echo "# CONFIG_WITH_LIB_SHA256=n"
 	enabled_any READER_NAGRA READER_NAGRA_MERLIN && echo "CONFIG_READER_NAGRA_COMMON=y" || echo "# CONFIG_READER_NAGRA_COMMON=n"
 }
 
@@ -1005,6 +1004,92 @@ do
 		done
 		echo Cant_find_OSX_SDK
 		break
+	;;
+	'--mbedtls-fetch')
+		# Download + verify + extract the official mbedTLS release tarball
+		# named in mbedtls/version.conf (VERSION, URL, SHA256).
+		PIN="mbedtls/version.conf"
+		if [ ! -f "$PIN" ]; then
+			echo "Error: $PIN not found" >&2
+			exit 1
+		fi
+		# Source in a subshell so VERSION/URL/SHA256 don't leak into the
+		# outer environment if this script is dot-sourced.
+		VERSION=''; URL=''; SHA256=''
+		. "$PIN"
+		if [ -z "$VERSION" ] || [ -z "$URL" ] || [ -z "$SHA256" ]; then
+			echo "Error: $PIN must define VERSION, URL and SHA256" >&2
+			exit 1
+		fi
+
+		STAMP="mbedtls/.oscam-extracted-$VERSION"
+		CACHE=".mbedtls-cache"
+		TARBALL=`basename "$URL"`
+		CACHED="$CACHE/$TARBALL"
+
+		# Idempotency: skip if this exact version is already extracted.
+		if [ -f "$STAMP" ]; then
+			sz=`du -hL "$CACHED" 2>/dev/null | awk '{print $1}'`
+			if [ -L "$CACHED" ]; then
+				src="cached symlink"
+			else
+				src="cached"
+			fi
+			echo "mbedTLS $VERSION ready (tarball ${sz:-?}, $src)"
+			exit 0
+		fi
+
+		# Pick a downloader that is usually available everywhere.
+		if command -v curl >/dev/null 2>&1; then
+			DL="curl -fsSL"
+		elif command -v wget >/dev/null 2>&1; then
+			DL="wget -q -O-"
+		else
+			echo "Error: need 'curl' or 'wget' to fetch mbedTLS tarball" >&2
+			exit 1
+		fi
+
+		# Cache the tarball outside mbedtls/ so 'find mbedtls -delete' below
+		# doesn't wipe it.
+		mkdir -p "$CACHE"
+
+		# Determine tarball source: download, regular cached file, or symlink
+		# (s4 can pre-seed the cache by symlinking its central download pool).
+		if [ -f "$CACHED" ]; then
+			if [ -L "$CACHED" ]; then
+				src="cached symlink"
+			else
+				src="cached"
+			fi
+		else
+			$DL "$URL" > "$CACHED.tmp" && mv "$CACHED.tmp" "$CACHED" || {
+				rm -f "$CACHED.tmp"
+				echo "Error: failed to download $URL" >&2
+				exit 1
+			}
+			src="fetched"
+		fi
+
+		actual=`sha256sum "$CACHED" | awk '{print $1}'`
+		if [ "$actual" != "$SHA256" ]; then
+			rm -f "$CACHED"
+			echo "Error: SHA256 mismatch for $TARBALL" >&2
+			echo "  expected: $SHA256" >&2
+			echo "  got:      $actual"  >&2
+			exit 1
+		fi
+
+		# Clean everything under mbedtls/ EXCEPT the pin config, then
+		# extract the tarball into mbedtls/ stripping its top-level dir.
+		find mbedtls -mindepth 1 ! -name 'version.conf' -delete 2>/dev/null
+		tar -xjf "$CACHED" -C mbedtls --strip-components=1
+		# Remove stamps from older versions (if any), then record the new one.
+		rm -f mbedtls/.oscam-extracted-*
+		touch "$STAMP"
+
+		sz=`du -hL "$CACHED" | awk '{print $1}'`
+		echo "mbedTLS $VERSION ready (tarball $sz, $src)"
+		exit 0
 	;;
 	'-l'|'--list-config')
 		list_config
