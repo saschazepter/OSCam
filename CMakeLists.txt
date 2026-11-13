@@ -363,14 +363,44 @@ if (WITH_SSL EQUAL 1)
 	add_definitions ("-DWITH_SSL")
 endif (WITH_SSL EQUAL 1)
 
-# MbedTLS
+# MbedTLS 4.x: library/ = TLS+X.509, tf-psa-crypto/ = crypto (sub-tree of the
+# official release tarball). We fetch the tarball pinned via mbedtls/version.conf
+# instead of using a git submodule — the release tarball already ships tf-psa-crypto,
+# the framework sub-tree and all pre-generated source files, so no Python, Perl,
+# jsonschema or jinja2 are needed at build time.
 if (SECURITY_BACKEND STREQUAL "MBEDTLS")
 	execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --show-enabled libraries WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} OUTPUT_VARIABLE CONFIG_ENABLED_LIBS OUTPUT_STRIP_TRAILING_WHITESPACE)
-	set (MBEDTLS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mbedtls")
+	set (MBEDTLS_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/mbedtls")
+	set (MBEDTLS_TF_PSA  "${MBEDTLS_DIR}/tf-psa-crypto")
+	set (MBEDTLS_BUILTIN "${MBEDTLS_TF_PSA}/drivers/builtin")
+
+	# Fetch/extract the mbedTLS release tarball (idempotent: skipped if the
+	# pinned version is already extracted).
+	execute_process(
+		COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --mbedtls-fetch
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+		RESULT_VARIABLE _MBEDTLS_FETCH_RC
+	)
+	if (NOT _MBEDTLS_FETCH_RC EQUAL 0)
+		message(FATAL_ERROR "Failed to fetch mbedTLS tarball (rc=${_MBEDTLS_FETCH_RC}). Check mbedtls/version.conf and network access.")
+	endif()
+
 	if (NOT "${CONFIG_ENABLED_LIBS}" STREQUAL "")
 		include_directories("${MBEDTLS_DIR}/include")
+		include_directories("${MBEDTLS_DIR}/library")
+		include_directories("${MBEDTLS_TF_PSA}/include")
+		include_directories("${MBEDTLS_TF_PSA}/core")
+		include_directories("${MBEDTLS_TF_PSA}/extras")
+		include_directories("${MBEDTLS_BUILTIN}/include")
+		include_directories("${MBEDTLS_BUILTIN}/src")
+		include_directories("${MBEDTLS_TF_PSA}/utilities")
+		include_directories("${MBEDTLS_TF_PSA}/dispatch")
+		include_directories("${MBEDTLS_TF_PSA}/platform")
 		include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
-		add_definitions ("-DMBEDTLS_NO_PLATFORM_ENTROPY" "-DMBEDTLS_NO_DEFAULT_ENTROPY_SOURCES" "-DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"")
+		add_definitions (
+			"-DTF_PSA_CRYPTO_USER_CONFIG_FILE=\"tf-psa-crypto-config.h\""
+			"-DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\""
+		)
 
 		# get version
 		set(MBEDTLS_BUILD_INFO "${MBEDTLS_DIR}/include/mbedtls/build_info.h")
@@ -382,76 +412,34 @@ if (SECURITY_BACKEND STREQUAL "MBEDTLS")
 			endif()
 		endif()
 
-		# add debug.c if enabled in mbedtls-config.h
-		set(MBEDTLS_SRC_BASE "")
-		if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/mbedtls-config.h")
-			file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/mbedtls-config.h" _MBEDTLS_DEBUG REGEX "^#define MBEDTLS_DEBUG_C")
-			if (_MBEDTLS_DEBUG)
-				list(APPEND MBEDTLS_SRC_BASE "${MBEDTLS_DIR}/library/debug.c")
-			endif()
-		endif()
+		set(MBEDTLS_SRC_BASE "${CMAKE_CURRENT_SOURCE_DIR}/mbedtls_platform.c")
 
-		list(APPEND MBEDTLS_SRC_BASE
-			"${CMAKE_CURRENT_SOURCE_DIR}/mbedtls_platform.c"
-		)
+		# tf-psa-crypto (crypto + PSA) is always needed whenever
+		# oscam-crypto-mbedtls.c references psa_hash_* / psa_cipher_* etc.
+		# — true in every USE_MBEDTLS build, with or without WITH_SSL.
+		# WITH_LIB_* feature selection is handled at compile time via
+		# PSA_WANT_* in tf-psa-crypto-config.h; individual driver files
+		# compile to near-empty objects when their algorithm is off.
+		file(GLOB TFPSA_BUILTIN "${MBEDTLS_BUILTIN}/src/*.c")
+		file(GLOB TFPSA_CORE    "${MBEDTLS_TF_PSA}/core/*.c")
+		file(GLOB TFPSA_UTILS   "${MBEDTLS_TF_PSA}/utilities/*.c")
+		file(GLOB TFPSA_EXTRAS  "${MBEDTLS_TF_PSA}/extras/*.c")
+		file(GLOB TFPSA_PLAT    "${MBEDTLS_TF_PSA}/platform/*.c")
+		# We provide our own calloc/free/printf in mbedtls_platform.c
+		list(FILTER TFPSA_PLAT EXCLUDE REGEX "/platform\\.c$")
+		list(FILTER TFPSA_PLAT EXCLUDE REGEX "/memory_buffer_alloc\\.c$")
+		set(MBEDTLS_SRC ${TFPSA_BUILTIN} ${TFPSA_CORE} ${TFPSA_UTILS} ${TFPSA_EXTRAS} ${TFPSA_PLAT})
 
-		if (WITH_SSL) # all sources files, but exclude unneeded files
+		if (WITH_SSL) # SSL/TLS/X.509 layer on top of crypto
 			message(STATUS "MbedTLS (full) will be built-in")
 			set(SECURITY_TYPE "ssl+crypto")
+			# library/ = SSL/TLS + X.509, including ssl_tls13_*.c
+			# (TLS 1.3 is enabled in mbedtls-config.h).
 			file(GLOB MBEDTLS_ALL "${MBEDTLS_DIR}/library/*.c")
-			list(FILTER MBEDTLS_ALL EXCLUDE REGEX "/platform(_util)?\\.c$")
-			list(FILTER MBEDTLS_ALL EXCLUDE REGEX "/psa_.*\\.c$")
-			list(FILTER MBEDTLS_ALL EXCLUDE REGEX "/ssl_tls13_.*\\.c$")
-			list(FILTER MBEDTLS_ALL EXCLUDE REGEX "/debug\\.c$")
-			set(MBEDTLS_SRC ${MBEDTLS_ALL})
-		else() # sources files per library
+			list(APPEND MBEDTLS_SRC ${MBEDTLS_ALL})
+		else() # crypto-only, no TLS
 			message(STATUS "MbedTLS (light) will be built-in")
 			set(SECURITY_TYPE "crypto")
-			set(MBEDTLS_SRC_CRYPTO "")
-
-			execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled WITH_LIB_AES OUTPUT_VARIABLE WITH_LIB_AES OUTPUT_STRIP_TRAILING_WHITESPACE)
-			if ("${WITH_LIB_AES}" STREQUAL "Y")
-				list(APPEND MBEDTLS_SRC_CRYPTO
-					"${MBEDTLS_DIR}/library/aes.c"
-					"${MBEDTLS_DIR}/library/aesce.c"
-					"${MBEDTLS_DIR}/library/aesni.c"
-				)
-			endif()
-
-			execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled WITH_LIB_DES OUTPUT_VARIABLE WITH_LIB_DES OUTPUT_STRIP_TRAILING_WHITESPACE)
-			execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled WITH_LIB_MDC2 OUTPUT_VARIABLE WITH_LIB_MDC2 OUTPUT_STRIP_TRAILING_WHITESPACE)
-			if (("${WITH_LIB_DES}" STREQUAL "Y") OR ("${WITH_LIB_MDC2}" STREQUAL "Y"))
-				list(APPEND MBEDTLS_SRC_CRYPTO "${MBEDTLS_DIR}/library/des.c")
-			endif()
-
-			execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled WITH_LIB_MD5 OUTPUT_VARIABLE WITH_LIB_MD5 OUTPUT_STRIP_TRAILING_WHITESPACE)
-			if ("${WITH_LIB_MD5}" STREQUAL "Y")
-				list(APPEND MBEDTLS_SRC_CRYPTO "${MBEDTLS_DIR}/library/md5.c")
-			endif()
-
-			execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled WITH_LIB_SHA1 OUTPUT_VARIABLE WITH_LIB_SHA1 OUTPUT_STRIP_TRAILING_WHITESPACE)
-			if ("${WITH_LIB_SHA1}" STREQUAL "Y")
-				list(APPEND MBEDTLS_SRC_CRYPTO "${MBEDTLS_DIR}/library/sha1.c")
-			endif()
-
-			execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled WITH_LIB_SHA256 OUTPUT_VARIABLE WITH_LIB_SHA256 OUTPUT_STRIP_TRAILING_WHITESPACE)
-			if ("${WITH_LIB_SHA256}" STREQUAL "Y")
-				list(APPEND MBEDTLS_SRC_CRYPTO "${MBEDTLS_DIR}/library/sha256.c")
-			endif()
-
-			execute_process(COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled WITH_LIB_BIGNUM OUTPUT_VARIABLE WITH_LIB_BIGNUM OUTPUT_STRIP_TRAILING_WHITESPACE)
-			if ("${WITH_LIB_BIGNUM}" STREQUAL "Y")
-				list(APPEND MBEDTLS_SRC_CRYPTO
-					"${MBEDTLS_DIR}/library/bignum.c"
-					"${MBEDTLS_DIR}/library/bignum_core.c"
-					"${MBEDTLS_DIR}/library/bignum_mod.c"
-					"${MBEDTLS_DIR}/library/constant_time.c"
-				)
-			endif()
-
-			if (MBEDTLS_SRC_CRYPTO)
-				list(APPEND MBEDTLS_SRC ${MBEDTLS_SRC_CRYPTO})
-			endif()
 		endif()
 		add_library(mbedtls STATIC ${MBEDTLS_SRC_BASE} ${MBEDTLS_SRC})
 		# mbedtls_platform.c uses clock_gettime() which requires -lrt on older systems
@@ -1086,6 +1074,17 @@ endif (OSCamOperatingSystem MATCHES "Mac OS X")
 if (OSCamOperatingSystem MATCHES "Windows/Cygwin")
 	set (CMAKE_EXE_LINKER_FLAGS "--enable-stdcall-fixup")
 endif (OSCamOperatingSystem MATCHES "Windows/Cygwin")
+
+# Drop unreferenced functions/data. Pairs with -ffunction-sections /
+# -fdata-sections set above. Matches the plain Makefile's default
+# LDFLAGS so both build systems produce comparably-sized binaries.
+# The Apple ld does not support --gc-sections; its equivalent is
+# -dead_strip.
+if (OSCamOperatingSystem MATCHES "Mac OS X")
+	set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-dead_strip")
+else ()
+	set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
+endif ()
 
 #----------------------- subdirectory list smargo ------------------------------
 

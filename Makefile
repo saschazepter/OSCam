@@ -189,9 +189,12 @@ endif
 ifeq "$(LINKER_VER)" "20041121"
 	LDFLAGS :=
 endif
-# The OS X linker do not support --gc-sections
+# The OS X linker does not support --gc-sections. Its equivalent
+# is -dead_strip: strips symbols unreachable from the entry point,
+# pairs with the -ffunction-sections/-fdata-sections already set on
+# the compile side. Same net effect as GNU ld's --gc-sections.
 ifeq ($(uname_S),Darwin)
-	LDFLAGS :=
+	LDFLAGS := -Wl,-dead_strip
 endif
 
 # The compiler knows for what target it compiles, so use this information
@@ -265,11 +268,22 @@ endif
 # MbedTLS common settings
 MBEDTLS_DIR      := mbedtls
 MBEDTLS_INC      := $(MBEDTLS_DIR)/include
+MBEDTLS_TF_PSA   := $(MBEDTLS_DIR)/tf-psa-crypto
+MBEDTLS_BUILTIN  := $(MBEDTLS_TF_PSA)/drivers/builtin
 
 ifneq ($(strip $(shell ./config.sh --show-enabled libraries)),)
 	ifeq ($(USE_MBEDTLS),1)
 		override CFLAGS += -I. -I$(MBEDTLS_DIR)/include
-		override CFLAGS  += -DMBEDTLS_NO_PLATFORM_ENTROPY -DMBEDTLS_NO_DEFAULT_ENTROPY_SOURCES
+		override CFLAGS  += -I$(MBEDTLS_DIR)/library
+		override CFLAGS  += -I$(MBEDTLS_TF_PSA)/include
+		override CFLAGS  += -I$(MBEDTLS_TF_PSA)/core
+		override CFLAGS  += -I$(MBEDTLS_TF_PSA)/extras
+		override CFLAGS  += -I$(MBEDTLS_BUILTIN)/include
+		override CFLAGS  += -I$(MBEDTLS_BUILTIN)/src
+		override CFLAGS  += -I$(MBEDTLS_TF_PSA)/utilities
+		override CFLAGS  += -I$(MBEDTLS_TF_PSA)/dispatch
+		override CFLAGS  += -I$(MBEDTLS_TF_PSA)/platform
+		override CFLAGS  += -DTF_PSA_CRYPTO_USER_CONFIG_FILE=\"tf-psa-crypto-config.h\"
 		override CFLAGS  += -DMBEDTLS_USER_CONFIG_FILE=\"mbedtls-config.h\"
 		override LDFLAGS += $(LIB_RT)
 		IS_MBEDTLS_FILE = $(or $(findstring $(MBEDTLS_DIR)/,$<),$(findstring mbedtls/,$(CFLAGS)))
@@ -278,49 +292,24 @@ endif
 
 # MbedTLS base files
 ifeq ($(USE_MBEDTLS),1)
-	MBEDTLS_SRC_BASE := \
-		$(shell $(GREP) -q '^\#define MBEDTLS_DEBUG_C' mbedtls-config.h 2>/dev/null && echo $(MBEDTLS_DIR)/library/debug.c) \
-		mbedtls_platform.c
+	MBEDTLS_SRC_BASE := mbedtls_platform.c
 
-	# MbedTLS all files
+	# Crypto layer (tf-psa-crypto/) is ALWAYS needed whenever oscam-crypto-mbedtls.c
+	# references psa_hash_* / psa_cipher_* / psa_crypto_init etc. — that is true
+	# in every USE_MBEDTLS build (including `make tests` without USE_SSL).
+	MBEDTLS_SRC := $(wildcard $(MBEDTLS_BUILTIN)/src/*.c)
+	MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/core/*.c)
+	MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/utilities/*.c)
+	MBEDTLS_SRC += $(wildcard $(MBEDTLS_TF_PSA)/extras/*.c)
+	MBEDTLS_SRC += $(filter-out \
+		$(MBEDTLS_TF_PSA)/platform/platform.c \
+		$(MBEDTLS_TF_PSA)/platform/memory_buffer_alloc.c, \
+		$(wildcard $(MBEDTLS_TF_PSA)/platform/*.c))
+
+	# SSL/TLS/X.509 layer (mbedtls/library/) is only pulled in when USE_SSL=1.
+	# Includes ssl_tls13_*.c — TLS 1.3 is enabled in mbedtls-config.h.
 	ifeq ($(USE_SSL),1)
-		MBEDTLS_SRC := $(filter-out \
-			$(MBEDTLS_DIR)/library/debug.c \
-			$(MBEDTLS_DIR)/library/platform.c \
-			$(MBEDTLS_DIR)/library/platform_util.c \
-			$(MBEDTLS_DIR)/library/psa_%.c \
-			$(MBEDTLS_DIR)/library/ssl_tls13_%.c, \
-			$(wildcard $(MBEDTLS_DIR)/library/*.c))
-	else
-	# MbedTLS optional files
-		ifeq "$(shell ./config.sh --enabled WITH_LIB_AES)" "Y"
-			MBEDTLS_SRC_CRYPTO += \
-				$(MBEDTLS_DIR)/library/aes.c \
-				$(MBEDTLS_DIR)/library/aesce.c \
-				$(MBEDTLS_DIR)/library/aesni.c
-		endif
-		ifeq ($(or $(shell ./config.sh --enabled WITH_LIB_DES),$(shell ./config.sh --enabled WITH_LIB_MDC2)),Y)
-			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/des.c
-		endif
-		ifeq "$(shell ./config.sh --enabled WITH_LIB_MD5)" "Y"
-			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/md5.c
-		endif
-		ifeq "$(shell ./config.sh --enabled WITH_LIB_SHA1)" "Y"
-			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/sha1.c
-		endif
-		ifeq "$(shell ./config.sh --enabled WITH_LIB_SHA256)" "Y"
-			MBEDTLS_SRC_CRYPTO += $(MBEDTLS_DIR)/library/sha256.c
-		endif
-		ifeq "$(shell ./config.sh --enabled WITH_LIB_BIGNUM)" "Y"
-			MBEDTLS_SRC_CRYPTO += \
-				$(MBEDTLS_DIR)/library/bignum.c \
-				$(MBEDTLS_DIR)/library/bignum_core.c \
-				$(MBEDTLS_DIR)/library/bignum_mod.c \
-				$(MBEDTLS_DIR)/library/constant_time.c
-		endif
-		ifneq ($(strip $(MBEDTLS_SRC_CRYPTO)),)
-			MBEDTLS_SRC += $(MBEDTLS_SRC_CRYPTO)
-		endif
+		MBEDTLS_SRC += $(wildcard $(MBEDTLS_DIR)/library/*.c)
 	endif
 endif
 
@@ -569,7 +558,7 @@ SRC := $(subst config.c,$(OBJDIR)/config.c,$(SRC))
 # starts the compilation.
 all: submodules
 	@./config.sh --use-flags "$(USE_FLAGS)" --objdir "$(OBJDIR)" --make-config.mak
-	@-mkdir -p $(OBJDIR)/csctapi $(OBJDIR)/minilzo $(OBJDIR)/webif $(OBJDIR)/signing $(OBJDIR)/$(MBEDTLS_DIR)/library
+	@-mkdir -p $(OBJDIR)/csctapi $(OBJDIR)/minilzo $(OBJDIR)/webif $(OBJDIR)/signing $(OBJDIR)/$(MBEDTLS_DIR)/library $(OBJDIR)/$(MBEDTLS_BUILTIN)/src $(OBJDIR)/$(MBEDTLS_TF_PSA)/core $(OBJDIR)/$(MBEDTLS_TF_PSA)/utilities $(OBJDIR)/$(MBEDTLS_TF_PSA)/extras $(OBJDIR)/$(MBEDTLS_TF_PSA)/platform
 	@-printf "\
 +-------------------------------------------------------------------------------\n\
 | OSCam Ver.: $(VER) sha: $(GIT_SHA) target: $(TARGET)\n\
@@ -680,6 +669,9 @@ distclean: clean
 
 submodules:
 	@./config.sh --use-flags "$(USE_FLAGS)" --submodule
+ifeq ($(USE_MBEDTLS),1)
+	@./config.sh --mbedtls-fetch
+endif
 
 README.build:
 	@echo "Extracting 'make help' into $@ file."

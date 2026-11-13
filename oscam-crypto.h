@@ -147,7 +147,7 @@ typedef DES_key_schedule des_key_schedule;
 #else
 
 #if defined(WITH_SSL) || defined(WITH_LIB_BIGNUM)
-#include "mbedtls/bignum.h"
+#include "mbedtls/private/bignum.h"
 #endif
 
 #endif /* WITH_OPENSSL */
@@ -252,7 +252,7 @@ struct oscam_des_key_schedule {
 
 void oscam_des_set_key(const uint8_t *key, des_key_schedule *schedule);
 void oscam_des(uint8_t *data, des_key_schedule *schedule, int enc);
-void des_set_odd_parity(uint8_t key8[8]);
+void des_set_odd_parity(uint8_t *key);
 void des_set_odd_parity_all(uint8_t *key, size_t len);
 
 void oscam_des_ecb_encrypt(uint8_t *data, const uint8_t *key, int32_t len);
@@ -275,7 +275,7 @@ void oscam_des_ecb3_decrypt(uint8_t *data, const uint8_t *key);
 #endif
 
 struct SHA_CTX {
-	unsigned char opaque[128];
+	unsigned char opaque[256];  /* Must fit psa_hash_operation_t (232 bytes on mbedTLS 4.x) */
 };
 
 int SHA1_Init(SHA_CTX *c);
