@@ -47,6 +47,12 @@ int   oscam_mbedtls_snprintf(char *buf, size_t buflen, const char *fmt, ...);
 #define MBEDTLS_PLATFORM_SNPRINTF_MACRO(...) oscam_mbedtls_snprintf(__VA_ARGS__)
 #define MBEDTLS_PLATFORM_FPRINTF_MACRO      fprintf
 
+/* Override mbedtls_platform_zeroize() with our own (mbedtls_platform.c).
+ * The default impl in tf-psa-crypto enables explicit_bzero() based on the
+ * build-host glibc headers, which makes cross-compiled binaries demand
+ * GLIBC_2.25 even when the target runs an older glibc. */
+#define MBEDTLS_PLATFORM_ZEROIZE_ALT
+
 /* --- Time support --- */
 #define MBEDTLS_HAVE_TIME
 #define MBEDTLS_HAVE_TIME_DATE
