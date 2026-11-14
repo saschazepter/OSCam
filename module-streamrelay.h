@@ -25,10 +25,36 @@
 #define EVEN 0
 #define ODD 1
 
+#define SR_MAX_PES_PIDS 8
+
+// Packets of the new parity in a row that say a period really changed; the
+// stragglers of the one being left arrive singly between them.
+#define SR_PERIOD_MIN_PACKETS 8
+
+// Two registers per parity, picked by the packet's own parity bit, as a receiver
+// without a delay has them. The waiting one exists only because the delayed
+// output may still be inside the period whose word is being replaced.
 typedef struct
 {
-	struct dvbcsa_bs_key_s *key[2];
-	bool have_key[2];
+	struct dvbcsa_bs_key_s *key[2];      // what the packets of this parity are opened with
+	struct dvbcsa_bs_key_s *waiting[2];  // the next word, until the packets ask for it
+	uint8_t cw[2][8];                    // the word in the register, to recognise a repeat
+	uint8_t cw_waiting[2][8];
+	uint8_t mode[2];                     // table it was derived with, part of its identity
+	uint8_t mode_waiting[2];
+	bool has_waiting[2];
+	bool have_key[2];                    // a control word arrived for this parity
+	struct timeb start[2];               // when the period now playing began
+	int32_t late_ms[2];                  // how long that period went without a word that opens it
+	bool run_dead[2];                    // the register does not open this period
+	bool probe_armed[2];                 // the register still has to prove itself
+	bool probe_retry[2];                 // one failure is not enough to call it dead
+	uint8_t cw_judged[2][8];             // the word the last period of this parity was judged with
+	bool reported[2];                    // the word in the register has had its say already
+	bool miss_pending[2];                // it ran without a word, to be said in the gap where it belongs
+	int8_t parity;                       // parity of the period now playing, -1 = none yet
+	int8_t turning;                      // parity the packets may be turning to
+	uint16_t turn_count;                 // how many of them in a row have said so
 } stream_client_key_data;
 
 typedef struct
@@ -59,6 +85,8 @@ typedef struct
 	uint16_t ecm_pid;
 	uint16_t emm_pid;
 	uint16_t pcr_pid;
+	uint16_t pes_pid[SR_MAX_PES_PIDS]; // video and audio, what the probe may judge
+	uint8_t pes_pids;
 	uint8_t ecm_md5[MD5_DIGEST_LENGTH];
 } stream_client_data;
 

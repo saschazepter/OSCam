@@ -399,6 +399,7 @@ SRC-$(CONFIG_MODULE_RADEGAST) += module-radegast.c
 SRC-$(CONFIG_MODULE_SCAM) += module-scam.c
 SRC-$(CONFIG_MODULE_SERIAL) += module-serial.c
 SRC-$(CONFIG_MODULE_STREAMRELAY) += module-streamrelay.c
+SRC-$(CONFIG_MODULE_STREAMRELAY) += module-streamrelay-delay.c
 SRC-$(CONFIG_WITH_LB) += module-stat.c
 SRC-$(CONFIG_WEBIF) += module-webif-lib.c
 SRC-$(CONFIG_WEBIF) += module-webif-tpl.c
