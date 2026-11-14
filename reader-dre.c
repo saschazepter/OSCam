@@ -1,6 +1,5 @@
 #include "globals.h"
 #ifdef READER_DRE
-#include "cscrypt/des.h"
 #include "reader-common.h"
 #include "reader-dre-common.h"
 
@@ -685,7 +684,7 @@ static int32_t dre_card_init(struct s_reader *reader, ATR *newatr)
 
 static void DREover(struct s_reader *reader, const uint8_t *ECMdata, uint8_t *DW)
 {
-	uint32_t key_schedule[32];
+	des_key_schedule schedule;
 
 	if(reader->des_key_length < 128)
 	{
@@ -695,10 +694,10 @@ static void DREover(struct s_reader *reader, const uint8_t *ECMdata, uint8_t *DW
 
 	if(ECMdata[2] >= (43 + 4) && ECMdata[40] == 0x3A && ECMdata[41] == 0x4B)
 	{
-		des_set_key(&reader->des_key[(ECMdata[42] & 0x0F) * 8], key_schedule);
+		des_set_key(&reader->des_key[(ECMdata[42] & 0x0F) * 8], &schedule);
 
-		des(DW, key_schedule, 0); // even DW post-process
-		des(DW + 8, key_schedule, 0); // odd DW post-process
+		des(DW, &schedule, 0);      // even DW post-process
+		des(DW + 8, &schedule, 0);  // odd DW post-process
 	};
 };
 

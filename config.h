@@ -27,6 +27,17 @@
 //#define WITH_SIGNING 1
 #define MODULE_MONITOR 1
 
+#define WITH_LIB_MINILZO 1
+#define WITH_LIB_AES 1
+#define WITH_LIB_MD5 1
+#define WITH_LIB_MDC2 1
+#define WITH_LIB_DES 1
+#define WITH_LIB_SHA1 1
+#define WITH_LIB_SHA256 1
+#define WITH_LIB_RC6 1
+#define WITH_LIB_IDEA 1
+#define WITH_LIB_BIGNUM 1
+
 //#define MODULE_CAMD33 1
 #define MODULE_CAMD35 1
 #define MODULE_CAMD35_TCP 1
