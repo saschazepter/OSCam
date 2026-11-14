@@ -6617,6 +6617,8 @@ static char *send_oscam_status(struct templatevars * vars, struct uriparams * pa
 
 					if(apicall == 2)
 					{
+						tpl_addVar(vars, TPLADD, "JSONDELIMITER", delimiter?",":"");
+						// Keep the previous placeholder available to external status templates.
 						tpl_addVar(vars, TPLADD, "JSONARRAYDELIMITER", delimiter?",":"");
 						tpl_addVar(vars, TPLAPPEND, "JSONSTATUSBITS", tpl_getTpl(vars, "JSONSTATUSBIT"));
 						delimiter++;
