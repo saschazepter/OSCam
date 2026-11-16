@@ -2,7 +2,7 @@
 # Compare unsigned builds of committed HEAD in different source/build directories.
 set -eu
 
-repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+repo=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/oscam-repro.XXXXXX")
 cleanup() {
 	result=$?
@@ -46,6 +46,8 @@ export SOURCE_DATE_EPOCH=0001700000000
 [ "$("$first/config.sh" --oscam-epoch)" = 1700000000 ]
 [ "$(TZ=Pacific/Honolulu "$first/config.sh" --oscam-build-date)" = '14.11.2023 22:13:20' ]
 [ "$("$first/config.sh" --oscam-epoch 0000)" = 0 ]
+# Make must expand $(BUILD_EPOCH); the shell must pass it literally.
+# shellcheck disable=SC2016
 make -s -C "$first" SOURCE_DATE_EPOCH=0008 \
 	--eval='metadata-check:;@test "$(BUILD_EPOCH)" = 8' metadata-check
 for epoch in invalid -1 999999999999999999999999; do
@@ -66,39 +68,43 @@ done
 # Exercise real signing providers: deterministic ECDSA when available, the
 # compatibility fallback, and deterministic RSA on providers without nonce-type.
 printf '%s' 'reproducibility signing check' > "$work_dir/hash"
-openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:prime256v1 -out "$work_dir/ec.key" > "$work_dir/signing.log" 2>&1
-"$first/devtools/sign-digest.sh" openssl "$work_dir/ec.key" "$work_dir/ec.sig" "$work_dir/hash" 0 >> "$work_dir/signing.log" 2>&1
-openssl pkey -in "$work_dir/ec.key" -pubout -out "$work_dir/ec.pub" >> "$work_dir/signing.log" 2>&1
-openssl dgst -sha256 -verify "$work_dir/ec.pub" -signature "$work_dir/ec.sig" "$work_dir/hash" >> "$work_dir/signing.log" 2>&1
-ecdsa_deterministic=0
-openssl dgst -sha256 -binary -out "$work_dir/probe.hash" "$work_dir/hash" >> "$work_dir/signing.log" 2>&1
-if openssl pkeyutl -sign -inkey "$work_dir/ec.key" -in "$work_dir/probe.hash" \
-	-pkeyopt digest:sha256 -pkeyopt nonce-type:1 -out "$work_dir/probe.sig" >> "$work_dir/signing.log" 2>&1; then
-	ecdsa_deterministic=1
-	"$first/devtools/sign-digest.sh" openssl "$work_dir/ec.key" "$work_dir/ec-strict.sig" "$work_dir/hash" 1 >> "$work_dir/signing.log" 2>&1
-	cmp "$work_dir/probe.sig" "$work_dir/ec-strict.sig"
-	cmp "$work_dir/ec.sig" "$work_dir/ec-strict.sig"
-	openssl dgst -sha256 -verify "$work_dir/ec.pub" -signature "$work_dir/ec-strict.sig" "$work_dir/hash" >> "$work_dir/signing.log" 2>&1
-else
-	if "$first/devtools/sign-digest.sh" openssl "$work_dir/ec.key" "$work_dir/ec-strict.sig" "$work_dir/hash" 1 >> "$work_dir/signing.log" 2>&1; then
-		echo 'Randomized ECDSA signing was accepted in strict mode' >&2
-		exit 1
+{
+	openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:prime256v1 -out "$work_dir/ec.key"
+	"$first/devtools/sign-digest.sh" openssl "$work_dir/ec.key" "$work_dir/ec.sig" "$work_dir/hash" 0
+	openssl pkey -in "$work_dir/ec.key" -pubout -out "$work_dir/ec.pub"
+	openssl dgst -sha256 -verify "$work_dir/ec.pub" -signature "$work_dir/ec.sig" "$work_dir/hash"
+	ecdsa_deterministic=0
+	openssl dgst -sha256 -binary -out "$work_dir/probe.hash" "$work_dir/hash"
+	if openssl pkeyutl -sign -inkey "$work_dir/ec.key" -in "$work_dir/probe.hash" \
+		-pkeyopt digest:sha256 -pkeyopt nonce-type:1 -out "$work_dir/probe.sig"; then
+		ecdsa_deterministic=1
+		"$first/devtools/sign-digest.sh" openssl "$work_dir/ec.key" "$work_dir/ec-strict.sig" "$work_dir/hash" 1
+		cmp "$work_dir/probe.sig" "$work_dir/ec-strict.sig"
+		cmp "$work_dir/ec.sig" "$work_dir/ec-strict.sig"
+		openssl dgst -sha256 -verify "$work_dir/ec.pub" -signature "$work_dir/ec-strict.sig" "$work_dir/hash"
+	else
+		if "$first/devtools/sign-digest.sh" openssl "$work_dir/ec.key" "$work_dir/ec-strict.sig" "$work_dir/hash" 1; then
+			echo 'Randomized ECDSA signing was accepted in strict mode' >&2
+			exit 1
+		fi
+		[ ! -f "$work_dir/ec-strict.sig" ]
 	fi
+	openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$work_dir/rsa.key"
+	"$first/devtools/sign-digest.sh" openssl "$work_dir/rsa.key" "$work_dir/rsa.sig" "$work_dir/hash" 1
+	"$first/devtools/sign-digest.sh" openssl "$work_dir/rsa.key" "$work_dir/rsa-repeat.sig" "$work_dir/hash" 1
+	cmp "$work_dir/rsa.sig" "$work_dir/rsa-repeat.sig"
+	openssl pkey -in "$work_dir/rsa.key" -pubout -out "$work_dir/rsa.pub"
+	openssl dgst -sha256 -verify "$work_dir/rsa.pub" -signature "$work_dir/rsa.sig" "$work_dir/hash"
+} > "$work_dir/signing.log" 2>&1
+if [ "$ecdsa_deterministic" = 0 ]; then
 	grep -q 'Cannot produce deterministic signatures' "$work_dir/signing.log"
-	[ ! -f "$work_dir/ec-strict.sig" ]
 fi
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$work_dir/rsa.key" >> "$work_dir/signing.log" 2>&1
-"$first/devtools/sign-digest.sh" openssl "$work_dir/rsa.key" "$work_dir/rsa.sig" "$work_dir/hash" 1 >> "$work_dir/signing.log" 2>&1
-"$first/devtools/sign-digest.sh" openssl "$work_dir/rsa.key" "$work_dir/rsa-repeat.sig" "$work_dir/hash" 1 >> "$work_dir/signing.log" 2>&1
-cmp "$work_dir/rsa.sig" "$work_dir/rsa-repeat.sig"
-openssl pkey -in "$work_dir/rsa.key" -pubout -out "$work_dir/rsa.pub" >> "$work_dir/signing.log" 2>&1
-openssl dgst -sha256 -verify "$work_dir/rsa.pub" -signature "$work_dir/rsa.sig" "$work_dir/hash" >> "$work_dir/signing.log" 2>&1
 
 build_pair() {
 	source=$1
 	name=$2
 	zone=$3
-	export TZ=$zone
+	export TZ="$zone"
 	echo "Building $name in $source (TZ=$TZ)"
 	make -C "$source" -j"${REPRO_JOBS:-2}" BUILD_DIR="$work_dir/make-$name" \
 		OSCAM_BIN="$work_dir/oscam-make-$name" > "$work_dir/make-$name.log" 2>&1
