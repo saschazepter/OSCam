@@ -30,9 +30,6 @@ refer to the OSCam wiki:
 
 - [Wiki Home](https://git.streamboard.tv/common/oscam/-/wikis/home)
 
-For source timestamps, directory-independent builds, and deterministic signing,
-see [Reproducible builds](README.reproducible-builds.md).
-
 ## License
 
 OSCam: Open Source CAM
