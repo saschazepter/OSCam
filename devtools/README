@@ -14,3 +14,9 @@ Currently available tools are:
 
   extract_config.sh                     This script extracts OSCam build
                                         config from oscam binary.
+
+  check_reproducible_builds.sh           Compare committed HEAD builds across
+                                        source paths, build paths and timezones.
+
+  sign-digest.sh                         Shared Make/CMake signing helper with
+                                        optional deterministic-signature checks.

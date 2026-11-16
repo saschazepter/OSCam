@@ -92,6 +92,23 @@ oscam-test:
     expire_in: 1 week
   allow_failure: true
 
+oscam-reproducible-builds:
+  stage: test
+  tags:
+    - build
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_PIPELINE_SOURCE == 'schedule'
+  script:
+    - devtools/check_reproducible_builds.sh
+  variables:
+    REPRO_LOG_DIR: build/reproducible-check
+  artifacts:
+    when: always
+    paths:
+      - build/reproducible-check/*.log
+    expire_in: 1 week
+
 code-cleanup:
   stage: fixup
   tags:

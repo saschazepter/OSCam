@@ -12,6 +12,33 @@ if(POLICY CMP0054)
   cmake_policy(SET CMP0054 NEW)
 endif()
 
+# Set these before adding subdirectories so crypto and reader libraries inherit
+# the mappings as well as the main executable.
+include (CheckCCompilerFlag)
+check_c_compiler_flag ("-ffile-prefix-map=.=." HAVE_FILE_PREFIX_MAP)
+if (HAVE_FILE_PREFIX_MAP)
+	set (PREFIX_MAP_FLAGS -ffile-prefix-map)
+else ()
+	check_c_compiler_flag ("-fdebug-prefix-map=.=." HAVE_DEBUG_PREFIX_MAP)
+	check_c_compiler_flag ("-fmacro-prefix-map=.=." HAVE_MACRO_PREFIX_MAP)
+	if (HAVE_DEBUG_PREFIX_MAP)
+		list (APPEND PREFIX_MAP_FLAGS -fdebug-prefix-map)
+	else ()
+		message (WARNING "Compiler cannot normalize debug paths; unstripped builds may depend on the build directory")
+	endif ()
+	if (HAVE_MACRO_PREFIX_MAP)
+		list (APPEND PREFIX_MAP_FLAGS -fmacro-prefix-map)
+	else ()
+		message (WARNING "Compiler cannot normalize __FILE__; builds may depend on the source directory")
+	endif ()
+endif ()
+foreach (flag ${PREFIX_MAP_FLAGS})
+	set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${flag}=${CMAKE_SOURCE_DIR}=.")
+	if (NOT CMAKE_BINARY_DIR STREQUAL CMAKE_SOURCE_DIR)
+		set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${flag}=${CMAKE_BINARY_DIR}=./build")
+	endif ()
+endforeach ()
+
 #----------------------- static link options ------------------------------
 # Declare the optional static-link flags as cache variables so that setting
 # them via -D does not produce "Manually-specified variables were not used"
@@ -247,6 +274,12 @@ else (NOT USE_COMPRESS OR USE_COMPRESS EQUAL 0)
 endif (NOT USE_COMPRESS OR USE_COMPRESS EQUAL 0)
 
 # binary signing
+option(REQUIRE_DETERMINISTIC_SIGNING "Fail if binary signatures are not reproducible" OFF)
+if (REQUIRE_DETERMINISTIC_SIGNING)
+	set (DETERMINISTIC_SIGNING_ARG 1)
+else ()
+	set (DETERMINISTIC_SIGNING_ARG 0)
+endif ()
 find_program(STAT NAMES gnustat)
 find_program(STAT NAMES stat)
 find_program(SPLIT NAMES gsplit)
@@ -272,6 +305,7 @@ if ((CONFIG_WITH_SIGNING MATCHES "Y" AND NOT WITH_SIGNING EQUAL 0) OR WITH_SIGNI
 	else (NOT CONFIG_RET EQUAL 0)
 		add_definitions ("-DWITH_SIGNING -DWITH_SSL")
 		set (WITH_SIGNING "1")
+		set (WITH_SSL "1")
 		execute_process (COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --cert-file privkey ERROR_QUIET                 OUTPUT_VARIABLE SIGN_PRIVKEY OUTPUT_STRIP_TRAILING_WHITESPACE)
 		execute_process (COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --sign-marker                                   OUTPUT_VARIABLE SIGN_MARKER OUTPUT_STRIP_TRAILING_WHITESPACE)
 		execute_process (COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --upx-marker                                    OUTPUT_VARIABLE SIGN_UPXMARKER OUTPUT_STRIP_TRAILING_WHITESPACE)
@@ -296,9 +330,17 @@ endif ((CONFIG_WITH_SIGNING MATCHES "Y" AND NOT WITH_SIGNING EQUAL 0) OR WITH_SI
 
 function(SIGN_COMMAND_OSCAM)
 	file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/signing)
+	set (SIGN_POLICY "${CMAKE_CURRENT_BINARY_DIR}/signing/require-deterministic")
+	if (EXISTS "${SIGN_POLICY}")
+		file (READ "${SIGN_POLICY}" PREVIOUS_SIGN_POLICY)
+	endif ()
+	if (NOT "${PREVIOUS_SIGN_POLICY}" STREQUAL "${DETERMINISTIC_SIGNING_ARG}")
+		file (WRITE "${SIGN_POLICY}" "${DETERMINISTIC_SIGNING_ARG}")
+	endif ()
+	set_property (TARGET ${exe_name} APPEND PROPERTY LINK_DEPENDS "${SIGN_POLICY}" "${CMAKE_CURRENT_SOURCE_DIR}/devtools/sign-digest.sh")
 	add_custom_command(TARGET ${exe_name} POST_BUILD COMMAND sha256sum ${exe_name} | awk '{ print $$1 }' | tr -d '\\n' > ${SIGN_HASH}
 	                                                 COMMAND openssl x509 -pubkey -noout                 -in ${SIGN_CERT}    -out ${SIGN_PUBKEY}
-	                                                 COMMAND openssl dgst -sha256 -sigopt nonce-type:1 -sign ${SIGN_PRIVKEY} -out ${SIGN_DIGEST} ${SIGN_HASH} 2>/dev/null || openssl dgst -sha256 -sign ${SIGN_PRIVKEY} -out ${SIGN_DIGEST} ${SIGN_HASH}
+	                                                 COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/devtools/sign-digest.sh" openssl "${SIGN_PRIVKEY}" "${SIGN_DIGEST}" "${SIGN_HASH}" ${DETERMINISTIC_SIGNING_ARG}
 	                                                 COMMAND printf '[SIGN] SHA256\('\; ${STAT} -c %s ${SIGN_HASH} | tr -d '\\n'\; printf '\): '\; cat ${SIGN_HASH}\; printf ' -> '
 	                                                 COMMAND openssl dgst -sha256    -verify ${SIGN_PUBKEY} -signature ${SIGN_DIGEST} ${SIGN_HASH} | tr -d '\\n'
 	                                                 COMMAND test -f ${UPX_SPLIT_PREFIX}aa && cat ${UPX_SPLIT_PREFIX}aa > ${exe_name} || true
@@ -909,12 +951,12 @@ execute_process (COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --oscam-epoch OUT
 if (NOT EPOCH_RESULT EQUAL 0)
 	message (FATAL_ERROR "Could not determine SOURCE_DATE_EPOCH")
 endif()
-execute_process (COMMAND date -u -d @${SOURCE_DATE_EPOCH} "+%d.%m.%Y %H:%M:%S" OUTPUT_VARIABLE CS_BUILD_DATE OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-if (NOT CS_BUILD_DATE)
-	execute_process (COMMAND date -u -r ${SOURCE_DATE_EPOCH} "+%d.%m.%Y %H:%M:%S" OUTPUT_VARIABLE CS_BUILD_DATE OUTPUT_STRIP_TRAILING_WHITESPACE)
+execute_process (COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --oscam-build-date ${SOURCE_DATE_EPOCH} OUTPUT_VARIABLE CS_BUILD_DATE OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE DATE_RESULT)
+if (NOT DATE_RESULT EQUAL 0 OR NOT CS_BUILD_DATE)
+	message (FATAL_ERROR "Could not format SOURCE_DATE_EPOCH")
 endif()
 add_definitions ("-D'CS_BUILD_DATE=\"${CS_BUILD_DATE}\"'")
-add_definitions ("-D'CS_BUILD_EPOCH=${SOURCE_DATE_EPOCH}'")
+add_definitions ("-D'CS_BUILD_EPOCH=${SOURCE_DATE_EPOCH}LL'")
 
 execute_process(COMMAND ${CMAKE_C_COMPILER} -dumpmachine COMMAND tr -d '\n' OUTPUT_VARIABLE CS_TARGET)
 add_definitions ("-D'CS_TARGET=\"${CS_TARGET}\"'")
@@ -947,11 +989,12 @@ if (CMAKE_COMPILER_IS_GNUCC)
 	list(GET GCC_VERSION_COMPONENTS 0 GCC_MAJOR)
 	list(GET GCC_VERSION_COMPONENTS 0 GCC_MINOR)
 	add_definitions ("-W -Wall ")
-	set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -O2 -pipe -ffunction-sections -fdata-sections -fomit-frame-pointer -fno-schedule-insns -fdebug-prefix-map=${CMAKE_SOURCE_DIR}=.")
+	set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -O2 -pipe -ffunction-sections -fdata-sections -fomit-frame-pointer -fno-schedule-insns")
 	set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -O2")
 	set (CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O0 -ggdb")
 	set (CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0 -ggdb")
 endif (CMAKE_COMPILER_IS_GNUCC)
+
 # some optimisations
 if (OSCamOperatingSystem MATCHES "Mac OS X")
 	if (SWVER GREATER 10.6)

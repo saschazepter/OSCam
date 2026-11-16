@@ -118,7 +118,8 @@ Usage: `basename $0` [parameters]
  -um, --upx-marker            Get Oscam binary upx marker.
  -v, --oscam-version          Display OSCam version.
  -c, --oscam-commit           Display OSCam GIT short commit sha 8-digits.
- -t, --oscam-epoch            SOURCE_DATE_EPOCH, or Unix timestamp of last git commit.
+ -t, --oscam-epoch [epoch]    Normalize epoch, SOURCE_DATE_EPOCH, or last git commit time.
+     --oscam-build-date [epoch]  Format the source epoch as a UTC build date.
 
  -O, --detect-osx-sdk-version Find where OS X SDK is located
 
@@ -770,6 +771,30 @@ cert_info() {
 	fi
 }
 
+oscam_epoch() {
+	epoch=${1:-${SOURCE_DATE_EPOCH:-}}
+	if [ -z "$epoch" ]; then
+		epoch=$(git log -1 --format=%ct 2>/dev/null) || epoch=0
+	fi
+	case "$epoch" in
+		*[!0-9]*) echo "Invalid SOURCE_DATE_EPOCH: expected a non-negative integer" >&2; return 1 ;;
+	esac
+	epoch=$(printf '%s' "$epoch" | sed 's/^0*//')
+	printf '%s\n' "${epoch:-0}"
+}
+
+oscam_build_date() {
+	epoch=$(oscam_epoch "$1") || return 1
+	if date -u -d "@$epoch" '+%d.%m.%Y %H:%M:%S' 2>/dev/null; then
+		return 0
+	fi
+	if date -u -r "$epoch" '+%d.%m.%Y %H:%M:%S' 2>/dev/null; then
+		return 0
+	fi
+	echo "Cannot format SOURCE_DATE_EPOCH=$epoch with the host date command" >&2
+	return 1
+}
+
 # Change working directory to the directory where the script is
 cd $(dirname $0)
 
@@ -956,21 +981,17 @@ do
 		break
 	;;
 	'-c'|'--oscam-commit')
-		sha=`git log -1 --format=%h 2>/dev/null | cut -c1-8`
+		sha=`git log -1 --format=%H 2>/dev/null | cut -c1-8`
 		echo $sha
 		break
 	;;
 	'-t'|'--oscam-epoch')
-		if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
-			case "$SOURCE_DATE_EPOCH" in
-				*[!0-9]*) echo "Invalid SOURCE_DATE_EPOCH: expected a non-negative integer" >&2; exit 1 ;;
-			esac
-			epoch=`printf '%s' "$SOURCE_DATE_EPOCH" | sed 's/^0*//'`
-		else
-			epoch=`git log -1 --format=%ct 2>/dev/null`
-		fi
-		echo ${epoch:-0}
-		break
+		oscam_epoch "$2"
+		exit $?
+	;;
+	'--oscam-build-date')
+		oscam_build_date "$2"
+		exit $?
 	;;
 	'-O'|'--detect-osx-sdk-version')
 		shift
