@@ -15,7 +15,15 @@ case "$5" in
 	*) echo "require-deterministic must be 0 or 1" >&2; exit 1 ;;
 esac
 
-if "$openssl" dgst -sha256 -sigopt nonce-type:1 -sign "$key" -out "$signature" "$input" 2>/dev/null; then
+# Some ECDSA providers (including OpenSSL 3.2) no longer expose nonce-type after
+# DigestSignInit, when dgst sets signature options. Prehash the same input and
+# use pkeyutl's low-level context to preserve dgst -sha256 verification.
+work_dir=$(mktemp -d "${TMPDIR:-/tmp}/oscam-sign.XXXXXX")
+trap 'rm -rf "$work_dir"' 0
+trap 'exit 1' 1 2 3 15
+"$openssl" dgst -sha256 -binary -out "$work_dir/hash" "$input"
+if "$openssl" pkeyutl -sign -inkey "$key" -in "$work_dir/hash" \
+	-pkeyopt digest:sha256 -pkeyopt nonce-type:1 -out "$signature" 2>/dev/null; then
 	exit 0
 fi
 
@@ -27,9 +35,7 @@ fi
 
 # RSA PKCS#1 v1.5 is deterministic without a nonce option. Compare fallback
 # signatures instead of assuming every unsupported key/provider is randomized.
-check_sig=$(mktemp "${TMPDIR:-/tmp}/oscam-sign.XXXXXX")
-trap 'rm -f "$check_sig"' 0
-trap 'exit 1' 1 2 3 15
+check_sig=$work_dir/check.sig
 "$openssl" dgst -sha256 -sign "$key" -out "$check_sig" "$input"
 if ! cmp -s "$signature" "$check_sig"; then
 	rm -f "$signature"

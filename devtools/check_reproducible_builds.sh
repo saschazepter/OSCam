@@ -71,16 +71,28 @@ openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:prime256v1 -out "$work_
 openssl pkey -in "$work_dir/ec.key" -pubout -out "$work_dir/ec.pub" >> "$work_dir/signing.log" 2>&1
 openssl dgst -sha256 -verify "$work_dir/ec.pub" -signature "$work_dir/ec.sig" "$work_dir/hash" >> "$work_dir/signing.log" 2>&1
 ecdsa_deterministic=0
-if openssl dgst -sha256 -sigopt nonce-type:1 -sign "$work_dir/ec.key" -out "$work_dir/probe.sig" "$work_dir/hash" >> "$work_dir/signing.log" 2>&1; then
+openssl dgst -sha256 -binary -out "$work_dir/probe.hash" "$work_dir/hash" >> "$work_dir/signing.log" 2>&1
+if openssl pkeyutl -sign -inkey "$work_dir/ec.key" -in "$work_dir/probe.hash" \
+	-pkeyopt digest:sha256 -pkeyopt nonce-type:1 -out "$work_dir/probe.sig" >> "$work_dir/signing.log" 2>&1; then
 	ecdsa_deterministic=1
 	"$first/devtools/sign-digest.sh" openssl "$work_dir/ec.key" "$work_dir/ec-strict.sig" "$work_dir/hash" 1 >> "$work_dir/signing.log" 2>&1
 	cmp "$work_dir/probe.sig" "$work_dir/ec-strict.sig"
-elif "$first/devtools/sign-digest.sh" openssl "$work_dir/ec.key" "$work_dir/ec-strict.sig" "$work_dir/hash" 1 >> "$work_dir/signing.log" 2>&1; then
-	echo 'Randomized ECDSA signing was accepted in strict mode' >&2
-	exit 1
+	cmp "$work_dir/ec.sig" "$work_dir/ec-strict.sig"
+	openssl dgst -sha256 -verify "$work_dir/ec.pub" -signature "$work_dir/ec-strict.sig" "$work_dir/hash" >> "$work_dir/signing.log" 2>&1
+else
+	if "$first/devtools/sign-digest.sh" openssl "$work_dir/ec.key" "$work_dir/ec-strict.sig" "$work_dir/hash" 1 >> "$work_dir/signing.log" 2>&1; then
+		echo 'Randomized ECDSA signing was accepted in strict mode' >&2
+		exit 1
+	fi
+	grep -q 'Cannot produce deterministic signatures' "$work_dir/signing.log"
+	[ ! -f "$work_dir/ec-strict.sig" ]
 fi
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$work_dir/rsa.key" >> "$work_dir/signing.log" 2>&1
 "$first/devtools/sign-digest.sh" openssl "$work_dir/rsa.key" "$work_dir/rsa.sig" "$work_dir/hash" 1 >> "$work_dir/signing.log" 2>&1
+"$first/devtools/sign-digest.sh" openssl "$work_dir/rsa.key" "$work_dir/rsa-repeat.sig" "$work_dir/hash" 1 >> "$work_dir/signing.log" 2>&1
+cmp "$work_dir/rsa.sig" "$work_dir/rsa-repeat.sig"
+openssl pkey -in "$work_dir/rsa.key" -pubout -out "$work_dir/rsa.pub" >> "$work_dir/signing.log" 2>&1
+openssl dgst -sha256 -verify "$work_dir/rsa.pub" -signature "$work_dir/rsa.sig" "$work_dir/hash" >> "$work_dir/signing.log" 2>&1
 
 build_pair() {
 	source=$1
