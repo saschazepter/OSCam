@@ -6,13 +6,15 @@ SHELL = /bin/sh
 
 VER               := $(shell ./config.sh --oscam-version)
 GIT_SHA           := $(shell ./config.sh --oscam-commit)
-SOURCE_DATE_EPOCH := $(shell ./config.sh --oscam-epoch)
-ifeq ($(SOURCE_DATE_EPOCH),)
+BUILD_EPOCH       := $(shell ./config.sh --oscam-epoch '$(subst ','"'"',$(SOURCE_DATE_EPOCH))')
+ifeq ($(BUILD_EPOCH),)
 $(error Could not determine SOURCE_DATE_EPOCH)
 endif
 COMPILE_DATE      := $(shell date +"%d.%m.%Y %T")
-BUILD_DATE        := $(shell date -u -d @$(SOURCE_DATE_EPOCH) +"%d.%m.%Y %T" 2>/dev/null \
-                     || date -u -r $(SOURCE_DATE_EPOCH) +"%d.%m.%Y %T")
+BUILD_DATE        := $(shell ./config.sh --oscam-build-date '$(BUILD_EPOCH)')
+ifeq ($(BUILD_DATE),)
+$(error Could not format SOURCE_DATE_EPOCH)
+endif
 
 uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
 
@@ -60,7 +62,7 @@ override STD_LIBS := $(LIB_PTHREAD) $(LIB_DL)
 override STD_DEFS := -D'CS_VERSION="$(VER)"'
 override STD_DEFS += -D'CS_GIT_COMMIT="$(GIT_SHA)"'
 override STD_DEFS += -D'CS_BUILD_DATE="$(BUILD_DATE)"'
-override STD_DEFS += -D'CS_BUILD_EPOCH=$(SOURCE_DATE_EPOCH)'
+override STD_DEFS += -D'CS_BUILD_EPOCH=$(BUILD_EPOCH)LL'
 override STD_DEFS += -D'CS_CONFDIR="$(CONF_DIR)"'
 
 CC = $(CROSS_DIR)$(CROSS)gcc
@@ -82,7 +84,6 @@ ifneq (,$(findstring clang,$(CCVERSION)))
 else
 	CC_OPTS = -O2 -ggdb -pipe -ffunction-sections -fdata-sections -fomit-frame-pointer -fno-schedule-insns
 endif
-CC_OPTS += -fdebug-prefix-map=$(CURDIR)=.
 
 LDFLAGS = -Wl,--gc-sections
 
@@ -113,6 +114,12 @@ ifdef USE_COMPRESS
 endif
 
 # Enable binary signing
+REQUIRE_DETERMINISTIC_SIGNING ?= 0
+ifneq ($(REQUIRE_DETERMINISTIC_SIGNING),0)
+ifneq ($(REQUIRE_DETERMINISTIC_SIGNING),1)
+$(error REQUIRE_DETERMINISTIC_SIGNING must be 0 or 1)
+endif
+endif
 ifeq "$(shell ./config.sh --enabled WITH_SIGNING)" "Y"
 	SIGN_CERT   := $(shell ./config.sh --create-cert ecdsa prime256v1 ca 2>/dev/null || false)
 	SIGN_CERT    = $(shell ./config.sh --cert-file cert || echo "n.a.")
@@ -122,6 +129,7 @@ ifeq "$(shell ./config.sh --enabled WITH_SIGNING)" "Y"
 		SIGN_COMMAND_OSCAM = $(SAY) "SIGN	Disabled due to missing of certificate files!";
 	else
 		override USE_SSL=1
+		override USE_LIBCRYPTO=1
 
 		SIGN_PRIVKEY   = $(shell ./config.sh --cert-file privkey)
 		SIGN_MARKER    = $(shell ./config.sh --sign-marker)
@@ -129,6 +137,8 @@ ifeq "$(shell ./config.sh --enabled WITH_SIGNING)" "Y"
 		SIGN_PUBKEY    = $(OBJDIR)/signing/pkey
 		SIGN_HASH      = $(OBJDIR)/signing/sha256
 		SIGN_DIGEST    = $(OBJDIR)/signing/digest
+		SIGN_POLICY    = $(OBJDIR)/signing/require-deterministic
+		SIGN_DEPS      = devtools/sign-digest.sh $(SIGN_POLICY)
 		SIGN_SUBJECT   = $(subst $\',$\'$\"$\'$\"$\',$(shell ./config.sh --cert-info | head -n 1))
 		SIGN_SIGALGO   = $(shell ./config.sh --cert-info | tail -n 1)
 		SIGN_VALID     = $(shell ./config.sh --cert-info | head -n 4 | tail -n 1)
@@ -141,7 +151,7 @@ ifeq "$(shell ./config.sh --enabled WITH_SIGNING)" "Y"
 		SIGN_COMMAND_OSCAM += sha256sum $@ | awk '{ print $$1 }' | tr -d '\n' > $(SIGN_HASH);
 		SIGN_COMMAND_OSCAM += printf 'SIGN	SHA256('; $(STAT) -c %s $(SIGN_HASH) | tr -d '\n'; printf '): '; cat $(SIGN_HASH); printf ' -> ';
 		SIGN_COMMAND_OSCAM += $(SSL) x509 -pubkey -noout                 -in $(SIGN_CERT)    -out $(SIGN_PUBKEY);
-		SIGN_COMMAND_OSCAM += $(SSL) dgst -sha256 -sigopt nonce-type:1 -sign $(SIGN_PRIVKEY) -out $(SIGN_DIGEST) $(SIGN_HASH) 2>/dev/null || $(SSL) dgst -sha256 -sign $(SIGN_PRIVKEY) -out $(SIGN_DIGEST) $(SIGN_HASH);
+		SIGN_COMMAND_OSCAM += ./devtools/sign-digest.sh "$(SSL)" "$(SIGN_PRIVKEY)" "$(SIGN_DIGEST)" "$(SIGN_HASH)" "$(REQUIRE_DETERMINISTIC_SIGNING)" || exit $$?;
 		SIGN_COMMAND_OSCAM += $(SSL) dgst -sha256    -verify $(SIGN_PUBKEY) -signature $(SIGN_DIGEST) $(SIGN_HASH) | tr -d '\n';
 		SIGN_COMMAND_OSCAM += [ -f $(UPX_SPLIT_PREFIX)aa ] && cat $(UPX_SPLIT_PREFIX)aa > $@;
 		SIGN_COMMAND_OSCAM += printf '$(SIGN_MARKER)' | cat - $(SIGN_DIGEST) >> $@;
@@ -307,6 +317,23 @@ BUILD_DIR ?= $(BUILD_DIR_DEFAULT)
 TESTS_BUILD_DIR ?= $(BUILD_DIR)-tests
 OBJDIR := $(BUILD_DIR)/$(TARGET)
 CLEAN_BUILD_DIRS := $(sort $(BUILD_DIR) $(TESTS_BUILD_DIR))
+
+# Prefer one flag covering both DWARF and __FILE__, with probes for old compilers.
+PREFIX_MAP_FLAGS := $(shell for flag in -ffile-prefix-map -fdebug-prefix-map -fmacro-prefix-map; do \
+	if printf '%s\n' 'int oscam_prefix_map_probe;' | \
+		$(CC) $(CFLAGS) -Werror "$$flag=.=." -x c -c -o /dev/null - >/dev/null 2>&1; then \
+		printf '%s ' "$$flag"; \
+		if [ "$$flag" = -ffile-prefix-map ]; then break; fi; \
+	fi; done)
+ifeq ($(filter -ffile-prefix-map -fmacro-prefix-map,$(PREFIX_MAP_FLAGS)),)
+$(warning Compiler cannot normalize __FILE__; builds may depend on the source directory)
+endif
+ifeq ($(filter -ffile-prefix-map -fdebug-prefix-map,$(PREFIX_MAP_FLAGS)),)
+$(warning Compiler cannot normalize debug paths; unstripped builds may depend on the build directory)
+endif
+# Map the more specific build paths last; generated sources may use relative paths.
+override CFLAGS += $(foreach flag,$(PREFIX_MAP_FLAGS),\
+	$(flag)=$(CURDIR)=. $(flag)=$(abspath $(BUILD_DIR))=./build $(flag)=$(BUILD_DIR)=./build)
 
 # Include config.mak which contains variables for all enabled modules
 # These variables will be used to select only needed files for compilation
@@ -523,7 +550,7 @@ ifeq "$(shell ./config.sh --enabled WEBIF)" "Y"
 endif
 	@$(MAKE) --no-print-directory $(OSCAM_BIN) $(LIST_SMARGO_BIN)
 
-$(OSCAM_BIN).debug: $(OBJ)
+$(OSCAM_BIN).debug: $(OBJ) $(SIGN_DEPS)
 	$(SAY) "LINK	$@"
 	$(Q)$(CC) $(LDFLAGS) $(OBJ) $(LIBS) -o $@
 ifndef BUILD_TESTS
@@ -542,6 +569,15 @@ $(OSCAM_BIN): $(OSCAM_BIN).debug
 	$(Q)$(STRIP) $(OSCAM_BIN)
 	$(Q)$(SIGN_COMMAND_OSCAM)
 	$(Q)$(UPX_COMMAND_OSCAM)
+endif
+
+ifneq ($(SIGN_POLICY),)
+# A policy change must re-sign an existing binary, even if no C source changed.
+.PHONY: FORCE_SIGNING_POLICY
+$(SIGN_POLICY): FORCE_SIGNING_POLICY
+	@mkdir -p $(dir $@)
+	@printf '%s\n' '$(REQUIRE_DETERMINISTIC_SIGNING)' | cmp -s - $@ || \
+		printf '%s\n' '$(REQUIRE_DETERMINISTIC_SIGNING)' > $@
 endif
 
 $(LIST_SMARGO_BIN): utils/list_smargo.c
