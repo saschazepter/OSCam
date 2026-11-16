@@ -31,7 +31,7 @@ compiler that supports both debug and macro path mapping.
 Signed builds must also reuse the same certificate and private key; automatically
 generating a new certificate changes the binary. ECDSA signatures use RFC 6979
 when the OpenSSL provider supports `nonce-type:1`. Older providers fall back to
-ordinary signing and print a warning that signatures may vary.
+ordinary signing and print a notice that signatures may vary.
 
 To reject randomized signatures, enable strict signing:
 
