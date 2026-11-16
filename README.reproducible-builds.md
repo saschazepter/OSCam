@@ -29,9 +29,16 @@ compiler that supports both debug and macro path mapping.
 ## Signing
 
 Signed builds must also reuse the same certificate and private key; automatically
-generating a new certificate changes the binary. ECDSA signatures use RFC 6979
-when the OpenSSL provider supports `nonce-type:1`. Older providers fall back to
-ordinary signing and print a notice that signatures may vary.
+generating a new certificate changes the binary. Place the shared files at
+`certs/certificate.crt` and `certs/private.key` before configuring either build.
+
+ECDSA signatures use RFC 6979 when the host signing tool's OpenSSL provider
+supports `nonce-type:1` (available in the OpenSSL 3.2 default provider). The helper
+prehashes its input and signs it with `pkeyutl`, so existing `dgst -sha256`
+verification remains compatible. Providers without this support, including
+OpenSSL 3.0, fall back to ordinary signing and print a notice that signatures may
+vary. The default compatibility mode therefore does not guarantee reproducible
+ECDSA signatures.
 
 To reject randomized signatures, enable strict signing:
 
@@ -43,6 +50,13 @@ cmake -S . -B build-cmake -DREQUIRE_DETERMINISTIC_SIGNING=ON
 This setting applies when signing is enabled. Deterministic fallback algorithms,
 such as RSA PKCS#1 v1.5, are accepted after comparing two signatures. If signing
 fails, the build fails instead of appending an invalid signature.
+
+RSA PKCS#1 v1.5 signing also works with older OpenSSL providers and does not
+require the deterministic ECDSA option. Changing the signing environment or
+switching to an RSA key and matching certificate is a separate build setup
+choice; strict mode enforces the result. Unsigned builds avoid this signing
+requirement entirely. Neither mode by itself guarantees identical binary content
+without the matching build inputs described above.
 
 ## Regression check
 
