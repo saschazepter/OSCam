@@ -26,6 +26,22 @@ logging targets, default:/var/log/oscam.log. You can define a maximum of one fil
 additionally to log to stdout or syslog (you can also only log to stdout or syslog and omit
 the filename).
 .RE
+.PP
+\fBdateformat\fP = \fBformat\fP
+.RS 3n
+local display format for log timestamps, version-file start time and WebIf dates.
+Default: %Y-%m-%d %H:%M:%S. An empty value restores the default.
+Supported strftime directives: %Y %y %m %d %e %j %u %w %H %I %M %S %p and %%.
+Date directives must precede time directives. Date-only and time-only formats
+are allowed; separate WebIf date or clock fields use their default when that
+component is absent. A T separator is accepted, for example %Y-%m-%dT%H:%M:%S.
+Formats are limited to 32 input bytes and 31 expanded output bytes. Unsupported
+directives (including %c, weekday/month names and width modifiers), control
+characters and oversized formats are rejected. Invalid values retain the
+previous setting; WebIf displays an error and does not save the form.
+Statistics files and existing API timestamp fields keep their fixed formats.
+JSON adds display.date, display.time and times.logindisplay for WebIf polling.
+.RE
 PP
 \fBinitial_debuglevel\fP = \fBlevel\fP
 .RS 3n

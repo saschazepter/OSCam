@@ -6181,6 +6181,11 @@ static char *send_oscam_status(struct templatevars * vars, struct uriparams * pa
 						char tbuffer [30];
 						localtime_r(&cl->login, &lt);
 						tpl_printf(vars, TPLADD, "CLIENTLOGINDATEFMT", "%02d.%02d.%02d  %02d:%02d:%02d", lt.tm_mday, lt.tm_mon + 1, lt.tm_year % 100, lt.tm_hour, lt.tm_min, lt.tm_sec);
+						char displaybuf[32];
+						const char *display = "";
+						if((cl->typ != 'p' && cl->typ != 'r') || cl->reader->card_status == CARD_INSERTED)
+							{ display = cs_format_time(cl->login, displaybuf, sizeof(displaybuf)); }
+						tpl_addVar(vars, TPLADD, "CLIENTLOGINDISPLAY", json_encode(vars, display));
 						strftime(tbuffer, 30, "%Y-%m-%dT%H:%M:%S%z", &lt);
 						tpl_addVar(vars, TPLADD, "CLIENTLOGINDATE", tbuffer);
 						tpl_printf(vars, TPLADD, "CLIENTLOGINSECS", "%d", lsec);
@@ -9801,7 +9806,12 @@ static int32_t process_request(FILE * f, IN_ADDR_T in)
 			}
 			tpl_addVar(vars, TPLADD, "LOGO", tpl_getTpl(vars, "LOGOBIT"));
 			localtime_r(&first_client->login, &st);
-			if(pgidx == 18 || pgidx == 22 || pgidx == 24)
+			char dtbuf[32], tmbuf[32];
+			cs_format_date(t, dtbuf, sizeof(dtbuf));
+			cs_format_clock(t, tmbuf, sizeof(tmbuf));
+			tpl_addVar(vars, TPLADD, "CURDATEDISPLAY", json_encode(vars, dtbuf));
+			tpl_addVar(vars, TPLADD, "CURTIMEDISPLAY", json_encode(vars, tmbuf));
+			if(is_api_page(pgidx))
 			{
 				tpl_printf(vars, TPLADD, "CURDATE", "%02d.%02d.%02d", lt.tm_mday, lt.tm_mon + 1, lt.tm_year % 100);
 				tpl_printf(vars, TPLADD, "CURTIME", "%02d:%02d:%02d", lt.tm_hour, lt.tm_min, lt.tm_sec);
@@ -9810,9 +9820,8 @@ static int32_t process_request(FILE * f, IN_ADDR_T in)
 			}
 			else
 			{
-				char dtbuf[32], tmbuf[32];
-				tpl_addVar(vars, TPLADD, "CURDATE", xml_encode(vars, cs_format_date(t, dtbuf, sizeof(dtbuf))));
-				tpl_addVar(vars, TPLADD, "CURTIME", xml_encode(vars, cs_format_clock(t, tmbuf, sizeof(tmbuf))));
+				tpl_addVar(vars, TPLADD, "CURDATE", xml_encode(vars, dtbuf));
+				tpl_addVar(vars, TPLADD, "CURTIME", xml_encode(vars, tmbuf));
 				tpl_addVar(vars, TPLADD, "STARTDATE", xml_encode(vars, cs_format_date(first_client->login, dtbuf, sizeof(dtbuf))));
 				tpl_addVar(vars, TPLADD, "STARTTIME", xml_encode(vars, cs_format_clock(first_client->login, tmbuf, sizeof(tmbuf))));
 			}

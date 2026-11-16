@@ -39,7 +39,7 @@ struct s_log
 	uint8_t header_date_offset;
 	uint8_t header_time_offset;
 	uint8_t header_info_offset;
-	int8_t direct_log;
+	bool statistics_log;
 	int8_t cl_typ;
 	char *cl_usr;
 	char *cl_text;
@@ -113,17 +113,16 @@ void cs_reopen_log(void)
 	}
 }
 
-static void cs_write_log(char *txt, int8_t do_flush, uint8_t hdr_date_offset, uint8_t hdr_time_offset)
+static void cs_write_log(char *txt, int8_t do_flush, uint8_t hdr_date_offset, uint8_t hdr_time_offset, bool statistics_log)
 {
-	// filter out entries with leading 's' and forward to statistics
-	if(txt[hdr_date_offset] == 's')
+	if(statistics_log)
 	{
 		if(fps)
 		{
 			switch_log(cfg.usrfile, &fps, cs_init_statistics);
 			if(fps)
 			{
-				fputs(txt + hdr_date_offset + 1, fps); // remove the leading 's' and write to file
+				fputs(txt + hdr_date_offset, fps);
 				if(do_flush) { fflush(fps); }
 			}
 		}
@@ -180,16 +179,16 @@ static void log_list_add(struct s_log *log)
 	{
 		NULLFREE(log->txt);
 		NULLFREE(log);
-		cs_write_log("-------------> Too much data in log_list, dropping log message.\n", 1, 0, 0);
+		cs_write_log("-------------> Too much data in log_list, dropping log message.\n", 1, 0, 0, false);
 	}
 	SAFE_COND_SIGNAL_NOLOG(&log_thread_sleep_cond);
 }
 
-static void cs_write_log_int(char *txt)
+static void cs_write_statistics(char *txt)
 {
 	if(exit_oscam == 1)
 	{
-		cs_write_log(txt, 1, 0, 0);
+		cs_write_log(txt, 1, 0, 0, true);
 	}
 	else
 	{
@@ -204,7 +203,7 @@ static void cs_write_log_int(char *txt)
 		}
 		log->txt = newtxt;
 		log->header_len = 0;
-		log->direct_log = 1;
+		log->statistics_log = true;
 		log_list_add(log);
 	}
 }
@@ -379,7 +378,7 @@ static void write_to_log(char *txt, struct s_log *log, int8_t do_flush)
 	if (!cs_strncat(txt, "\n", LOG_BUF_SIZE)) {
 		cs_log("FIXME!");
 	}
-	cs_write_log(txt, do_flush, log->header_date_offset, log->header_time_offset);
+	cs_write_log(txt, do_flush, log->header_date_offset, log->header_time_offset, false);
 
 #if defined(WEBIF) || defined(MODULE_MONITOR)
 	if(!exit_oscam && cfg.loghistorylines && log_history)
@@ -473,7 +472,7 @@ static void write_to_log_int(char *txt, uint8_t header_len, uint8_t hdr_logcount
 	log->header_date_offset = hdr_date_offset;
 	log->header_time_offset = hdr_time_offset;
 	log->header_info_offset = hdr_info_offset;
-	log->direct_log = 0;
+	log->statistics_log = false;
 	struct s_client *cl = cur_client();
 	log->cl_usr = "";
 
@@ -690,10 +689,8 @@ void cs_statistics(struct s_client *client)
 			}
 		}
 
-		/* statistics entry start with 's' to filter it out on other end of pipe
-		 * so we can use the same Pipe as Log
-		 */
-		snprintf(buf, sizeof(buf), "s%02d.%02d.%02d %02d:%02d:%02d %3.1f %s %s %d %d %d %d %d %d %d %" PRId64 " %" PRId64 " %02d:%02d:%02d %s %04X@%06X:%04X %s\n",
+		/* Statistics retain their fixed file format and explicit queue routing. */
+		snprintf(buf, sizeof(buf), "%02d.%02d.%02d %02d:%02d:%02d %3.1f %s %s %d %d %d %d %d %d %d %" PRId64 " %" PRId64 " %02d:%02d:%02d %s %04X@%06X:%04X %s\n",
 				lt.tm_mday, lt.tm_mon + 1, lt.tm_year % 100,
 				lt.tm_hour, lt.tm_min, lt.tm_sec, cwps,
 				client->account->usr,
@@ -714,7 +711,7 @@ void cs_statistics(struct s_client *client)
 				client->last_srvid,
 				channame);
 
-		cs_write_log_int(buf);
+		cs_write_statistics(buf);
 	}
 }
 
@@ -733,8 +730,8 @@ void log_list_thread(void)
 			int8_t do_flush = ll_count(log_list) == 0; // flush on writing last element
 
 			cs_strncpy(buf, log->txt, LOG_BUF_SIZE);
-			if(log->direct_log)
-				{ cs_write_log(buf, do_flush, log->header_date_offset, log->header_time_offset); }
+			if(log->statistics_log)
+				{ cs_write_log(buf, do_flush, log->header_date_offset, log->header_time_offset, true); }
 			else
 				{ write_to_log(buf, log, do_flush); }
 			NULLFREE(log->txt);

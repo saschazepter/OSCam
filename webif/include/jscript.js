@@ -457,7 +457,9 @@ $(function () {
  * General: Update page footer and failbannotifier
  */
 function updateFooter(data) {
-	$("#curtime").text(' ' + data.oscam.curdate + ' | ' + data.oscam.curtime + ' ');
+	var displayDate = data.oscam.display ? data.oscam.display.date : data.oscam.curdate;
+	var displayTime = data.oscam.display ? data.oscam.display.time : data.oscam.curtime;
+	$("#curtime").text(' ' + displayDate + ' | ' + displayTime + ' ');
 	$("#runtime").text(' ' + data.oscam.runtime);
 	$("#uptime") .text(' ' + data.oscam.uptime);
 
@@ -1324,13 +1326,14 @@ function updateStatuspage(data) {
 		}
 
 		if (!is_nopoll('statuscol15')) {
+			var loginDisplay = typeof item.times.logindisplay == 'string' ? item.times.logindisplay : item.times.loginfmt;
 			if ($("#onlineidle").text() != 'Login*') {
 				$(uid + " > td.statuscol15")
 					.html(item.times.online.toHHMMSS() + '<br>' + item.times.idle.toHHMMSS())
-					.attr('title', 'Login: ' + item.times.loginfmt);
+					.attr('title', 'Login: ' + loginDisplay);
 			} else {
 				$(uid + " > td.statuscol15")
-					.html(item.times.loginfmt.substring(0, 8) + '<br>' + item.times.loginfmt.substring(10, 18))
+					.text(loginDisplay)
 					.attr('title', 'Online: ' + item.times.online.toHHMMSS() + '\nIDLE: ' + item.times.idle.toHHMMSS());
 			}
 		}

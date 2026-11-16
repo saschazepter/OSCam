@@ -65,6 +65,27 @@ oscam-build:
     expire_in: 1 week
   allow_failure: true
 
+oscam-date-format-test:
+  stage: test
+  tags:
+    - build
+  dependencies: []
+  variables:
+    DATE_FORMAT_LOG_DIR: build/date-format-runtime
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_PIPELINE_SOURCE == 'schedule'
+  script:
+    - make -j2 BUILD_TESTS=1 BUILD_DIR=build/date-format-tests OSCAM_BIN=build/date-format-tests.bin
+    - build/date-format-tests.bin
+    - make -j2 BUILD_DIR=build/date-format OSCAM_BIN=build/date-format.bin
+    - devtools/check_date_format.pl build/date-format.bin
+  artifacts:
+    when: always
+    paths:
+      - build/date-format-runtime/
+    expire_in: 1 week
+
 oscam-test:
   stage: test
   tags:
