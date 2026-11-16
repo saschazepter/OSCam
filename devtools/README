@@ -12,11 +12,5 @@ Currently available tools are:
   check_cmdline_opts.sh                 This script checks if all command
                                         line parameters are properly set.
 
-  check_date_format.pl                  Run date-format WebIf and logging checks
-                                        against a native OSCam binary with WebIf.
-                                        Requires core Perl modules HTTP::Tiny and
-                                        JSON::PP. DATE_FORMAT_KEEP=1 keeps logs;
-                                        DATE_FORMAT_LOG_DIR copies them elsewhere.
-
   extract_config.sh                     This script extracts OSCam build
                                         config from oscam binary.
