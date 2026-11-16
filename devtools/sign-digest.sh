@@ -21,7 +21,7 @@ fi
 
 "$openssl" dgst -sha256 -sign "$key" -out "$signature" "$input"
 if [ "$5" = 0 ]; then
-	echo "WARNING: signing without deterministic nonce support; signatures may differ between builds. Use REQUIRE_DETERMINISTIC_SIGNING=1 to reject this fallback." >&2
+	echo "NOTICE: signing without deterministic nonce support; signatures may differ between builds. Use REQUIRE_DETERMINISTIC_SIGNING=1 to reject this fallback." >&2
 	exit 0
 fi
 
