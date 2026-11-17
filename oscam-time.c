@@ -263,6 +263,13 @@ char *cs_format_date(time_t t, char *buf, size_t len)
 	struct tm st;
 	if(!len) { return buf; }
 	if(!localtime_r(&t, &st)) { buf[0] = '\0'; return buf; }
+	return cs_format_date_tm(&st, buf, len);
+}
+
+/* Format an existing calendar date without converting its timezone. */
+char *cs_format_date_tm(const struct tm *st, char *buf, size_t len)
+{
+	if(!len) { return buf; }
 	const char *fmt = cfg.dateformat[0] ? cfg.dateformat : CS_DEFAULT_DATEFORMAT;
 	const char *date_end;
 	const char *timefmt = cs_time_format_start(fmt, &date_end);
@@ -275,7 +282,7 @@ char *cs_format_date(time_t t, char *buf, size_t len)
 	char datefmt[33];
 	memcpy(datefmt, fmt, date_len);
 	datefmt[date_len] = '\0';
-	return cs_strftime_or_default(buf, len, date_len ? datefmt : "%Y-%m-%d", "%Y-%m-%d", &st);
+	return cs_strftime_or_default(buf, len, date_len ? datefmt : "%Y-%m-%d", "%Y-%m-%d", st);
 }
 
 char *cs_format_clock(time_t t, char *buf, size_t len)

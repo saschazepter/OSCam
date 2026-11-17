@@ -5082,8 +5082,14 @@ static char *send_oscam_user_config(struct templatevars *vars, struct uriparams 
 		cs_gmtime_r(&account->expirationdate, &timeinfo);
 		char buf [80];
 		strftime(buf, 80, "%Y-%m-%d", &timeinfo);
-		if(strcmp(buf, "1970-01-01")) { tpl_addVar(vars, TPLADD, "EXPDATE", buf); }
+		char expdisplay[32] = "";
+		if(strcmp(buf, "1970-01-01"))
+		{
+			tpl_addVar(vars, TPLADD, "EXPDATE", buf);
+			cs_format_date_tm(&timeinfo, expdisplay, sizeof(expdisplay));
+		}
 		else { tpl_addVar(vars, TPLADD, "EXPDATE", ""); }
+		tpl_addVar(vars, TPLADD, "EXPDATEDISPLAY", apicall == 2 ? json_encode(vars, expdisplay) : xml_encode(vars, expdisplay));
 
 		// append row to table template
 		if(!apicall)
@@ -6449,10 +6455,10 @@ static char *send_oscam_status(struct templatevars * vars, struct uriparams * pa
 										cs_format_date(ent->end, entbuf, sizeof(entbuf));
 										tpl_printf(vars, TPLAPPEND, "TMPSPAN", "%04X@%06X<BR>exp:%s",
 												ent->caid, ent->provid, xml_encode(vars, entbuf));
-										tpl_printf(vars, TPLAPPEND, "ENTITLEMENTS", "%s{\"caid\":\"%04X\",\"provid\":\"%06X\",\"exp\":\"%04d/%02d/%02d\"}",
+										tpl_printf(vars, TPLAPPEND, "ENTITLEMENTS", "%s{\"caid\":\"%04X\",\"provid\":\"%06X\",\"exp\":\"%04d/%02d/%02d\",\"expdisplay\":\"%s\"}",
 												active_ent > 1 ? ",": "",
 												ent->caid, ent->provid,
-												end_t.tm_year + 1900, end_t.tm_mon + 1, end_t.tm_mday);
+												end_t.tm_year + 1900, end_t.tm_mon + 1, end_t.tm_mday, json_encode(vars, entbuf));
 									}
 								}
 								tpl_printf(vars, TPLADD, "TOTENTITLEMENTS", "%d", total_ent);
@@ -7773,17 +7779,15 @@ static char *send_oscam_failban(struct templatevars * vars, struct uriparams * p
 	{
 		tpl_printf(vars, TPLADD, "IPADDRESS", "%s@%d", cs_inet_ntoa(v_ban_entry->v_ip), v_ban_entry->v_port);
 		tpl_addVar(vars, TPLADD, "VIOLATIONUSER", v_ban_entry->info ? v_ban_entry->info : "unknown");
-		struct tm st ;
-		localtime_r(&v_ban_entry->v_time.time, &st); // fix me, we need walltime!
 		if(!apicall)
 		{
-			tpl_printf(vars, TPLADD, "VIOLATIONDATE", "%02d.%02d.%02d %02d:%02d:%02d",
-					st.tm_mday, st.tm_mon + 1,
-					st.tm_year % 100, st.tm_hour,
-					st.tm_min, st.tm_sec);
+			char tbuffer[32];
+			tpl_addVar(vars, TPLADD, "VIOLATIONDATE", xml_encode(vars, cs_format_time(v_ban_entry->v_time.time, tbuffer, sizeof(tbuffer))));
 		}
 		else
 		{
+			struct tm st;
+			localtime_r(&v_ban_entry->v_time.time, &st);
 			char tbuffer [30];
 			strftime(tbuffer, 30, "%Y-%m-%dT%H:%M:%S%z", &st);
 			tpl_addVar(vars, TPLADD, "VIOLATIONDATE", tbuffer);

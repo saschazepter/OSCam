@@ -1439,6 +1439,8 @@ static int run_date_format_tests(void)
 	time_t when = 1700000000;
 	struct tm st;
 	localtime_r(&when, &st);
+	struct tm utc;
+	cs_gmtime_r(&when, &utc);
 	int failures = 0;
 	for(size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
 	{
@@ -1448,6 +1450,8 @@ static int run_date_format_tests(void)
 		if(strcmp(cs_format_time(when, actual, sizeof(actual)), expected)) { ++failures; }
 		strftime(expected, sizeof(expected), cases[i].date, &st);
 		if(strcmp(cs_format_date(when, actual, sizeof(actual)), expected)) { ++failures; }
+		strftime(expected, sizeof(expected), cases[i].date, &utc);
+		if(strcmp(cs_format_date_tm(&utc, actual, sizeof(actual)), expected)) { ++failures; }
 		strftime(expected, sizeof(expected), cases[i].clock, &st);
 		if(strcmp(cs_format_clock(when, actual, sizeof(actual)), expected)) { ++failures; }
 	}
@@ -1512,6 +1516,7 @@ static int run_date_format_tests(void)
 		char actual[3] = { 'a', 'b', 'c' };
 		cs_format_time(when, actual, 0);
 		cs_format_date(when, actual, 0);
+		cs_format_date_tm(&utc, actual, 0);
 		cs_format_clock(when, actual, 0);
 		if(memcmp(actual, "abc", sizeof(actual))) { ++failures; }
 		cs_format_time(when, actual, 1);
@@ -1521,6 +1526,9 @@ static int run_date_format_tests(void)
 		if(actual[0] || actual[1] != 'b' || actual[2] != 'c') { ++failures; }
 		actual[0] = 'a';
 		cs_format_clock(when, actual, 1);
+		if(actual[0] || actual[1] != 'b' || actual[2] != 'c') { ++failures; }
+		actual[0] = 'a';
+		cs_format_date_tm(&utc, actual, 1);
 		if(actual[0] || actual[1] != 'b' || actual[2] != 'c') { ++failures; }
 	}
 	memcpy(cfg.dateformat, saved_format, sizeof(saved_format));

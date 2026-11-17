@@ -15,6 +15,7 @@
 		"lastchanneltitle":"##LASTCHANNELTITLE##",
 		"lastchannelsort":"##LASTCHANNELSORT##",
 		"expdate":"##EXPDATE##",
+		"expdatedisplay":"##EXPDATEDISPLAY##",
 		"expview":"##EXPIREVIEW##",
 		"lca":"##LCA##",
 		"lcb":"##LCB##",
