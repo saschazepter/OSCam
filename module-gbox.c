@@ -448,7 +448,14 @@ void gbox_send(struct s_client *cli, uint8_t *buf, int32_t l)
 
 	cs_log_dump_dbg(D_READER, buf, l, "<- data to %s (%d bytes):", cli->reader->label, l);
 
-	hostname2ip(cli->reader->device, &SIN_GET_ADDR(cli->udp_sa));
+	IN_ADDR_T peer_ip = get_null_ip();
+	hostname2ip(cli->reader->device, &peer_ip);
+	if(IP_ISSET(peer_ip))
+	{
+		IP_ASSIGN(SIN_GET_ADDR(cli->udp_sa), peer_ip);
+	}
+	// A temporary lookup failure must not erase the last resolved address.
+	if(!IP_ISSET(SIN_GET_ADDR(cli->udp_sa))) { return; }
 	SIN_GET_FAMILY(cli->udp_sa) = AF_INET;
 	SIN_GET_PORT(cli->udp_sa) = htons((uint16_t)cli->reader->r_port);
 
@@ -2405,19 +2412,10 @@ static int32_t gbox_peer_init(struct s_client *cli)
 
 	memset((char *)&cli->udp_sa, 0, sizeof(cli->udp_sa));
 
-	if(!hostResolve(rdr))
-	{
-		return 0;
-	}
-
 	cli->port = rdr->r_port;
 	SIN_GET_FAMILY(cli->udp_sa) = AF_INET;
 	SIN_GET_PORT(cli->udp_sa) = htons((uint16_t)rdr->r_port);
-	hostname2ip(cli->reader->device, &SIN_GET_ADDR(cli->udp_sa));
-
-	cs_log("proxy %s (fd=%d, peer id=%04X, my id=%04X, my hostname=%s, peer's listen port=%d)",
-		rdr->device, cli->udp_fd, peer->gbox.id, local_gbox.id, cfg.gbox_hostname, rdr->r_port);
-
+	// UDP socket setup is local; DNS is retried by the initial-hello worker.
 	cli->pfd = cli->udp_fd;
 
 	if(!cli->reader->gbox_maxecmsend)
@@ -2488,21 +2486,39 @@ static void gbox_init_local_cards(void)
 	gbox_add_local_cards();
 }
 
-void gbox_send_reader_hello(struct s_client *cli)
+int8_t gbox_reader_hello_pending(struct s_client *cli)
 {
-	// This job runs after reader_init(), on the reader's own worker.
-	if(!cli || !cli->init_done || !cli->reader || cli->reader->typ != R_GBOX || !cli->gbox || cli->pfd <= 0)
+	if(!cli || cli->kill || !cli->init_done || !cli->reader || !cli->reader->enable || cli->reader->typ != R_GBOX || !cli->gbox || cli->pfd <= 0)
 	{
-		return;
+		return 0;
 	}
 	struct gbox_peer *peer = cli->gbox;
 	SAFE_MUTEX_LOCK(&local_gbox_init_lock);
-	int8_t send_hello = initial_hello_requested && !peer->initialized;
+	int8_t pending = initial_hello_requested && !peer->initialized;
 	SAFE_MUTEX_UNLOCK(&local_gbox_init_lock);
-	if(!send_hello)
+	if(!pending) { return 0; }
+	struct timeb now;
+	cs_ftime(&now);
+	return comp_timeb(&now, &cli->reader->tcp_block_connect_till) >= 0;
+}
+
+void gbox_send_reader_hello(struct s_client *cli)
+{
+	// This job runs after reader_init(), on the reader's own worker.
+	if(!gbox_reader_hello_pending(cli)) { return; }
+	struct s_reader *rdr = cli->reader;
+	struct gbox_peer *peer = cli->gbox;
+	if(!hostResolve(rdr))
 	{
+		block_connect(rdr);
 		return;
 	}
+	clear_block_delay(rdr);
+	if(!gbox_reader_hello_pending(cli)) { return; }
+	SIN_GET_FAMILY(cli->udp_sa) = AF_INET;
+	SIN_GET_PORT(cli->udp_sa) = htons((uint16_t)rdr->r_port);
+	cs_log("proxy %s (fd=%d, peer id=%04X, my id=%04X, my hostname=%s, peer's listen port=%d)",
+		rdr->device, cli->udp_fd, peer->gbox.id, local_gbox.id, cfg.gbox_hostname, rdr->r_port);
 
 	pthread_once(&local_gbox_cards_once, gbox_init_local_cards);
 	cs_writelock(__func__, &peer->lock);
@@ -2772,6 +2788,9 @@ void start_gbx_ticker(void)
 
 void stop_gbx_ticker(void)
 {
+	SAFE_MUTEX_LOCK(&local_gbox_init_lock);
+	initial_hello_requested = 0;
+	SAFE_MUTEX_UNLOCK(&local_gbox_init_lock);
 	gbx_tick_mutex_init();
 	SAFE_MUTEX_LOCK(&gbx_tick_mutex);
 
