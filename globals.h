@@ -1669,7 +1669,7 @@ struct s_reader										// contains device info, reader info and card info
 #endif
 	int32_t			typ;
 	char			label[64];
-#ifdef WEBIF
+#if defined(WEBIF) || defined(MODULE_GBOX)
 	char			*description;
 #endif
 	char			device[128];
