@@ -118,6 +118,8 @@ Usage: `basename $0` [parameters]
  -um, --upx-marker            Get Oscam binary upx marker.
  -v, --oscam-version          Display OSCam version.
  -c, --oscam-commit           Display OSCam GIT short commit sha 8-digits.
+ -t, --oscam-epoch [epoch]    Normalize epoch, SOURCE_DATE_EPOCH, or last git commit time.
+     --oscam-build-date [epoch]  Format the source epoch as a UTC build date.
 
  -O, --detect-osx-sdk-version Find where OS X SDK is located
 
@@ -411,7 +413,7 @@ make_config_c() {
 		printf "const char *config_ssl = \"$($OPENSSL version | head -n 1 | awk -F'(' '{ print $1 }' | xargs)\";\n\n"
 		echo "const char *config_mak ="
 		printf "  \"\\\nCFG: strings FILE | sed -n 's/^CFG~//p' | openssl enc -d -base64 | gzip -d\\\n\"\n"
-		gzip -9 < $OBJDIR/config.mak | $OPENSSL enc -base64 | while read LINE
+		gzip -9n < $OBJDIR/config.mak | $OPENSSL enc -base64 | while read LINE
 		do
 			printf "  \"CFG~%s\\\\n\"\n" "$LINE"
 		done
@@ -769,6 +771,30 @@ cert_info() {
 	fi
 }
 
+oscam_epoch() {
+	epoch=${1:-${SOURCE_DATE_EPOCH:-}}
+	if [ -z "$epoch" ]; then
+		epoch=$(git log -1 --format=%ct 2>/dev/null) || epoch=0
+	fi
+	case "$epoch" in
+		*[!0-9]*) echo "Invalid SOURCE_DATE_EPOCH: expected a non-negative integer" >&2; return 1 ;;
+	esac
+	epoch=$(printf '%s' "$epoch" | sed 's/^0*//')
+	printf '%s\n' "${epoch:-0}"
+}
+
+oscam_build_date() {
+	epoch=$(oscam_epoch "$1") || return 1
+	if date -u -d "@$epoch" '+%d.%m.%Y %H:%M:%S' 2>/dev/null; then
+		return 0
+	fi
+	if date -u -r "$epoch" '+%d.%m.%Y %H:%M:%S' 2>/dev/null; then
+		return 0
+	fi
+	echo "Cannot format SOURCE_DATE_EPOCH=$epoch with the host date command" >&2
+	return 1
+}
+
 # Change working directory to the directory where the script is
 cd $(dirname $0)
 
@@ -955,9 +981,17 @@ do
 		break
 	;;
 	'-c'|'--oscam-commit')
-		sha=`git log 2>/dev/null | sed -n 1p | cut -d ' ' -f2 | cut -c1-8`
+		sha=`git log -1 --format=%H 2>/dev/null | cut -c1-8`
 		echo $sha
 		break
+	;;
+	'-t'|'--oscam-epoch')
+		oscam_epoch "$2"
+		exit $?
+	;;
+	'--oscam-build-date')
+		oscam_build_date "$2"
+		exit $?
 	;;
 	'-O'|'--detect-osx-sdk-version')
 		shift
