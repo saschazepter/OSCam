@@ -8,6 +8,7 @@
 #include <dlfcn.h>
 #endif
 #include "module-streamrelay.h"
+#include "module-streamrelay-delay.h"
 #include "oscam-chk.h"
 #include "oscam-client.h"
 #include "oscam-config.h"
@@ -48,6 +49,8 @@ struct s_client *streamrelay_client[STREAM_SERVER_MAX_CONNECTIONS];
 static pthread_mutex_t fixed_key_srvid_mutex;
 static uint16_t stream_cur_srvid[STREAM_SERVER_MAX_CONNECTIONS];
 static stream_client_key_data key_data[STREAM_SERVER_MAX_CONNECTIONS];
+static sr_delay_buffer delay_data[STREAM_SERVER_MAX_CONNECTIONS];
+static pthread_mutex_t stream_key_mutex = PTHREAD_MUTEX_INITIALIZER;
 #if DVBCSA_KEY_ECM
 static uint16_t last_srvid[STREAM_SERVER_MAX_CONNECTIONS];
 #endif
@@ -156,23 +159,162 @@ void ParseEcmData(stream_client_data *cdata)
 }
 #endif // MODULE_RADEGAST
 
+// the one time pause before the stream runs
+static void stream_start_pause(uint8_t *paused)
+{
+	if (*paused)
+		{ return; }
+
+	if (cfg.stream_relay_buffer_time)
+		{ cs_sleepms(cfg.stream_relay_buffer_time); }
+
+	*paused = 1;
+}
+
+static void init_key_data(int32_t connid)
+{
+	stream_client_key_data *kd = &key_data[connid];
+	uint8_t parity;
+
+	memset(kd, 0, sizeof(stream_client_key_data));
+	sr_delay_init(&delay_data[connid], connid);
+
+	for (parity = EVEN; parity <= ODD; parity++)
+	{
+		kd->key[parity] = dvbcsa_bs_key_alloc();
+
+		// nothing has to wait without a delay: the output is never inside the
+		// period whose word is being replaced
+		if (sr_delay_active(&delay_data[connid]))
+			{ kd->waiting[parity] = dvbcsa_bs_key_alloc(); }
+	}
+	kd->parity = -1;
+	kd->turning = -1;
+}
+
+static void free_key_data(int32_t connid)
+{
+	stream_client_key_data *kd = &key_data[connid];
+	uint8_t parity;
+
+	sr_delay_free(&delay_data[connid]);
+
+	for (parity = EVEN; parity <= ODD; parity++)
+	{
+		if (kd->key[parity] != NULL)
+			{ dvbcsa_bs_key_free(kd->key[parity]); }
+
+		if (kd->waiting[parity] != NULL)
+			{ dvbcsa_bs_key_free(kd->waiting[parity]); }
+	}
+	memset(kd, 0, sizeof(stream_client_key_data));
+}
+
+// caller holds the lock
+static void take_waiting(int32_t connid, uint8_t parity)
+{
+	stream_client_key_data *kd = &key_data[connid];
+	struct dvbcsa_bs_key_s *swap;
+
+	if (!kd->has_waiting[parity])
+		{ return; }
+
+	// the schedules are swapped, not recomputed: setting a key is the expensive part
+	swap = kd->key[parity];
+	kd->key[parity] = kd->waiting[parity];
+	kd->waiting[parity] = swap;
+	memcpy(kd->cw[parity], kd->cw_waiting[parity], 8);
+	kd->mode[parity] = kd->mode_waiting[parity];
+	kd->has_waiting[parity] = false;
+	kd->reported[parity] = false; // a word of its own gets its own say
+}
+
 static void write_cw(ECM_REQUEST *er, int32_t connid)
 {
+	uint8_t parity;
 #if DVBCSA_KEY_ECM
 	const uint8_t ecm = (cfg.stream_relay_ctab.ctnum == 0 && !select_csa_alt(er))
 		? 0
 		: get_ecm_mode(er);
+#else
+	const uint8_t ecm = 0; // no table to pick, the control word is the whole key
 #endif
-	if (memcmp(er->cw, "\x00\x00\x00\x00\x00\x00\x00\x00", 8) != 0)
+	for (parity = EVEN; parity <= ODD; parity++)
 	{
-		if (has_dvbcsa_ecm)
-			{ dvbcsa_bs_key_set(er->cw, key_data[connid].key[EVEN]); }
-	}
+		const uint8_t *cw = er->cw + (parity == ODD ? 8 : 0);
+		const uint8_t other = parity == EVEN ? ODD : EVEN;
+		bool in_use, open, missing;
 
-	if (memcmp(er->cw + 8, "\x00\x00\x00\x00\x00\x00\x00\x00", 8) != 0)
-	{
-		if (has_dvbcsa_ecm)
-			{ dvbcsa_bs_key_set(er->cw + 8, key_data[connid].key[ODD]); }
+		if (!has_dvbcsa_ecm || memcmp(cw, "\x00\x00\x00\x00\x00\x00\x00\x00", 8) == 0)
+			{ continue; }
+
+		if (!sr_delay_active(&delay_data[connid]))
+		{
+			dvbcsa_bs_key_set(cw, key_data[connid].key[parity]);
+			key_data[connid].have_key[parity] = true;
+			continue;
+		}
+
+		// every ecm repeats the word in force; the table takes part in the key, so
+		// the same bytes under another one are a word of their own
+		SAFE_MUTEX_LOCK(&stream_key_mutex);
+		in_use = key_data[connid].parity == (int8_t)parity;
+		open = !key_data[connid].run_dead[parity];
+
+		if (key_data[connid].has_waiting[parity])
+		{
+			if (memcmp(key_data[connid].cw_waiting[parity], cw, 8) == 0
+					&& key_data[connid].mode_waiting[parity] == ecm)
+				{ SAFE_MUTEX_UNLOCK(&stream_key_mutex); continue; }
+		}
+		else if (key_data[connid].have_key[parity]
+				&& memcmp(key_data[connid].cw[parity], cw, 8) == 0
+				&& key_data[connid].mode[parity] == ecm)
+			{ SAFE_MUTEX_UNLOCK(&stream_key_mutex); continue; }
+		SAFE_MUTEX_UNLOCK(&stream_key_mutex);
+
+		// Replacing it now would take the word those packets still need, so it waits
+		// until the packets show the register is past that period.
+		if (in_use && open && key_data[connid].have_key[parity])
+		{
+			dvbcsa_bs_key_set(cw, key_data[connid].waiting[parity]);
+
+			SAFE_MUTEX_LOCK(&stream_key_mutex);
+			memcpy(key_data[connid].cw_waiting[parity], cw, 8);
+			key_data[connid].mode_waiting[parity] = ecm;
+			key_data[connid].has_waiting[parity] = true;
+			SAFE_MUTEX_UNLOCK(&stream_key_mutex);
+			continue;
+		}
+
+		dvbcsa_bs_key_set(cw, key_data[connid].key[parity]);
+
+		SAFE_MUTEX_LOCK(&stream_key_mutex);
+		memcpy(key_data[connid].cw[parity], cw, 8);
+		key_data[connid].mode[parity] = ecm;
+		key_data[connid].has_waiting[parity] = false;
+		key_data[connid].have_key[parity] = true;
+		key_data[connid].reported[parity] = false; // a word of its own gets its own say
+
+		// a word for the other parity arriving is the gap in which a period of this
+		// one that never got a word of its own belongs
+		missing = key_data[connid].miss_pending[other];
+		key_data[connid].miss_pending[other] = false;
+
+		// it may be the word the period in play is missing, so let it prove itself
+		if (key_data[connid].run_dead[parity])
+		{
+			key_data[connid].probe_armed[parity] = true;
+			key_data[connid].probe_retry[parity] = false;
+			key_data[connid].miss_pending[parity] = false;
+		}
+		SAFE_MUTEX_UNLOCK(&stream_key_mutex);
+
+		if (missing)
+		{
+			cs_log("Stream client %i has no %s cw that opens this period (missing)", connid,
+					other == EVEN ? "even" : "odd");
+		}
 	}
 #if DVBCSA_KEY_ECM
 	if (er->srvid != last_srvid[connid] && ecm != 0 && has_dvbcsa_ecm)
@@ -461,6 +603,36 @@ static void ParseDescriptors(const uint8_t *buffer, const uint16_t info_length, 
 	}
 }
 
+static void stream_add_pes_pid(stream_client_data *cdata, uint16_t pid)
+{
+	uint8_t i;
+
+	for (i = 0; i < cdata->pes_pids; i++)
+	{
+		if (cdata->pes_pid[i] == pid)
+			{ return; }
+	}
+
+	if (cdata->pes_pids < SR_MAX_PES_PIDS)
+		{ cdata->pes_pid[cdata->pes_pids++] = pid; }
+}
+
+static bool stream_is_pes_pid(const stream_client_data *cdata, uint16_t pid)
+{
+	uint8_t i;
+
+	if (cdata->pes_pids == 0)
+		{ return true; } // no pmt to go by, so judge on whatever is scrambled
+
+	for (i = 0; i < cdata->pes_pids; i++)
+	{
+		if (cdata->pes_pid[i] == pid)
+			{ return true; }
+	}
+
+	return false;
+}
+
 static void stream_parse_pmt_ca_descriptor(const uint8_t *data, const int32_t data_pos, const int32_t offset, const uint16_t info_length, stream_client_data *cdata)
 {
 	if (cdata->ecm_pid)
@@ -547,6 +719,7 @@ static void ParsePmtData(stream_client_data *cdata)
 			{
 				cs_log_dbg(D_READER, "Stream client %i found video pid: 0x%04X (%i)",
 							cdata->connid, elementary_pid, elementary_pid);
+				stream_add_pes_pid(cdata, elementary_pid);
 				stream_parse_pmt_ca_descriptor(cdata->pmt_data, i, 5, es_info_length, cdata);
 				break;
 			}
@@ -561,6 +734,7 @@ static void ParsePmtData(stream_client_data *cdata)
 			{
 				cs_log_dbg(D_READER, "Stream client %i found audio pid: 0x%04X (%i)",
 							cdata->connid, elementary_pid, elementary_pid);
+				stream_add_pes_pid(cdata, elementary_pid);
 				break;
 			}
 			case 0x06:
@@ -570,8 +744,11 @@ static void ParsePmtData(stream_client_data *cdata)
 				uint8_t type = STREAM_UNDEFINED;
 				ParseDescriptors(cdata->pmt_data + i + 5, es_info_length, &type);
 				if (type == STREAM_AUDIO)
-					{ cs_log_dbg(D_READER, "Stream client %i found audio pid: 0x%04X (%i)",
-								cdata->connid, elementary_pid, elementary_pid); }
+				{
+					cs_log_dbg(D_READER, "Stream client %i found audio pid: 0x%04X (%i)",
+								cdata->connid, elementary_pid, elementary_pid);
+					stream_add_pes_pid(cdata, elementary_pid);
+				}
 				else if (type == STREAM_TELETEXT)
 					{ cs_log_dbg(D_READER, "Stream client %i found teletext pid: 0x%04X (%i)",
 								cdata->connid, elementary_pid, elementary_pid); }
@@ -644,6 +821,244 @@ static void decrypt(struct dvbcsa_bs_batch_s *tsbbatch, uint16_t fill[2], const 
 }
 #define decrypt(a) decrypt(tsbbatch, fill, a, data->connid)
 
+// does a PES start code come out? only valid on a payload unit start
+static bool probe_key(struct dvbcsa_bs_key_s *key, const uint8_t *pkt, uint16_t offset, uint16_t packetSize)
+{
+	uint8_t scratch[208]; // a TS packet, FEC bytes included
+	struct dvbcsa_bs_batch_s one[2];
+	uint16_t len = packetSize - offset;
+
+	if (key == NULL || len < 4 || len > sizeof(scratch))
+		{ return false; }
+
+	memcpy(scratch, pkt + offset, len);
+	one[0].data = scratch;
+	one[0].len = len;
+	one[1].data = NULL;
+	dvbcsa_bs_decrypt(key, one, 184);
+
+	return scratch[0] == 0x00 && scratch[1] == 0x00 && scratch[2] == 0x01;
+}
+
+// The register proves itself on the first judgable payload of a period: a word
+// that does not open it is either still on its way or unusable.
+static void probe_run_key(int32_t connid, uint8_t parity, const uint8_t *pkt, uint16_t offset, uint16_t packetSize)
+{
+	bool bad = false;
+
+	SAFE_MUTEX_LOCK(&stream_key_mutex);
+
+	// write_cw() arms this from another thread, so decide under the lock
+	if (!key_data[connid].probe_armed[parity] || !key_data[connid].have_key[parity])
+	{
+		SAFE_MUTEX_UNLOCK(&stream_key_mutex);
+		return;
+	}
+
+	if (probe_key(key_data[connid].key[parity], pkt, offset, packetSize))
+	{
+		// it had gone without a word that opens it, so that is what the delay is short of
+		if (key_data[connid].run_dead[parity])
+		{
+			struct timeb now;
+
+			cs_ftime(&now);
+			key_data[connid].late_ms[parity] = (int32_t)comp_timeb(&now, &key_data[connid].start[parity]);
+			key_data[connid].run_dead[parity] = false;
+			key_data[connid].miss_pending[parity] = false; // it was late, not absent
+		}
+		memcpy(key_data[connid].cw_judged[parity], key_data[connid].cw[parity], 8);
+		key_data[connid].probe_armed[parity] = false;
+	}
+	else if (!key_data[connid].probe_retry[parity])
+	{
+		// one failure can be the payload, judge on the second
+		key_data[connid].probe_retry[parity] = true;
+	}
+	else if (key_data[connid].has_waiting[parity])
+	{
+		// the packets say the register is past this period, so the word kept back
+		// goes in and proves itself before anything is called dead
+		take_waiting(connid, parity);
+		key_data[connid].probe_retry[parity] = false;
+	}
+	else
+	{
+		// stay armed: a word arriving later is looked at again
+		key_data[connid].run_dead[parity] = true;
+		key_data[connid].probe_retry[parity] = false;
+
+		// Once for the word, not once per period entered: the pids flap at a
+		// boundary, so the same period is entered more than once.
+		if (!key_data[connid].reported[parity])
+		{
+			key_data[connid].reported[parity] = true;
+
+			// Against the last word that opened a period, not the last one judged: a
+			// word of its own that still does not open this one is unusable, while the
+			// one from before means none came yet and may still be on its way.
+			if (memcmp(key_data[connid].cw_judged[parity], key_data[connid].cw[parity], 8) != 0)
+				{ bad = true; }
+			else
+				{ key_data[connid].miss_pending[parity] = true; }
+		}
+	}
+	SAFE_MUTEX_UNLOCK(&stream_key_mutex);
+
+	if (bad)
+	{
+		cs_log("Stream client %i has no %s cw that opens this period (bad)", connid,
+				parity == EVEN ? "even" : "odd");
+	}
+}
+
+// The output has moved to the other parity, so the one it left is now unused --
+// the moment its waiting word may go into the register.
+static void enter_crypto_period(int32_t connid, uint8_t parity)
+{
+	int32_t late;
+
+	SAFE_MUTEX_LOCK(&stream_key_mutex);
+
+	key_data[connid].parity = parity;
+	cs_ftime(&key_data[connid].start[parity]);
+	key_data[connid].probe_armed[parity] = true;
+	key_data[connid].probe_retry[parity] = false;
+	key_data[connid].run_dead[parity] = false;
+
+	// raise between two periods, not in the middle of one
+	late = key_data[connid].late_ms[EVEN] > key_data[connid].late_ms[ODD]
+			? key_data[connid].late_ms[EVEN] : key_data[connid].late_ms[ODD];
+	key_data[connid].late_ms[EVEN] = 0;
+	key_data[connid].late_ms[ODD] = 0;
+	SAFE_MUTEX_UNLOCK(&stream_key_mutex);
+
+	if (late > 0)
+	{
+		const int32_t had = delay_data[connid].delay_ms;
+		int32_t step = sr_delay_grow(&delay_data[connid], late);
+
+		// said either way: a fixed line and one at its ceiling do not grow, and the
+		// period paid for the lateness all the same
+		if (step > 0)
+		{
+			cs_log("Stream client %i cw was %d ms late for a %d ms delay, raised to %d ms",
+					connid, had + late, had, had + step);
+
+			// the gap pushes both periods in flight that much further out, and a
+			// word arriving later must not be read as late by that much again
+			SAFE_MUTEX_LOCK(&stream_key_mutex);
+			add_ms_to_timeb(&key_data[connid].start[EVEN], step);
+			add_ms_to_timeb(&key_data[connid].start[ODD], step);
+			SAFE_MUTEX_UNLOCK(&stream_key_mutex);
+		}
+		else
+		{
+			cs_log("Stream client %i cw was %d ms late for a %d ms delay, %d ms gap",
+					connid, had + late, had, late);
+		}
+	}
+}
+
+// Enters the periods this buffer begins and lets their keys prove themselves.
+static uint8_t judge_ts_packets(stream_client_data *data, const uint8_t *stream_buf, uint32_t bufLength, uint16_t packetSize)
+{
+	const int32_t connid = data->connid;
+	uint8_t seen = 0;
+	uint32_t i;
+
+	for (i = 0; i < bufLength; i += packetSize)
+	{
+		uint32_t tsHeader = b2i(4, stream_buf + i);
+		uint16_t pid = (tsHeader & 0x1FFF00) >> 8;
+		uint16_t offset = (tsHeader & 0x20) ? 4 + stream_buf[i + 4] + 1 : 4;
+		uint8_t scrambling = tsHeader & 0xC0;
+		uint8_t oddeven;
+
+		if (scrambling == 0 || packetSize - offset < 1)
+			{ continue; }
+
+		oddeven = scrambling == 0xC0 ? ODD : EVEN;
+		seen |= 1 << oddeven;
+
+		// A new period fills the buffer with its parity at once, while the
+		// stragglers of the one being left arrive singly.
+		if (oddeven != key_data[connid].parity)
+		{
+			if (oddeven != key_data[connid].turning)
+			{
+				key_data[connid].turning = oddeven;
+				key_data[connid].turn_count = 0;
+			}
+
+			if (++key_data[connid].turn_count >= SR_PERIOD_MIN_PACKETS)
+				{ enter_crypto_period(connid, oddeven); }
+		}
+		else
+		{
+			key_data[connid].turn_count = 0;
+		}
+
+		// judgable: belongs to the period being played, not to a run yet to be
+		// believed or the stragglers of the one being left, plus payload start, own
+		// PES pid, not in error (0x800000)
+		if (oddeven == key_data[connid].parity && (tsHeader & 0x400000) && (tsHeader & 0x10)
+				&& !(tsHeader & 0x800000) && stream_is_pes_pid(data, pid))
+			{ probe_run_key(connid, oddeven, stream_buf + i, offset, packetSize); }
+	}
+
+	return seen;
+}
+
+// Lets the run the head is in prove itself from a buffer queued behind it. Stops
+// at the first packet of the other parity, whose data belongs to the next run;
+// returns whether the caller may carry on into the buffer after this one.
+static bool probe_queued(stream_client_data *data, const uint8_t *stream_buf, uint32_t bufLength,
+							uint16_t packetSize, uint8_t parity)
+{
+	const int32_t connid = data->connid;
+	uint32_t i;
+
+	for (i = 0; i < bufLength; i += packetSize)
+	{
+		uint32_t tsHeader = b2i(4, stream_buf + i);
+		uint16_t pid = (tsHeader & 0x1FFF00) >> 8;
+		uint16_t offset = (tsHeader & 0x20) ? 4 + stream_buf[i + 4] + 1 : 4;
+		uint8_t scrambling = tsHeader & 0xC0;
+
+		if (scrambling == 0 || packetSize - offset < 1)
+			{ continue; }
+
+		if ((scrambling == 0xC0 ? ODD : EVEN) != parity)
+			{ return false; }
+
+		if ((tsHeader & 0x400000) && (tsHeader & 0x10) && !(tsHeader & 0x800000)
+				&& stream_is_pes_pid(data, pid))
+			{ probe_run_key(connid, parity, stream_buf + i, offset, packetSize); }
+	}
+
+	return true;
+}
+
+// Whether every register this buffer needs has proved itself, which is what says
+// the search for proof in the buffers queued behind it can stop.
+static bool keys_decided(stream_client_data *data, uint8_t seen)
+{
+	const int32_t connid = data->connid;
+	uint8_t parity;
+
+	for (parity = EVEN; parity <= ODD; parity++)
+	{
+		if (!(seen & (1 << parity)) || !key_data[connid].have_key[parity])
+			{ continue; }
+
+		if (key_data[connid].probe_armed[parity])
+			{ return false; }
+	}
+
+	return true;
+}
+
 static void DescrambleTsPackets(stream_client_data *data, uint8_t *stream_buf, uint32_t bufLength, uint16_t packetSize, struct dvbcsa_bs_batch_s *tsbbatch)
 {
 	uint32_t i, tsHeader;
@@ -678,9 +1093,16 @@ static void DescrambleTsPackets(stream_client_data *data, uint8_t *stream_buf, u
 		if ((tsHeader & 0xC0) == 0)
 			{ continue; }
 
-		stream_buf[i + 3] &= 0x3f; // consider it decrypted now
 		oddeven = (tsHeader & 0xC0) == 0xC0 ? ODD: EVEN;
 		decrypt(oddeven == ODD ? EVEN : ODD);
+
+		// nothing opens it, so it is handed over as it came in, still marked
+		// scrambled: clearing the bits would label ciphertext as data
+		if (!key_data[data->connid].have_key[oddeven] || key_data[data->connid].run_dead[oddeven])
+			{ continue; }
+
+		stream_buf[i + 3] &= 0x3f; // consider it decrypted now
+
 		tsbbatch[fill[oddeven]].data = &stream_buf[i + offset];
 		tsbbatch[fill[oddeven]].len = packetSize - offset;
 		fill[oddeven]++;
@@ -868,6 +1290,7 @@ static void *stream_client_handler(void *arg)
 	uint16_t packetCount = 0, packetSize = 0, startOffset = 0;
 	uint32_t remainingDataPos, remainingDataLength, tmp_pids[4];
 	uint8_t descrambling = 0;
+	bool descramble = false, delaying = false;
 
 	struct timeb start, end;
 
@@ -886,7 +1309,13 @@ static void *stream_client_handler(void *arg)
 		streamrelay_client[conndata->connid]->init_done = 1;
 	}
 
-	cs_log("Stream client %i connected. ip=%s port=%d", conndata->connid, cs_inet_ntoa(client_ip[conndata->connid]), client_port[conndata->connid]);
+	{
+		char delay_info[48];
+
+		sr_delay_describe(delay_info, sizeof(delay_info));
+		cs_log("Stream client %i connected. ip=%s port=%d%s", conndata->connid,
+				cs_inet_ntoa(client_ip[conndata->connid]), client_port[conndata->connid], delay_info);
+	}
 
 	do
 	{
@@ -947,8 +1376,7 @@ static void *stream_client_handler(void *arg)
 		if (data->srvid == 0) // We didn't get a srvid - Exit
 			{ break; }
 
-		key_data[conndata->connid].key[ODD]  = dvbcsa_bs_key_alloc();
-		key_data[conndata->connid].key[EVEN] = dvbcsa_bs_key_alloc();
+		init_key_data(conndata->connid);
 
 		if (!cs_malloc(&tsbbatch, (cluster_size + 1) * sizeof(struct dvbcsa_bs_batch_s)))
 			{ break; }
@@ -1108,23 +1536,88 @@ static void *stream_client_handler(void *arg)
 								clientStatus = -1;
 								break;
 							}
-							if ((cfg.stream_relay_ctab.ctnum == 0 || chk_ctab_ex(data->caid, &cfg.stream_relay_ctab)) && data->caid != 0xA101 && data->caid != NO_CAID_VALUE)
-							{
-								DescrambleTsPackets(data, stream_buf + startOffset, packetCount * packetSize, packetSize, tsbbatch);
-								if (!descrambling)
-								{
-									if (cfg.stream_relay_buffer_time)
-										{ cs_sleepms(cfg.stream_relay_buffer_time); }
-									descrambling = 1;
-								}
-							}
+							descramble = (cfg.stream_relay_ctab.ctnum == 0 || chk_ctab_ex(data->caid, &cfg.stream_relay_ctab)) && data->caid != 0xA101 && data->caid != NO_CAID_VALUE;
 						}
 						else // Search PAT and PMT packets for service information
 						{
 							ParseTsPackets(data, stream_buf + startOffset, packetCount * packetSize, packetSize);
+							descramble = false;
 						}
 
-						clientStatus = send(conndata->connfd, stream_buf + startOffset, packetCount * packetSize, 0);
+						if (descramble)
+							{ delaying = true; }
+
+						if (!delaying || !sr_delay_active(&delay_data[conndata->connid]))
+						{
+							if (descramble)
+							{
+								DescrambleTsPackets(data, stream_buf + startOffset, packetCount * packetSize, packetSize, tsbbatch);
+								stream_start_pause(&descrambling);
+							}
+
+							clientStatus = send(conndata->connfd, stream_buf + startOffset, packetCount * packetSize, 0);
+						}
+						else
+						{
+							stream_start_pause(&descrambling);
+
+							bool handed = false;
+
+							do
+							{
+								uint8_t *due;
+								uint32_t dueLength = 0;
+
+								// Everything due leaves in the same turn. One per turn can only hold
+								// the line or grow it: a turn with nothing due is a chunk the line
+								// never gives back, and the real lag would run past the stamps.
+								while (clientStatus != -1 && (due = sr_delay_due(&delay_data[conndata->connid], &dueLength)) != NULL)
+								{
+									if (descramble)
+									{
+										uint8_t seen = judge_ts_packets(data, due, dueLength, packetSize);
+										uint32_t nth = 1, queuedLength = 0;
+										uint8_t *queued;
+
+										// the proof may sit in a chunk that is not due yet
+										while (key_data[conndata->connid].parity >= 0 && !keys_decided(data, seen)
+												&& (queued = sr_delay_queued(&delay_data[conndata->connid],
+														nth++, &queuedLength)) != NULL
+												&& probe_queued(data, queued, queuedLength, packetSize,
+														(uint8_t)key_data[conndata->connid].parity))
+											{ ; }
+
+										DescrambleTsPackets(data, due, dueLength, packetSize, tsbbatch);
+									}
+
+									sr_delay_restamp(&delay_data[conndata->connid], due, dueLength, packetSize);
+									clientStatus = send(conndata->connfd, due, dueLength, 0);
+									sr_delay_release(&delay_data[conndata->connid]);
+									handed = true;
+								}
+							}
+							while (clientStatus != -1 && sr_delay_active(&delay_data[conndata->connid])
+									&& !sr_delay_push(&delay_data[conndata->connid], stream_buf + startOffset, packetCount * packetSize));
+
+							// A raise hands out nothing until the line has grown into it; stuffing
+							// keeps the client reading instead of waiting on its own.
+							if (clientStatus != -1 && !handed && sr_delay_active(&delay_data[conndata->connid]))
+							{
+								uint32_t fillerLength = 0;
+								const uint8_t *filler = sr_delay_filler(&fillerLength);
+
+								clientStatus = send(conndata->connfd, filler, fillerLength, 0);
+							}
+
+							if (clientStatus != -1 && !sr_delay_active(&delay_data[conndata->connid]))
+							{
+								// line gave up, this buffer never made it in
+								if (descramble)
+									{ DescrambleTsPackets(data, stream_buf + startOffset, packetCount * packetSize, packetSize, tsbbatch); }
+
+								clientStatus = send(conndata->connfd, stream_buf + startOffset, packetCount * packetSize, 0);
+							}
+						}
 
 						remainingDataPos = startOffset + (packetCount * packetSize);
 						remainingDataLength = bytesRead - remainingDataPos;
@@ -1149,10 +1642,7 @@ static void *stream_client_handler(void *arg)
 	NULLFREE(http_buf);
 	NULLFREE(stream_buf);
 
-	dvbcsa_bs_key_free(key_data[conndata->connid].key[ODD]);
-	dvbcsa_bs_key_free(key_data[conndata->connid].key[EVEN]);
-	key_data[conndata->connid].key[ODD] = NULL;
-	key_data[conndata->connid].key[EVEN] = NULL;
+	free_key_data(conndata->connid);
 
 	NULLFREE(tsbbatch);
 	NULLFREE(data);
@@ -1172,6 +1662,7 @@ static void *stream_server(void)
 	int32_t connfd, reuse = 1, i;
 	int8_t connaccepted;
 	stream_client_conn_data *conndata;
+	char compensation[40];
 
 	struct s_client *client = first_client;
 	client->thread = pthread_self();
@@ -1191,14 +1682,26 @@ static void *stream_server(void)
 #endif
 #endif
 
+	// said only where it is on, so the line reads as it always did without it
+	if (cfg.stream_relay_playback_delay == 0)
+		{ compensation[0] = '\0'; }
+	else if (cfg.stream_relay_playback_delay == 1)
+		{ cs_strncpy(compensation, ", cw compensation: automatic", sizeof(compensation)); }
+	else
+	{
+		snprintf(compensation, sizeof(compensation), ", cw compensation: %u ms",
+				cfg.stream_relay_playback_delay);
+	}
+
 	do
 	{
-		cs_log("%s: (%s) %s dvbcsa parallel mode = %d (relay buffer time: %d ms)%s%s",
+		cs_log("%s: (%s) %s dvbcsa parallel mode = %d (relay buffer time: %d ms%s)%s%s",
 			(!DVBCSA_HEADER_ECM || !has_dvbcsa_ecm) ? "WARNING" : "INFO",
 			(!has_dvbcsa_ecm) ? "wrong" : "ecm",
 			(!is_dvbcsa_static) ? "dynamic" : "static",
 			cluster_size,
 			cfg.stream_relay_buffer_time,
+			compensation,
 			(!DVBCSA_HEADER_ECM || !has_dvbcsa_ecm) ? "! ECM processing via Streamrelay does not work!" : "",
 			(!DVBCSA_HEADER_ECM) ? " Missing dvbcsa ecm headers during build!" : "");
 
@@ -1376,4 +1879,9 @@ void module_streamrelay(struct s_module *ph)
 	ph->type = MOD_CONN_SERIAL;
 	ph->s_handler = streamrelay_handler;
 }
+
+#ifdef BUILD_TESTS
+#include "tests-streamrelay.c"
+#endif
+
 #endif // MODULE_STREAMRELAY

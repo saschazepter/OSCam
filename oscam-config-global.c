@@ -966,6 +966,7 @@ static const struct config_list streamrelay_opts[] =
 	DEF_OPT_STR("stream_source_auth_user"        , OFS(stream_source_auth_user),      NULL),
 	DEF_OPT_STR("stream_source_auth_password"    , OFS(stream_source_auth_password),  NULL),
 	DEF_OPT_UINT32("stream_relay_buffer_time"    , OFS(stream_relay_buffer_time),     0),
+	DEF_OPT_UINT32("stream_relay_playback_delay" , OFS(stream_relay_playback_delay),  0),
 	DEF_OPT_UINT8("stream_relay_reconnect_count" , OFS(stream_relay_reconnect_count), 0),
 	DEF_OPT_INT8("stream_display_client"         , OFS(stream_display_client),        0),
 	DEF_OPT_INT8("stream_reuse_client"           , OFS(stream_reuse_client),          0),
