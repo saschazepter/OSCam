@@ -26,6 +26,24 @@ logging targets, default:/var/log/oscam.log. You can define a maximum of one fil
 additionally to log to stdout or syslog (you can also only log to stdout or syslog and omit
 the filename).
 .RE
+.PP
+\fBdateformat\fP = \fBformat\fP
+.RS 3n
+date and time format for log timestamps, version-file start time and WebIf displays,
+default:%Y-%m-%d %H:%M:%S
+.PP
+example: dateformat = %d.%m.%Y %H:%M:%S
+.PP
+supported placeholders: %Y %y %m %d %e %j %u %w %H %I %M %S %p and %%
+.PP
+Date placeholders must come before time placeholders. Date-only and time-only
+formats are supported. Maximum length: 32 bytes for the format, 31 bytes for the
+formatted date and time. An empty value restores the default; an invalid value
+keeps the previous setting.
+.PP
+API timestamps, statistics files and editable account expiration dates retain
+their fixed formats.
+.RE
 PP
 \fBinitial_debuglevel\fP = \fBlevel\fP
 .RS 3n

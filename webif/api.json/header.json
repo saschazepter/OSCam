@@ -9,6 +9,10 @@
     "uptime":"##UPTIME##",
     "curdate": "##CURDATE##",
     "curtime": "##CURTIME##",
+    "display": {
+        "date": "##CURDATEDISPLAY##",
+        "time": "##CURTIMEDISPLAY##"
+    },
     "readonly": "##APIREADONLY##",
     "piconenabled":"##PICONENABLED##",
     "srvidfile":"##SRVIDFILE##",

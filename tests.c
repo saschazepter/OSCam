@@ -7,6 +7,8 @@
 
 #include "oscam-array.h"
 #include "oscam-string.h"
+#include "oscam-time.h"
+#include "oscam-config.h"
 #include "oscam-conf-chk.h"
 #include "oscam-conf-mk.h"
 #include "cscrypt/md5.h"
@@ -1412,6 +1414,128 @@ static int run_crypto_tests(void)
 	failures += run_bn_extra_tests();
 	return failures;
 }
+
+static int run_date_format_tests(void)
+{
+	static const struct
+	{
+		const char *format;
+		const char *date;
+		const char *clock;
+	} cases[] =
+	{
+		{ "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%H:%M:%S" },
+		{ "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%H:%M:%S" },
+		{ "%d/%m/%Y %I:%M %p", "%d/%m/%Y", "%I:%M %p" },
+		{ "%H:%M:%S", "%Y-%m-%d", "%H:%M:%S" },
+		{ "%d/%m/%Y", "%d/%m/%Y", "%H:%M:%S" },
+		{ "stamp %Y-%m-%d %H:%M:%S", "stamp %Y-%m-%d", "%H:%M:%S" },
+		{ "stamp %H:%M", "%Y-%m-%d", "%H:%M" },
+		{ "%Y %%T%H", "%Y %%T", "%H" },
+		{ "%Y TEST%H", "%Y TEST", "%H" },
+	};
+	char saved_format[sizeof(cfg.dateformat)];
+	memcpy(saved_format, cfg.dateformat, sizeof(saved_format));
+	time_t when = 1700000000;
+	struct tm st;
+	localtime_r(&when, &st);
+	struct tm utc;
+	cs_gmtime_r(&when, &utc);
+	int failures = 0;
+	for(size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+	{
+		char actual[64], expected[64];
+		snprintf(cfg.dateformat, sizeof(cfg.dateformat), "%s", cases[i].format);
+		strftime(expected, sizeof(expected), cases[i].format, &st);
+		if(strcmp(cs_format_time(when, actual, sizeof(actual)), expected)) { ++failures; }
+		strftime(expected, sizeof(expected), cases[i].date, &st);
+		if(strcmp(cs_format_date(when, actual, sizeof(actual)), expected)) { ++failures; }
+		strftime(expected, sizeof(expected), cases[i].date, &utc);
+		if(strcmp(cs_format_date_tm(&utc, actual, sizeof(actual)), expected)) { ++failures; }
+		strftime(expected, sizeof(expected), cases[i].clock, &st);
+		if(strcmp(cs_format_clock(when, actual, sizeof(actual)), expected)) { ++failures; }
+	}
+	static const char *valid[] =
+	{
+		CS_DEFAULT_DATEFORMAT, "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y %I:%M %p",
+		"%% %Y", "%Y%Y%Y%Y%Y%Y%Y%j", "stamp %Y-%m-%d %H:%M:%S",
+		"%H:%M:%S", "%d/%m/%Y", "%Y-%m-%d %% %H:%M", NULL
+	};
+	static const char *invalid[] =
+	{
+		"%", "%Q", "%_d", "%E", "%Z", "%j%j%j%j%j%j%j%j%j%j%j",
+		"123456789012345678901234567890123", NULL
+	};
+	static const char *unsupported[] =
+	{
+		"%c", "%A, %d %B %Y %H:%M:%S", "%H:%M:%S %d/%m/%Y",
+		"%Y %H %m", "%Y%n%H", "%Y%t%H", "%Y\n%H", "%Y\t%H",
+		"%100000Y", "%Y%Y%Y%Y%Y%Y%Y%Y", "%%", "", NULL
+	};
+	if(!cs_dateformat_error(NULL)) { ++failures; }
+	for(size_t i = 0; valid[i]; ++i)
+	{
+		if(cs_dateformat_error(valid[i])) { ++failures; }
+	}
+	for(size_t i = 0; invalid[i]; ++i)
+	{
+		if(!cs_dateformat_error(invalid[i])) { ++failures; }
+	}
+	for(size_t i = 0; unsupported[i]; ++i)
+	{
+		if(!cs_dateformat_error(unsupported[i])) { ++failures; }
+	}
+	{
+		char actual[32], expected[32];
+		const char *boundary = "%Y%Y%Y%Y%Y%Y%Y%j";
+		strftime(expected, sizeof(expected), boundary, &st);
+		config_set("global", "dateformat", (char *)boundary);
+		if(strcmp(cs_format_time(when, actual, sizeof(actual)), expected)) { ++failures; }
+	}
+	config_set("global", "dateformat", "%Y-%m-%d %% %H:%M");
+	if(strcmp(cfg.dateformat, "%Y-%m-%d %% %H:%M")) { ++failures; }
+	{
+		char actual[32], expected[32];
+		strftime(expected, sizeof(expected), "%Y-%m-%d %% %H:%M", &st);
+		if(strcmp(cs_format_time(when, actual, sizeof(actual)), expected)) { ++failures; }
+	}
+	config_set("global", "dateformat", "%Q");
+	if(strcmp(cfg.dateformat, "%Y-%m-%d %% %H:%M")) { ++failures; }
+	config_set("global", "dateformat", "%j%j%j%j%j%j%j%j%j%j%j");
+	if(strcmp(cfg.dateformat, "%Y-%m-%d %% %H:%M")) { ++failures; }
+	config_set("global", "dateformat", "123456789012345678901234567890123");
+	if(strcmp(cfg.dateformat, "%Y-%m-%d %% %H:%M")) { ++failures; }
+	for(size_t i = 0; unsupported[i] && unsupported[i][0]; ++i)
+	{
+		config_set("global", "dateformat", (char *)unsupported[i]);
+		if(strcmp(cfg.dateformat, "%Y-%m-%d %% %H:%M")) { ++failures; }
+	}
+	config_set("global", "dateformat", "");
+	if(strcmp(cfg.dateformat, CS_DEFAULT_DATEFORMAT)) { ++failures; }
+	{
+		char actual[3] = { 'a', 'b', 'c' };
+		cs_format_time(when, actual, 0);
+		cs_format_date(when, actual, 0);
+		cs_format_date_tm(&utc, actual, 0);
+		cs_format_clock(when, actual, 0);
+		if(memcmp(actual, "abc", sizeof(actual))) { ++failures; }
+		cs_format_time(when, actual, 1);
+		if(actual[0] || actual[1] != 'b' || actual[2] != 'c') { ++failures; }
+		actual[0] = 'a';
+		cs_format_date(when, actual, 1);
+		if(actual[0] || actual[1] != 'b' || actual[2] != 'c') { ++failures; }
+		actual[0] = 'a';
+		cs_format_clock(when, actual, 1);
+		if(actual[0] || actual[1] != 'b' || actual[2] != 'c') { ++failures; }
+		actual[0] = 'a';
+		cs_format_date_tm(&utc, actual, 1);
+		if(actual[0] || actual[1] != 'b' || actual[2] != 'c') { ++failures; }
+	}
+	memcpy(cfg.dateformat, saved_format, sizeof(saved_format));
+	printf("Date format tests: %d failure(s)\n", failures);
+	return failures;
+}
+
 int run_all_tests(void)
 {
 	int failures = 0;
@@ -1667,6 +1791,7 @@ int run_all_tests(void)
 	failures += run_parser_test(&caidtab_test);
 
 	failures += run_crypto_tests();
+	failures += run_date_format_tests();
 
 	printf("Summary: %d failure(s)\n", failures);
 	return failures;

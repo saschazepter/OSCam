@@ -20,6 +20,19 @@ DESCRIPTIONS
        logfile = [filename][;syslog][;stdout]
 	  logging targets, default:/var/log/oscam.log. You can define a maximum of one filename and additionally to log to stdout or syslog  (you  can	also
 	  only log to stdout or syslog and omit the filename).
+
+       dateformat = format
+	  date and time format for log timestamps, version-file start time and WebIf displays, default:%Y-%m-%d %H:%M:%S
+
+	  example: dateformat = %d.%m.%Y %H:%M:%S
+
+	  supported placeholders: %Y %y %m %d %e %j %u %w %H %I %M %S %p and %%
+
+	  Date placeholders must come before time placeholders. Date-only and time-only formats are supported. Maximum length: 32 bytes for
+	  the format, 31 bytes for the formatted date and time. An empty value restores the default; an invalid value keeps the previous setting.
+
+	  API timestamps, statistics files and editable account expiration dates retain their fixed formats.
+
        PP initial_debuglevel = level
 	  set initial debug level for OSCam start, default:0
        PP sysloghost = hostname
