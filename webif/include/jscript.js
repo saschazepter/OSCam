@@ -457,7 +457,9 @@ $(function () {
  * General: Update page footer and failbannotifier
  */
 function updateFooter(data) {
-	$("#curtime").text(' ' + data.oscam.curdate + ' | ' + data.oscam.curtime + ' ');
+	var displayDate = data.oscam.display ? data.oscam.display.date : data.oscam.curdate;
+	var displayTime = data.oscam.display ? data.oscam.display.time : data.oscam.curtime;
+	$("#curtime").text(' ' + displayDate + ' | ' + displayTime + ' ');
 	$("#runtime").text(' ' + data.oscam.runtime);
 	$("#uptime") .text(' ' + data.oscam.uptime);
 
@@ -627,11 +629,6 @@ function updateUserpage(data) {
 			if (!is_nopoll('usercol21')) {
 				$(uid + " td.usercol21").text(item.user.stats.n_requ_m);
 			}
-			if (!is_nopoll('usercol20')) {
-				$(uid + " td.usercol20")
-					.attr('title', item.user.expview)
-					.text(item.user.stats.expdate);
-			}
 			break;
 
 		case 'connected':
@@ -763,6 +760,14 @@ function updateUserpage(data) {
 				}
 			}
 			break;
+		}
+
+		if (!is_nopoll('usercol20')) {
+			var expiry = typeof item.user.expdatedisplay == 'string' ? item.user.expdatedisplay : item.user.expdate;
+			$(uid + " td.usercol20")
+				.attr('title', item.user.expview)
+				.data('sort-value', item.user.expdate)
+				.text(expiry);
 		}
 
 		if (typeof custompoll == 'function') {
@@ -1324,14 +1329,20 @@ function updateStatuspage(data) {
 		}
 
 		if (!is_nopoll('statuscol15')) {
+			var loginDisplay = typeof item.times.logindisplay == 'string' ? item.times.logindisplay : item.times.loginfmt;
 			if ($("#onlineidle").text() != 'Login*') {
 				$(uid + " > td.statuscol15")
 					.html(item.times.online.toHHMMSS() + '<br>' + item.times.idle.toHHMMSS())
-					.attr('title', 'Login: ' + item.times.loginfmt);
+					.attr('title', 'Login: ' + loginDisplay);
 			} else {
-				$(uid + " > td.statuscol15")
-					.html(item.times.loginfmt.substring(0, 8) + '<br>' + item.times.loginfmt.substring(10, 18))
-					.attr('title', 'Online: ' + item.times.online.toHHMMSS() + '\nIDLE: ' + item.times.idle.toHHMMSS());
+				var cell = $(uid + " > td.statuscol15");
+				if (item.times.logindatedisplay && item.times.logintimedisplay) {
+					cell.empty()
+						.append(document.createTextNode(item.times.logindatedisplay), '<br>', document.createTextNode(item.times.logintimedisplay));
+				} else {
+					cell.text(loginDisplay);
+				}
+				cell.attr('title', 'Online: ' + item.times.online.toHHMMSS() + '\nIDLE: ' + item.times.idle.toHHMMSS());
 			}
 		}
 
@@ -1348,7 +1359,8 @@ function updateStatuspage(data) {
 					entitlement += '(' + activeentitlements + ' entitlement' + ((activeentitlements != 1) ? 's)' : ')');
 					entitlement += '<span>';
 					$.each(item.connection.entitlements, function (i, obj) {
-						entitlement += obj.caid + ':' + obj.provid + '<br>' + obj.exp + '<br><br>';
+						var expiry = typeof obj.expdisplay == 'string' ? obj.expdisplay : obj.exp;
+						entitlement += obj.caid + ':' + obj.provid + '<br>' + $('<div>').text(expiry).html() + '<br><br>';
 					});
 					entitlement = entitlement.substring(0, entitlement.length - 4);
 					entitlement += '</span></a>';

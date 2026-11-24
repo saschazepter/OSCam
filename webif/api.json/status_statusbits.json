@@ -28,6 +28,9 @@
 "times": {
     "login": "##CLIENTLOGINDATE##",
     "loginfmt":"##CLIENTLOGINDATEFMT##",
+    "logindisplay":"##CLIENTLOGINDISPLAY##",
+    "logindatedisplay":"##CLIENTLOGINDATEDISPLAY##",
+    "logintimedisplay":"##CLIENTLOGINTIMEDISPLAY##",
     "online": "##CLIENTLOGINSECS##",
     "idle": "##CLIENTIDLESECS##"
 },

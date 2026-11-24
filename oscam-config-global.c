@@ -1,6 +1,9 @@
 #define MODULE_LOG_PREFIX "config"
 
 #include "globals.h"
+#ifdef WEBIF
+#include <locale.h>
+#endif
 #include "module-dvbapi.h"
 #include "module-gbox.h"
 #include "oscam-array.h"
@@ -10,6 +13,7 @@
 #include "oscam-config.h"
 #include "oscam-net.h"
 #include "oscam-string.h"
+#include "oscam-time.h"
 #ifdef CS_CACHEEX_AIO
 #include "module-cacheex.h"
 #endif
@@ -341,6 +345,26 @@ void global_fixups_fn(void *UNUSED(var))
 #define OFS(X) offsetof(struct s_config, X)
 #define SIZEOF(X) sizeof(((struct s_config *)0)->X)
 
+static void dateformat_fn(const char *token, char *value, void *UNUSED(setting), FILE *f)
+{
+	if(value)
+	{
+		const char *candidate = *value ? value : CS_DEFAULT_DATEFORMAT;
+		const char *error = cs_dateformat_error(candidate);
+		if(error)
+		{
+			fprintf(stderr, "WARNING: Ignoring invalid dateformat: %s\n", error);
+			return;
+		}
+		cs_dateformat_set(candidate);
+		return;
+	}
+	char current[sizeof(cfg.dateformat)];
+	cs_dateformat_get(current, sizeof(current));
+	if(cfg.http_full_cfg || strcmp(current, CS_DEFAULT_DATEFORMAT))
+		{ fprintf_conf(f, token, "%s\n", current); }
+}
+
 static const struct config_list global_opts[] =
 {
 	DEF_OPT_FIXUP_FUNC(global_fixups_fn),
@@ -369,6 +393,7 @@ static const struct config_list global_opts[] =
 	DEF_OPT_UINT32("netprio"                       , OFS(netprio)                       , 0),
 	DEF_OPT_INT32("sleep"                          , OFS(tosleep)                       , 0),
 	DEF_OPT_INT32("unlockparental"                 , OFS(ulparent)                      , 0),
+	DEF_OPT_FUNC("dateformat"                      , OFS(dateformat)                    , dateformat_fn),
 	DEF_OPT_INT32("nice"                           , OFS(nice)                          , 99),
 	DEF_OPT_INT32("maxlogsize"                     , OFS(max_log_size)                  , 10),
 	DEF_OPT_INT8("waitforcards"                    , OFS(waitforcards)                  , 1),
@@ -1536,6 +1561,19 @@ int32_t init_config(void)
 	NULLFREE(token);
 	fclose(fp);
 	if(cur_section) { config_list_apply_fixups(cur_section->config, &cfg); }
+#ifdef WEBIF
+	if(cfg.http_locale && cfg.http_locale[0] && setlocale(LC_ALL, cfg.http_locale))
+	{
+		char current[sizeof(cfg.dateformat)];
+		cs_dateformat_get(current, sizeof(current));
+		const char *error = cs_dateformat_error(current);
+		if(error)
+		{
+			fprintf(stderr, "WARNING: Ignoring invalid dateformat for httplocale '%s': %s\n", cfg.http_locale, error);
+			cs_dateformat_set(CS_DEFAULT_DATEFORMAT);
+		}
+	}
+#endif
 	return 0;
 }
 
