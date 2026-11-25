@@ -1668,6 +1668,11 @@ int run_all_tests(void)
 
 	failures += run_crypto_tests();
 
+#ifdef MODULE_STREAMRELAY
+	extern int run_streamrelay_tests(void);
+	failures += run_streamrelay_tests();
+#endif
+
 	printf("Summary: %d failure(s)\n", failures);
 	return failures;
 }

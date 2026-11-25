@@ -1389,6 +1389,7 @@ static char *send_oscam_config_streamrelay(struct templatevars *vars, struct uri
 		{ tpl_printf(vars, TPLADD, "STREAM_SOURCE_AUTH_PASSWORD", "%s", cfg.stream_source_auth_password); }
 
 	tpl_printf(vars, TPLADD, "STREAM_RELAY_BUFFER_TIME", "%d", cfg.stream_relay_buffer_time);
+	tpl_printf(vars, TPLADD, "STREAM_RELAY_PLAYBACK_DELAY", "%u", cfg.stream_relay_playback_delay);
 	tpl_printf(vars, TPLADD, "STREAM_RELAY_RECONNECT_COUNT", "%d", cfg.stream_relay_reconnect_count);
 
 	tpl_printf(vars, TPLADD, "TMP", "STREAMCONFIGCLIENTSELECTED%d", cfg.stream_display_client);
